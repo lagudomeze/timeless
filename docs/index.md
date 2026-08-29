@@ -18,7 +18,7 @@
 | Action Graph 设计 | [bevy/action-graph.md](bevy/action-graph.md) |
 | 免费素材获取与接入 | [art/assets.md](art/assets.md) |
 | Agent 协作规范 | [agent-guidelines.md](agent-guidelines.md) |
-| 时间线核心 v0.1（接口签名，历史） | [../timeless/docs/timeline-core-design.md](../timeless/docs/timeline-core-design.md) |
+| 时间线核心 v0.1（接口签名，历史） | [design/timeline-core-design.md](design/timeline-core-design.md) |
 
 仓库入口指南见 [../AGENTS.md](../AGENTS.md)（不随本套文档自动同步，如需更新请手动维护）。
 
@@ -37,4 +37,4 @@
 
 - Bevy `0.19.1`；文档与代码示例一律以 0.19 API 为准，引用前须核对官方来源。
 - 对话记录或旧文档中的示例若与 0.19 冲突（如 `EventReader`、`SceneBundle`），以本文档与官方资料为准。
-- 依赖版本索引与镜像环境注意事项见 `timeless/TODO.md`。
+- 依赖版本索引与镜像环境注意事项见根目录 `../TODO.md`。

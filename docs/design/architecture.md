@@ -54,5 +54,5 @@ src/
 ## 现状与差距（WIP）
 
 - `timeless/` 已具备 Phase 1.5 纵向切片：Message 体系、AI 意图、时间推进、
-  翻滚取消、21×21 伪 3D 纸片场景、组件化战斗与调试面板（详见 `timeless/TODO.md`）。
+  翻滚取消、21×21 伪 3D 纸片场景、组件化战斗与调试面板（详见根目录 `../TODO.md`）。
 - 待迁移：`ActionId(&'static str)` → `ActionTemplate` 资产索引；旧 `Event` 写法按 0.19 选型规则校正；`timeline-core-design.md` v0.1 与 Action Graph 的差异以新设计为准。

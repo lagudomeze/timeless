@@ -29,5 +29,5 @@
 - 领域层 `timeless-domain` 零 Bevy 依赖；应用层不含伤害公式。
 - 注释中文、标识符英文；`rustfmt` 默认配置；提交用 Conventional Commits（`feat:` / `fix:` / `docs:` 等）。
 - 提交前必须通过：`cargo test --workspace`、`cargo clippy --workspace`（零警告）、`cargo fmt --check`。
-- 本机 crates.io 直连不可用：不用 `cargo add`，依赖手动写入 `Cargo.toml` 并在 `timeless/TODO.md` 版本索引表登记。
+- 本机 crates.io 直连不可用：不用 `cargo add`，依赖手动写入 `Cargo.toml` 并在根目录 `../TODO.md` 版本索引表登记。
 - 素材入库必须附许可证记录（见 [art/assets.md](art/assets.md)）。

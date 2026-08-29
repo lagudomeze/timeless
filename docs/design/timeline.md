@@ -1,6 +1,6 @@
 # 时间线系统详细设计
 
-> 状态：设计定稿 v0.2。本文取代 `timeless/docs/timeline-core-design.md`（v0.1）中与本文冲突的约定（如 `ActionId(&'static str)`、旧 `Event` 用法、DecisionPause 冻结模式）。
+> 状态：设计定稿 v0.2。本文取代 [timeline-core-design.md](timeline-core-design.md)（v0.1）中与本文冲突的约定（如 `ActionId(&'static str)`、旧 `Event` 用法、DecisionPause 冻结模式）。
 > 关联：[game-design.md](game-design.md)（动机）、[architecture.md](architecture.md)（分层与通信）、[../bevy/action-graph.md](../bevy/action-graph.md)（行为描述）、[../bevy/bevy-019.md](../bevy/bevy-019.md)（Bevy 0.19 速查）。
 
 ## 1. 目标与范围

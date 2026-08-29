@@ -45,4 +45,4 @@
 - 行为统一描述：见 [../bevy/action-graph.md](../bevy/action-graph.md)。
 - 时间线系统详细设计（两阶段循环、裁决算法、翻滚取消、怪物意图循环）：见 [timeline.md](timeline.md)。
 - 领域/应用分层与通信：见 [architecture.md](architecture.md)。
-- v0.1 时间线接口签名（历史，部分约定将被 Action Graph 取代）：见 [../../timeless/docs/timeline-core-design.md](../../timeless/docs/timeline-core-design.md)。
+- v0.1 时间线接口签名（历史，部分约定将被 Action Graph 取代）：见 [timeline-core-design.md](timeline-core-design.md)。
