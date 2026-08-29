@@ -1,20 +1,20 @@
 //! # 动作提示：移动方向箭头
 //!
 //! 玩家排定 Move 目标时，用 Bevy 内置 Gizmos 绘制黑色方向箭头
-//! （即时模式：每帧按 `MoveIntent` 决定是否绘制，意图清除后下一帧自动消失，
+//! （即时模式：每帧按 `Move` 行动组件决定是否绘制，行动清除后下一帧自动消失，
 //! 无需实体生命周期管理）。
 
 use bevy::prelude::*;
 
 use crate::combat::Player;
 use crate::display::map::{cell_x, cell_z};
-use crate::movement::{MoveIntent, Position};
+use crate::movement::{Move, Position};
 
-/// 移动方向箭头：玩家挂载 `MoveIntent` 时绘制黑色箭头（起点 = 当前格中心，
-/// 终点 = 目标格中心，箭头尖指向目标格中心）；意图移除后自动消失。
+/// 移动方向箭头：玩家挂载 `Move` 行动时绘制黑色箭头（起点 = 当前格中心，
+/// 终点 = 目标格中心，箭头尖指向目标格中心）；行动移除后自动消失。
 pub fn move_arrow_system(
     mut gizmos: Gizmos,
-    player_q: Query<(&Position, Option<&MoveIntent>), With<Player>>,
+    player_q: Query<(&Position, Option<&Move>), With<Player>>,
 ) {
     let Some((from, to)) = player_q
         .single()

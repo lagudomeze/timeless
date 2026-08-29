@@ -68,6 +68,11 @@ cargo fmt --check            # 格式校验
   移动与战斗分域（movement.rs）、AttackStats → AttackFrame/AttackRange/Impact/Damage 小组件、
   意图组件（Attack/Move/Retreat/Dodge/Parry/Interrupted）、火球投射物（Projectile+Destination+ExplosionDamage）、
   死亡检查独立系统、ECS 组件化设计文档。
+- **Phase 1.7 行动组件化重构**：移除 `Action` 枚举 / `ActionQueue` / `DECISION_OPTIONS`，
+  行动本体全部组件化（`Attack` / `Move` / `Roll` / `Fireball`）；菜单由能力标记
+  （`Can*`）驱动 + `SKILLS` 展示表（标签/消耗/插入工厂）；结算泛化为「收集所有带/不带
+  行动组件的实体 → 按 帧→射程→破势 裁决」；闪避 / 招架+反制拆成独立系统，
+  走 `HitPending → dodge → parry → damage` 消息链。
 
 ### Phase 2.0 — 技能与反馈（进行中）
 
@@ -89,6 +94,7 @@ cargo fmt --check            # 格式校验
 
 ### Phase 2.2 — 逻辑刻度时间线（docs/design/timeline.md v0.2）
 
+- [x] 防御系统消息链（HitPending → dodge → parry → damage）已落地（Phase 1.7）。
 - [ ] `ExecutionQueue` / `ScheduledAction`：按 hit_clock → distance → poise → actor 排序结算。
 - [ ] 攻击动作三段式：前摇（可翻滚取消）/ 判定帧 / 后摇，`GlobalTime` 跳跃式推进。
 - [ ] `PendingHit` 延迟命中物化（弹道飞行、延迟 AOE 排程），`CombatTimeline` 未来事件堆。

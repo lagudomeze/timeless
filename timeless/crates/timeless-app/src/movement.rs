@@ -1,9 +1,9 @@
 //! # 移动领域：组件 + 系统（一个文件）
 //!
-//! 空间位置、回合内位移意图与实时投射物（火球）：
+//! 空间位置、回合内行动组件与实时投射物（火球）：
 //! - `Position`：逻辑网格坐标（展示层据此同步渲染坐标）；
-//! - `MoveIntent` / `RetreatIntent`：We-Go 回合结算时的位移意图，
-//!   由 `apply_move_intents_system` 一次性执行并移除；
+//! - `Move` / `Roll`：We-Go 回合结算时的位移行动组件，决策阶段插入，
+//!   由 `apply_move_intents_system` 执行位移（`Roll` 保留到裁决后供闪避系统检查）；
 //! - `Projectile` + `Destination` + `ExplosionDamage`：可飞行的投射物实体，
 //!   由 `projectile_system` 每帧推进，到达目的地后按爆炸伤害组件结算。
 
@@ -28,15 +28,17 @@ impl Position {
     }
 }
 
-/// 本回合移动意图：结算阶段把单位移到目标格（We-Go：每回合一次位移）
+/// 移动行动：结算阶段把单位移到目标格（We-Go：每回合一次位移）
 #[derive(Component, Debug, Clone, Copy)]
-pub struct MoveIntent {
+pub struct Move {
     pub target: Position,
 }
 
-/// 翻滚/闪避位移意图：结算阶段朝远离 `from` 的方向退一格（8 向，钳制网格内）
+/// 翻滚行动：结算阶段朝远离敌人方向退一格（8 向，钳制网格内），
+/// 并在本回合裁决窗口内视为「闪避」（`dodge_system` 检查本组件是否存在）
 #[derive(Component, Debug, Clone, Copy)]
-pub struct RetreatIntent {
+pub struct Roll {
+    /// 决策时锁定的敌人位置（远离方向以此为准，保证结算确定性）
     pub from: GridPos,
 }
 
@@ -57,9 +59,9 @@ pub struct ExplosionDamage {
     pub radius: u32,
 }
 
-/// 火球施放意图：提交时锁定目标格；结算时生成投射物（敌人若本回合移动可躲避）
+/// 火球行动：提交时锁定目标格；结算时生成投射物（敌人若本回合移动可躲避）
 #[derive(Component, Debug, Clone, Copy)]
-pub struct FireballCast {
+pub struct Fireball {
     pub target: Position,
     pub speed: f32,
     pub amount: u32,
@@ -75,21 +77,16 @@ pub struct FireballAssets {
 
 // ─────────────────────────── 系统 ───────────────────────────
 
-/// 结算位移意图（Resolving 阶段，先于战斗裁决）：
-/// - `MoveIntent`：直接传送到目标格；
-/// - `RetreatIntent`：远离敌人一格。
+/// 结算位移行动（Resolving 阶段，先于战斗裁决）：
+/// - `Move`：直接传送到目标格，随后移除；
+/// - `Roll`：远离决策时锁定的敌人一格；组件保留到裁决结束（闪避检查用），
+///   由 `resolve_system` 统一清除。
 ///
-/// 处理完即移除意图，避免残留到下一回合。
 pub fn apply_move_intents_system(
     tl: Res<TimeLineState>,
     mut commands: Commands,
     mut log: ResMut<BattleLog>,
-    mut q: Query<(
-        Entity,
-        &mut Position,
-        Option<&MoveIntent>,
-        Option<&RetreatIntent>,
-    )>,
+    mut q: Query<(Entity, &mut Position, Option<&Move>, Option<&Roll>)>,
     player_q: Query<(), (With<Player>, Without<Enemy>)>,
     enemy_q: Query<(), (With<Enemy>, Without<Player>)>,
 ) {
@@ -106,8 +103,7 @@ pub fn apply_move_intents_system(
         }
     };
 
-    for (entity, mut pos, mov, retreat) in &mut q {
-        let mut moved = false;
+    for (entity, mut pos, mov, roll) in &mut q {
         if let Some(m) = mov {
             pos.0 = m.target.0;
             info!("[移动] {} → {:?}", who(entity), pos.0);
@@ -117,9 +113,9 @@ pub fn apply_move_intents_system(
                 pos.0.x,
                 pos.0.y
             ));
-            moved = true;
+            commands.entity(entity).remove::<Move>();
         }
-        if let Some(r) = retreat {
+        if let Some(r) = roll {
             pos.0 = retreat_from(pos.0, r.from);
             info!("[移动] {} 翻滚后退 → {:?}", who(entity), pos.0);
             log.push(format!(
@@ -128,13 +124,7 @@ pub fn apply_move_intents_system(
                 pos.0.x,
                 pos.0.y
             ));
-            moved = true;
-        }
-        if moved {
-            commands
-                .entity(entity)
-                .remove::<MoveIntent>()
-                .remove::<RetreatIntent>();
+            // Roll 保留：dodge_system 本回合检查；resolve_system 结束后统一清除
         }
     }
 }

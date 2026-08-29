@@ -18,6 +18,7 @@ use crate::display::unit::{
     BILLBOARD_HEIGHT, BILLBOARD_WIDTH, Billboard, GroundShadow, PaperAssets, SHADOW_RADIUS,
     UnitRoot,
 };
+use crate::menu::{CanAttack, CanFireball, CanMove, CanRoll};
 use crate::movement::{FireballAssets, Position};
 
 /// 场景搭建：相机、光照、地面、装饰、纸片单位、HUD
@@ -109,7 +110,7 @@ pub fn setup(
 /// 生成玩家与敌人：纸片单位（Billboard）+ 贴地阴影（重置时复用）
 pub fn spawn_combatants(commands: &mut Commands, paper: &PaperAssets) {
     // 玩家：蓝纸片，帧 4 / 射程 1 / 破势 3 / 伤害 10，HP 20
-    spawn_combatant(
+    let player = spawn_combatant(
         commands,
         paper,
         PLAYER_SPAWN,
@@ -121,6 +122,10 @@ pub fn spawn_combatants(commands: &mut Commands, paper: &PaperAssets) {
         3,
         10,
     );
+    // 玩家可行动能力（驱动决策菜单可选项）
+    commands
+        .entity(player)
+        .insert((CanAttack, CanMove, CanRoll, CanFireball));
     // 敌人：红纸片，帧 5 / 射程 1 / 破势 2 / 伤害 8，HP 16
     spawn_combatant(
         commands,
@@ -151,7 +156,7 @@ fn spawn_combatant<M: Component>(
     range: u32,
     impact: u32,
     damage: u32,
-) {
+) -> Entity {
     let x = cell_x(cell.0);
     let z = cell_z(cell.1);
 
@@ -186,5 +191,6 @@ fn spawn_combatant<M: Component>(
                 Transform::from_xyz(0.0, 0.02, 0.0)
                     .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
             ));
-        });
+        })
+        .id()
 }

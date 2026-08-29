@@ -33,12 +33,15 @@ fn main() {
         .init_resource::<TimeLineState>()
         .init_resource::<MenuSelection>()
         .init_resource::<combat::BattleLog>()
-        .add_message::<menu::ActionSubmitted>()
+        .add_message::<combat::HitPending>()
+        .add_message::<combat::HitPostDodge>()
+        .add_message::<combat::HitPostParry>()
+        .add_message::<combat::CounterHit>()
         .add_message::<combat::HitLanded>()
         .add_message::<combat::RollExecuted>()
         .add_message::<combat::ParryExecuted>()
         .add_message::<timeline::ResetBattle>()
-        .add_message::<menu::SelectAction>()
+        .add_message::<menu::SelectSkill>()
         .add_message::<menu::CommitTurn>()
         .add_message::<menu::ReactionSelect>()
         .add_systems(Startup, (setup::setup, display::hints::configure_gizmos))
@@ -50,9 +53,12 @@ fn main() {
                 menu::input_system,
                 menu::reaction_system,
                 movement::apply_move_intents_system, // 先位移（改变站位）
-                combat::resolve_system,              // 后裁决（领域层纯函数）
+                combat::resolve_system,              // 裁决 → 产出 HitPending
+                combat::dodge_system,                // 闪避（Roll）独立系统
+                combat::parry_system,                // 招架 + 反制独立系统
+                combat::damage_system,               // 应用剩余伤害
                 movement::projectile_system,         // 投射物每帧推进，命中写入 HitLanded
-                combat::death_check_system,          // 清场 + GameOver 判定
+                combat::death_check_system,          // 清场 + 阶段推进
                 combat::message_log_system,
                 display::unit::sync_transforms,
                 display::unit::billboard_system,

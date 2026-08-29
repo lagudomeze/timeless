@@ -4,11 +4,11 @@
 
 use bevy::prelude::*;
 
-use crate::combat::{
-    AttackIntent, BattleLog, DodgeActive, Enemy, Health, Parry, Player, Stamina, intent_label,
+use crate::combat::{Attack, BattleLog, Enemy, Health, Parry, Player, Stamina, intent_label};
+use crate::menu::{
+    CanAttack, CanFireball, CanMove, CanRoll, MenuSelection, REACTIONS, SKILLS, available_skills,
 };
-use crate::menu::{DECISION_OPTIONS, MenuSelection, REACTION_OPTIONS, ReactionChoice};
-use crate::movement::{FireballCast, MoveIntent, Position, RetreatIntent};
+use crate::movement::{Fireball, Move, Position, Roll};
 use crate::timeline::{TimeLineState, TurnPhase};
 
 /// HUD 文本标记（屏幕底部）
@@ -27,12 +27,11 @@ type PlayerHudQuery<'w, 's> = Query<
         &'static Health,
         &'static Stamina,
         &'static Position,
-        Option<&'static AttackIntent>,
-        Option<&'static MoveIntent>,
-        Option<&'static RetreatIntent>,
-        Option<&'static DodgeActive>,
+        Option<&'static Attack>,
+        Option<&'static Move>,
+        Option<&'static Roll>,
+        Option<&'static Fireball>,
         Option<&'static Parry>,
-        Option<&'static FireballCast>,
     ),
     With<Player>,
 >;
@@ -44,11 +43,18 @@ type EnemyHudQuery<'w, 's> = Query<
     (
         &'static Health,
         &'static Position,
-        Option<&'static AttackIntent>,
-        Option<&'static MoveIntent>,
-        Option<&'static RetreatIntent>,
+        Option<&'static Attack>,
+        Option<&'static Move>,
     ),
     With<Enemy>,
+>;
+
+/// HUD 能力查询（决策选项展示）
+type HudCapabilityQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Has<CanAttack>, Has<CanMove>, Has<CanRoll>, Has<CanFireball>),
+    (With<Player>, Without<Enemy>),
 >;
 
 /// 创建 HUD 文本节点（setup 调用一次）
@@ -121,6 +127,7 @@ pub fn hud_system(
     mut hud_q: Query<&mut Text, With<HudText>>,
     player_q: PlayerHudQuery<'_, '_>,
     enemy_q: EnemyHudQuery<'_, '_>,
+    capability_q: HudCapabilityQuery<'_, '_>,
 ) {
     let Ok(mut text) = hud_q.single_mut() else {
         return;
@@ -128,16 +135,19 @@ pub fn hud_system(
 
     let (state, keys_hint, sel_line) = match tl.phase {
         TurnPhase::Decision => {
+            let available = capability_q
+                .single()
+                .ok()
+                .map(|(a, m, r, f)| available_skills(a, m, r, f))
+                .unwrap_or_default();
             let mut sel = String::new();
-            for (i, a) in DECISION_OPTIONS.iter().enumerate() {
+            for (i, &skill) in available.iter().enumerate() {
                 sel.push_str(if i == menu.index { " ▶ " } else { "   " });
-                sel.push_str(match a {
-                    crate::menu::Action::Attack => "攻击",
-                    crate::menu::Action::Move => "移动",
-                    crate::menu::Action::Roll => "翻滚",
-                    crate::menu::Action::Fireball => "火球（-2 精力）",
-                    _ => "?",
-                });
+                let def = &SKILLS[skill];
+                sel.push_str(def.label);
+                if def.cost > 0 {
+                    sel.push_str(&format!("（-{} 精力）", def.cost));
+                }
                 sel.push('\n');
             }
             (
@@ -149,13 +159,12 @@ pub fn hud_system(
         }
         TurnPhase::Reaction => {
             let mut sel = String::new();
-            for (i, c) in REACTION_OPTIONS.iter().enumerate() {
+            for (i, def) in REACTIONS.iter().enumerate() {
                 sel.push_str(if i == menu.index { " ▶ " } else { "   " });
-                sel.push_str(match c {
-                    ReactionChoice::Continue => "继续攻击",
-                    ReactionChoice::RollCancel => "翻滚取消（-2 精力）",
-                    ReactionChoice::Parry => "招架（-1 精力）",
-                });
+                sel.push_str(def.label);
+                if def.cost > 0 {
+                    sel.push_str(&format!("（-{} 精力）", def.cost));
+                }
                 sel.push('\n');
             }
             (
@@ -173,22 +182,21 @@ pub fn hud_system(
     };
 
     let p_line = match player_q.single() {
-        Ok((h, s, p, attack, mov, retreat, dodge, parry, fireball)) => {
-            let action = intent_label(attack, mov, retreat, parry, fireball);
-            let dodge_tag = if dodge.is_some() { "（闪避）" } else { "" };
+        Ok((h, s, p, attack, mov, roll, fireball, parry)) => {
+            let action = intent_label(attack, mov, roll, fireball, parry);
             format!(
-                "玩家  生命 {}/{}  精力 {}/{}  行动 {}{dodge_tag}  @({},{})",
+                "玩家  生命 {}/{}  精力 {}/{}  行动 {}  @({},{})",
                 h.current, h.max, s.current, s.max, action, p.0.x, p.0.y
             )
         }
         Err(_) => "玩家  已阵亡".to_string(),
     };
     let e_line = match enemy_q.single() {
-        Ok((h, p, attack, mov, retreat)) => format!(
+        Ok((h, p, attack, mov)) => format!(
             "敌人  生命 {}/{}  行动 {}  @({},{})",
             h.current,
             h.max,
-            intent_label(attack, mov, retreat, None, None),
+            intent_label(attack, mov, None, None, None),
             p.0.x,
             p.0.y
         ),

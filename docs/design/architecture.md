@@ -48,7 +48,7 @@ src/
 
 战斗数据建模遵循「实体 + 小组件组合」：`Health` 对应 `Damage`、攻击属性拆成
 `AttackFrame` / `AttackRange` / `Impact`、行动用意图组件表达
-（`AttackIntent` / `MoveIntent` / `RetreatIntent`），详见
+（`Attack` / `Move` / `Roll` / `Fireball`，由能力标记 + 技能表驱动），详见
 [ecs-combat-components.md](ecs-combat-components.md)。
 
 ## 现状与差距（WIP）

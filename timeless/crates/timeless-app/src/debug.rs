@@ -1,8 +1,8 @@
 //! # 应用层：极简调试面板
 //!
 //! 展示战斗关键状态，并按阶段提供**可用操作列表**：
-//! - Decision（暂停）：选择行动 [Attack] [Move] [Roll] [Fireball]，提交 [Commit]
-//! - Reaction（暂停）：选择反应 [Continue] [Roll-Cancel] [Parry]
+//! - Decision（暂停）：从 `SKILLS` 表渲染技能按钮（可用性由能力组件过滤），提交 [Commit]
+//! - Reaction（暂停）：从 `REACTIONS` 表渲染反应按钮
 //! - 任意阶段：重置 [Reset Battle]
 //!
 //! 面板不直接改状态，只写 Message，由对应系统消费（模块间解耦）。
@@ -13,11 +13,14 @@ use bevy_egui::egui;
 
 use crate::combat::*;
 use crate::display::map::GRID_SIZE;
-use crate::menu::*;
-use crate::movement::{FireballCast, MoveIntent, Position, RetreatIntent};
+use crate::menu::{
+    CanAttack, CanFireball, CanMove, CanRoll, CommitTurn, MenuSelection, REACTIONS, ReactionSelect,
+    SKILLS, SelectSkill, available_skills,
+};
+use crate::movement::{Fireball, Move, Position, Roll};
 use crate::timeline::*;
 
-/// 调试面板玩家查询（数值 + 意图组合）
+/// 调试面板玩家查询（数值 + 行动组件组合）
 type PlayerDebugQuery<'w, 's> = Query<
     'w,
     's,
@@ -25,34 +28,39 @@ type PlayerDebugQuery<'w, 's> = Query<
         &'static Position,
         &'static Health,
         &'static Stamina,
-        Option<&'static AttackIntent>,
-        Option<&'static MoveIntent>,
-        Option<&'static RetreatIntent>,
-        Option<&'static DodgeActive>,
+        Option<&'static Attack>,
+        Option<&'static Move>,
+        Option<&'static Roll>,
+        Option<&'static Fireball>,
         Option<&'static Parry>,
-        Option<&'static FireballCast>,
     ),
     With<Player>,
 >;
 
-/// 调试面板敌人查询（数值 + 意图组合）
+/// 调试面板敌人查询（数值 + 行动组件组合）
 type EnemyDebugQuery<'w, 's> = Query<
     'w,
     's,
     (
         &'static Position,
         &'static Health,
-        Option<&'static AttackIntent>,
-        Option<&'static MoveIntent>,
-        Option<&'static RetreatIntent>,
+        Option<&'static Attack>,
+        Option<&'static Move>,
     ),
     With<Enemy>,
 >;
 
+/// 调试面板能力查询（玩家可行动标记）
+type DebugCapabilityQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Has<CanAttack>, Has<CanMove>, Has<CanRoll>, Has<CanFireball>),
+    (With<Player>, Without<Enemy>),
+>;
+
 /// 极简调试面板（egui 窗口）
 ///
-/// 参数较多：1 个 egui 上下文 + 菜单游标 + 资源/命令 + 4 个只读查询 + 4 个消息写出器，
-/// 属合理边界。
+/// 参数较多：egui 上下文 + 菜单游标 + 数值/能力查询 + 消息写出器，属合理边界。
 #[allow(clippy::too_many_arguments)]
 pub fn debug_panel_system(
     mut contexts: EguiContexts,
@@ -60,7 +68,8 @@ pub fn debug_panel_system(
     menu: Res<MenuSelection>,
     player_q: PlayerDebugQuery<'_, '_>,
     enemy_q: EnemyDebugQuery<'_, '_>,
-    mut ev_select: MessageWriter<SelectAction>,
+    capability_q: DebugCapabilityQuery<'_, '_>,
+    mut ev_select: MessageWriter<SelectSkill>,
     mut ev_commit: MessageWriter<CommitTurn>,
     mut ev_reaction: MessageWriter<ReactionSelect>,
     mut ev_reset: MessageWriter<ResetBattle>,
@@ -70,9 +79,14 @@ pub fn debug_panel_system(
     };
 
     let player_sta = player_q.single().map(|(_, _, s, ..)| s.current).ok();
+    let available = capability_q
+        .single()
+        .ok()
+        .map(|(a, m, r, f)| available_skills(a, m, r, f))
+        .unwrap_or_default();
 
     egui::Window::new("Combat Debug")
-        .default_width(380.0)
+        .default_width(420.0)
         .show(ctx, |ui| {
             ui.heading(format!("Tick {}", tl.global_tick));
             let phase_str = match tl.phase {
@@ -86,11 +100,10 @@ pub fn debug_panel_system(
 
             // 双方状态
             match player_q.single() {
-                Ok((p, h, s, attack, mov, retreat, dodge, parry, fireball)) => {
-                    let action = intent_label(attack, mov, retreat, parry, fireball);
-                    let dodge_tag = if dodge.is_some() { " [DODGE]" } else { "" };
+                Ok((p, h, s, attack, mov, roll, fireball, parry)) => {
+                    let action = intent_label(attack, mov, roll, fireball, parry);
                     ui.label(format!(
-                        "Player @({},{})  HP {}/{}  STA {}/{}  act {action}{dodge_tag}",
+                        "Player @({},{})  HP {}/{}  STA {}/{}  act {action}",
                         p.0.x, p.0.y, h.current, h.max, s.current, s.max
                     ));
                 }
@@ -99,8 +112,8 @@ pub fn debug_panel_system(
                 }
             }
             match enemy_q.single() {
-                Ok((p, h, attack, mov, retreat)) => {
-                    let action = intent_label(attack, mov, retreat, None, None);
+                Ok((p, h, attack, mov)) => {
+                    let action = intent_label(attack, mov, None, None, None);
                     ui.label(format!(
                         "Enemy  @({},{})  HP {}/{}  act {action}",
                         p.0.x, p.0.y, h.current, h.max
@@ -115,28 +128,28 @@ pub fn debug_panel_system(
             // 按阶段给出可用操作列表（选中高亮跟随键盘 Tab 游标）
             match tl.phase {
                 TurnPhase::Decision => {
-                    ui.label("Available actions (Tab):");
-                    ui.horizontal(|ui| {
-                        let is_attack = DECISION_OPTIONS[menu.index] == Action::Attack;
-                        if ui.selectable_label(is_attack, "⚔ Attack").clicked() {
-                            ev_select.write(SelectAction(Action::Attack));
-                        }
-                        let is_move = DECISION_OPTIONS[menu.index] == Action::Move;
-                        if ui.selectable_label(is_move, "➜ Move").clicked() {
-                            ev_select.write(SelectAction(Action::Move));
-                        }
-                        let is_roll = DECISION_OPTIONS[menu.index] == Action::Roll;
-                        if ui.selectable_label(is_roll, "🌀 Roll").clicked() {
-                            ev_select.write(SelectAction(Action::Roll));
-                        }
-                        let can_fireball = player_sta.unwrap_or(0) >= FIREBALL_COST;
-                        let is_fireball = DECISION_OPTIONS[menu.index] == Action::Fireball;
-                        let btn = ui.add_enabled(
-                            can_fireball,
-                            egui::Button::new("🔥 Fireball (-2 STA)").selected(is_fireball),
-                        );
-                        if btn.clicked() {
-                            ev_select.write(SelectAction(Action::Fireball));
+                    ui.label("Available skills (Tab):");
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, &skill) in available.iter().enumerate() {
+                            let def = &SKILLS[skill];
+                            let selected = menu.index == i;
+                            let can_afford = player_sta.unwrap_or(0) >= def.cost;
+                            let label = format!(
+                                "{} {}",
+                                def.label,
+                                if def.cost > 0 {
+                                    format!("(-{})", def.cost)
+                                } else {
+                                    String::new()
+                                }
+                            );
+                            let btn = ui.add_enabled(
+                                can_afford,
+                                egui::Button::new(label).selected(selected),
+                            );
+                            if btn.clicked() {
+                                ev_select.write(SelectSkill(skill));
+                            }
                         }
                     });
                     if ui.button("✅ Commit (Space)").clicked() {
@@ -145,31 +158,26 @@ pub fn debug_panel_system(
                 }
                 TurnPhase::Reaction => {
                     ui.label("Available reactions (Tab):");
-                    ui.horizontal(|ui| {
-                        let is_continue = REACTION_OPTIONS[menu.index] == ReactionChoice::Continue;
-                        if ui
-                            .selectable_label(is_continue, "✅ Continue attack")
-                            .clicked()
-                        {
-                            ev_reaction.write(ReactionSelect(ReactionChoice::Continue));
-                        }
-                        let can_cancel = player_sta.unwrap_or(0) >= 2;
-                        let is_cancel = REACTION_OPTIONS[menu.index] == ReactionChoice::RollCancel;
-                        let btn = ui.add_enabled(
-                            can_cancel,
-                            egui::Button::new("🌀 Roll-Cancel (-2 STA)").selected(is_cancel),
-                        );
-                        if btn.clicked() {
-                            ev_reaction.write(ReactionSelect(ReactionChoice::RollCancel));
-                        }
-                        let can_parry = player_sta.unwrap_or(0) >= PARRY_COST;
-                        let is_parry = REACTION_OPTIONS[menu.index] == ReactionChoice::Parry;
-                        let btn = ui.add_enabled(
-                            can_parry,
-                            egui::Button::new("🛡 Parry (-1 STA)").selected(is_parry),
-                        );
-                        if btn.clicked() {
-                            ev_reaction.write(ReactionSelect(ReactionChoice::Parry));
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, def) in REACTIONS.iter().enumerate() {
+                            let selected = menu.index == i;
+                            let can_afford = player_sta.unwrap_or(0) >= def.cost;
+                            let label = format!(
+                                "{} {}",
+                                def.label,
+                                if def.cost > 0 {
+                                    format!("(-{})", def.cost)
+                                } else {
+                                    String::new()
+                                }
+                            );
+                            let btn = ui.add_enabled(
+                                can_afford,
+                                egui::Button::new(label).selected(selected),
+                            );
+                            if btn.clicked() {
+                                ev_reaction.write(ReactionSelect(i));
+                            }
                         }
                     });
                     if stamina_too_low(player_sta) {
@@ -181,7 +189,7 @@ pub fn debug_panel_system(
                             ),
                         );
                     }
-                    ui.small("Enemy will hit you — cancel to dodge");
+                    ui.small("Enemy will hit you — cancel to dodge / parry");
                 }
                 TurnPhase::Resolving => {
                     ui.label("Resolving… (instant)");
@@ -193,14 +201,13 @@ pub fn debug_panel_system(
             ui.separator();
 
             ui.small(format!("Grid {}×{}", GRID_SIZE, GRID_SIZE));
-
             if ui.button("🔄 Reset Battle (also R)").clicked() {
                 ev_reset.write(ResetBattle);
             }
         });
 }
 
-/// 精力是否不足以翻滚取消（< 2 时禁用该选项并提示）
+/// 精力是否不足以做任何消耗性反应（< 2 时提示）
 fn stamina_too_low(sta: Option<u32>) -> bool {
     sta.is_some_and(|s| s < 2)
 }
