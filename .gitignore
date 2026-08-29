@@ -1,0 +1,12 @@
+# Rust 构建产物
+/target/
+
+# 本地 Codex 状态（技能安装副本、会话等）
+.codex/
+
+# 编辑器
+.vscode/
+.idea/
+
+# 日志与临时文件
+*.log

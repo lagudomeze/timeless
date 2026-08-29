@@ -1,0 +1,3 @@
+interface:
+  display_name: "Bevy Assets"
+  short_description: "获取免费 2D/3D/音频素材并接入 Bevy 0.19"

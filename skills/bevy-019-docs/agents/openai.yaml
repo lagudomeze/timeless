@@ -1,0 +1,3 @@
+interface:
+  display_name: "Bevy 019 Docs"
+  short_description: "查证 Bevy 0.19 API 与最佳实践，来源优先级与已知差异"

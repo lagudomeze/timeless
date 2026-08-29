@@ -1,0 +1,18 @@
+# Project Timeless — cargo workspace 根（子项目）
+#
+# 说明：
+# - 依赖版本通过镜像源（清华 sparse index）解析，直接手写 Cargo.toml 后 cargo build 即可；
+# - 各依赖的版本与文档索引见 TODO.md「依赖与文档索引」章节；
+# - 领域层（timeless-domain）禁止引入引擎依赖，靠 crate 边界强制。
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/timeless-domain",   # 领域层：纯 Rust，零 Bevy 依赖，可单测
+    "crates/timeless-app",      # 应用层：Bevy 组件 / 系统 / 渲染
+]
+
+# 本地补丁：parley 0.9.0 原版对 CJK 分词只用 new_for_non_complex_scripts，
+# 中文 HUD 会触发 ICU4X "No segmentation model" 刷屏。见 vendor/parley/README.patch.md。
+[patch.crates-io]
+parley = { path = "vendor/parley" }
