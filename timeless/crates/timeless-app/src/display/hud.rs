@@ -4,14 +4,20 @@
 
 use bevy::prelude::*;
 
-use crate::combat::{AttackIntent, DodgeActive, Enemy, Health, Player, Stamina, intent_label};
+use crate::combat::{
+    AttackIntent, BattleLog, DodgeActive, Enemy, Health, Parry, Player, Stamina, intent_label,
+};
 use crate::menu::{DECISION_OPTIONS, MenuSelection, REACTION_OPTIONS, ReactionChoice};
-use crate::movement::{MoveIntent, Position, RetreatIntent};
+use crate::movement::{FireballCast, MoveIntent, Position, RetreatIntent};
 use crate::timeline::{TimeLineState, TurnPhase};
 
 /// HUD 文本标记（屏幕底部）
 #[derive(Component, Debug, Clone, Copy)]
 pub struct HudText;
+
+/// 战斗日志文本标记（屏幕右下角，最新消息在底部）
+#[derive(Component, Debug, Clone, Copy)]
+pub struct BattleLogText;
 
 /// HUD 玩家行查询（数值 + 意图组合）
 type PlayerHudQuery<'w, 's> = Query<
@@ -25,6 +31,8 @@ type PlayerHudQuery<'w, 's> = Query<
         Option<&'static MoveIntent>,
         Option<&'static RetreatIntent>,
         Option<&'static DodgeActive>,
+        Option<&'static Parry>,
+        Option<&'static FireballCast>,
     ),
     With<Player>,
 >;
@@ -69,6 +77,43 @@ pub fn spawn_hud(commands: &mut Commands, asset_server: &AssetServer) {
     ));
 }
 
+/// 创建战斗日志 UI 文本（setup 调用一次）
+pub fn spawn_battle_log(commands: &mut Commands, asset_server: &AssetServer) {
+    let font = asset_server.load::<Font>("fonts/NotoSansSC-Regular.otf");
+    commands.spawn((
+        BattleLogText,
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(12.0),
+            bottom: Val::Px(12.0),
+            ..default()
+        },
+        Text::new(String::new()),
+        TextFont {
+            font: FontSource::Handle(font),
+            font_size: FontSize::Px(14.0),
+            ..default()
+        },
+        TextLayout {
+            linebreak: LineBreak::NoWrap,
+            justify: Justify::Left,
+        },
+        TextColor(Color::srgb(0.85, 0.9, 0.95)),
+    ));
+}
+
+/// 战斗日志：把 `BattleLog` 资源渲染成屏幕右下角多行文本（内容变化时才写回）
+pub fn battle_log_system(log: Res<BattleLog>, mut text_q: Query<&mut Text, With<BattleLogText>>) {
+    let Ok(mut text) = text_q.single_mut() else {
+        return;
+    };
+    // 按时间顺序排列：底部锚定节点向上生长，最新一条自然落在最底部
+    let content = log.entries.iter().cloned().collect::<Vec<_>>().join("\n");
+    if text.0.as_str() != content {
+        **text = content;
+    }
+}
+
 /// HUD：回合状态 + 双方数值 + 按键提示
 pub fn hud_system(
     tl: Res<TimeLineState>,
@@ -90,6 +135,7 @@ pub fn hud_system(
                     crate::menu::Action::Attack => "攻击",
                     crate::menu::Action::Move => "移动",
                     crate::menu::Action::Roll => "翻滚",
+                    crate::menu::Action::Fireball => "火球（-2 精力）",
                     _ => "?",
                 });
                 sel.push('\n');
@@ -108,6 +154,7 @@ pub fn hud_system(
                 sel.push_str(match c {
                     ReactionChoice::Continue => "继续攻击",
                     ReactionChoice::RollCancel => "翻滚取消（-2 精力）",
+                    ReactionChoice::Parry => "招架（-1 精力）",
                 });
                 sel.push('\n');
             }
@@ -126,8 +173,8 @@ pub fn hud_system(
     };
 
     let p_line = match player_q.single() {
-        Ok((h, s, p, attack, mov, retreat, dodge)) => {
-            let action = intent_label(attack, mov, retreat);
+        Ok((h, s, p, attack, mov, retreat, dodge, parry, fireball)) => {
+            let action = intent_label(attack, mov, retreat, parry, fireball);
             let dodge_tag = if dodge.is_some() { "（闪避）" } else { "" };
             format!(
                 "玩家  生命 {}/{}  精力 {}/{}  行动 {}{dodge_tag}  @({},{})",
@@ -141,7 +188,7 @@ pub fn hud_system(
             "敌人  生命 {}/{}  行动 {}  @({},{})",
             h.current,
             h.max,
-            intent_label(attack, mov, retreat),
+            intent_label(attack, mov, retreat, None, None),
             p.0.x,
             p.0.y
         ),

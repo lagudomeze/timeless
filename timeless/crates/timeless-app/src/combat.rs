@@ -10,6 +10,8 @@
 //! - 结算流水线：`ai_system` 生成意图 → `resolve_system` 裁决 + 应用伤害 →
 //!   `death_check_system` 清场 → `message_log_system` 打印事件链。
 
+use std::collections::VecDeque;
+
 use bevy::prelude::*;
 
 use timeless_domain::combat::{
@@ -17,7 +19,9 @@ use timeless_domain::combat::{
 };
 
 use crate::menu::{ActionSubmitted, MenuSelection};
-use crate::movement::{MoveIntent, Position, Projectile, RetreatIntent};
+use crate::movement::{
+    FireballAssets, FireballCast, MoveIntent, Position, Projectile, RetreatIntent, spawn_fireball,
+};
 use crate::timeline::{TimeLineState, TurnPhase};
 
 // ─────────────────────────── 组件（状态） ───────────────────────────
@@ -101,6 +105,31 @@ pub struct Parry;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Interrupted;
 
+/// 战斗日志（屏幕 UI 用）：环形保留最近 N 条消息，格式与控制台一致
+#[derive(Resource, Debug)]
+pub struct BattleLog {
+    pub entries: VecDeque<String>,
+    pub max: usize,
+}
+
+impl Default for BattleLog {
+    fn default() -> Self {
+        Self {
+            entries: VecDeque::with_capacity(8),
+            max: 8,
+        }
+    }
+}
+
+impl BattleLog {
+    pub fn push(&mut self, msg: String) {
+        if self.entries.len() >= self.max {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(msg);
+    }
+}
+
 // ─────────────────────────── 消息 ───────────────────────────
 
 /// 一次命中（伤害已应用，供日志 / 后续特效订阅）
@@ -115,6 +144,12 @@ pub struct HitLanded {
 /// 翻滚取消已执行（玩家独有特权）
 #[derive(Message, Debug, Clone, Copy)]
 pub struct RollExecuted {
+    pub entity: Entity,
+}
+
+/// 招架反应已执行（玩家独有特权）
+#[derive(Message, Debug, Clone, Copy)]
+pub struct ParryExecuted {
     pub entity: Entity,
 }
 
@@ -181,6 +216,7 @@ type PlayerCombat<'w, 's> = Query<
         &'static mut Health,
         Option<&'static AttackIntent>,
         Option<&'static DodgeActive>,
+        Option<&'static Parry>,
         &'static AttackFrame,
         &'static AttackRange,
         &'static Impact,
@@ -206,21 +242,44 @@ type EnemyCombat<'w, 's> = Query<
     (With<Enemy>, Without<Player>),
 >;
 
+/// 火球施放查询（玩家，含锁定目标格）
+type PlayerFireballQuery<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static Position, &'static FireballCast),
+    (With<Player>, Without<Enemy>),
+>;
+
 /// 回合结算（瞬时）：读取双方意图 → 组装领域层属性 → 裁决 → 应用伤害 → 清意图。
 /// 位移意图已由 `movement::apply_move_intents_system` 先行处理（改变站位后再裁决）。
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_system(
     mut tl: ResMut<TimeLineState>,
     mut menu: ResMut<MenuSelection>,
     mut player_q: PlayerCombat<'_, '_>,
     mut enemy_q: EnemyCombat<'_, '_>,
+    mut stamina_q: Query<&mut Stamina, (With<Player>, Without<Enemy>)>,
+    fireball_q: PlayerFireballQuery<'_, '_>,
+    fireball_assets: Res<FireballAssets>,
     mut commands: Commands,
+    mut log: ResMut<BattleLog>,
     mut ev_hit: MessageWriter<HitLanded>,
 ) {
     if tl.phase != TurnPhase::Resolving {
         return;
     }
-    let Ok((p_entity, p_pos, mut p_hp, p_attack, p_dodge, p_frame, p_range, p_impact, p_damage)) =
-        player_q.single_mut()
+    let Ok((
+        p_entity,
+        p_pos,
+        mut p_hp,
+        p_attack,
+        p_dodge,
+        p_parry,
+        p_frame,
+        p_range,
+        p_impact,
+        p_damage,
+    )) = player_q.single_mut()
     else {
         return;
     };
@@ -232,6 +291,7 @@ pub fn resolve_system(
 
     tl.global_tick += 1;
     info!("════ 回合 {} 结算 ════", tl.global_tick);
+    log.push(format!("──── 回合 {} 结算 ────", tl.global_tick));
 
     let dist = p_pos.0.chebyshev(e_pos.0);
     // 小组件 → 领域层聚合类型（领域层仍保持零 Bevy 依赖的纯函数裁决）
@@ -247,6 +307,7 @@ pub fn resolve_system(
                 HitOrder::Simultaneous => "同时命中",
             };
             info!("[裁决] {order_str}（距离 {dist}）");
+            log.push(format!("[裁决] {order_str}（距离 {dist}）"));
 
             // 破势打断：被打断一方挂 `Interrupted`，攻击取消（不掉伤害）
             if let Some(side) = r.interrupted {
@@ -256,6 +317,7 @@ pub fn resolve_system(
                 };
                 commands.entity(cancelled).insert(Interrupted);
                 info!("[破势] {who} 的攻击被打断！");
+                log.push(format!("[破势] {who} 的攻击被打断！"));
             }
             if r.attacker_hits && r.interrupted != Some(Side::Attacker) {
                 apply_hit(
@@ -290,11 +352,19 @@ pub fn resolve_system(
                 );
             } else {
                 info!("[裁决] 玩家攻击落空（距离 {dist} 超出射程 {}）", p_range.0);
+                log.push(format!(
+                    "[裁决] 玩家攻击落空（距离 {dist} 超出射程 {}）",
+                    p_range.0
+                ));
             }
         }
         (false, true) => {
             if p_dodge.is_some() {
                 info!("[闪避] 玩家翻滚（无敌帧）闪开了敌人的攻击！");
+                log.push("[闪避] 玩家翻滚（无敌帧）闪开了敌人的攻击！".to_string());
+            } else if p_parry.is_some() {
+                info!("[招架] 玩家招架格挡了敌人的攻击！");
+                log.push("[招架] 玩家招架格挡了敌人的攻击！".to_string());
             } else if resolve_attack(&e_stats, dist) {
                 apply_hit(
                     &mut p_hp,
@@ -306,11 +376,47 @@ pub fn resolve_system(
                 );
             } else {
                 info!("[裁决] 敌人攻击落空（距离 {dist}）");
+                log.push(format!("[裁决] 敌人攻击落空（距离 {dist}）"));
             }
         }
         (false, false) => {
             info!("[裁决] 本回合无交锋");
+            log.push("[裁决] 本回合无交锋".to_string());
         }
+    }
+
+    // 火球施放：生成投射物（目标格在提交时已锁定，敌人移动即可躲避）
+    if let Some(cast) = fireball_q.get(p_entity).ok().map(|(_, _, cast)| *cast) {
+        spawn_fireball(
+            &mut commands,
+            p_pos.0,
+            cast.target.0,
+            cast.speed,
+            cast.amount,
+            cast.radius,
+            fireball_assets.mesh.clone(),
+            fireball_assets.material.clone(),
+        );
+        info!(
+            "[技能] 玩家施放火球 → ({},{})",
+            cast.target.0.x, cast.target.0.y
+        );
+        log.push(format!(
+            "[技能] 玩家施放火球 → ({},{})",
+            cast.target.0.x, cast.target.0.y
+        ));
+    }
+
+    // 精力回复：每回合结算后 +1（上限）
+    if let Ok(mut stamina) = stamina_q.get_mut(p_entity)
+        && stamina.current < stamina.max
+    {
+        stamina.current += 1;
+        info!("[恢复] 精力 +1（{}/{}）", stamina.current, stamina.max);
+        log.push(format!(
+            "[恢复] 精力 +1（{}/{}）",
+            stamina.current, stamina.max
+        ));
     }
 
     // 清除本回合战斗意图（位移意图已由 movement 移除；`Interrupted` 亦随回合结束清掉）
@@ -318,7 +424,9 @@ pub fn resolve_system(
         .entity(p_entity)
         .remove::<AttackIntent>()
         .remove::<DodgeActive>()
-        .remove::<Interrupted>();
+        .remove::<Interrupted>()
+        .remove::<Parry>()
+        .remove::<FireballCast>();
     commands
         .entity(e_entity)
         .remove::<AttackIntent>()
@@ -381,8 +489,14 @@ pub(crate) fn intent_label(
     attack: Option<&AttackIntent>,
     mov: Option<&MoveIntent>,
     retreat: Option<&RetreatIntent>,
+    parry: Option<&Parry>,
+    fireball: Option<&FireballCast>,
 ) -> String {
-    if retreat.is_some() {
+    if parry.is_some() {
+        "招架".to_string()
+    } else if fireball.is_some() {
+        "火球".to_string()
+    } else if retreat.is_some() {
         "翻滚".to_string()
     } else if let Some(m) = mov {
         format!("移动 → ({},{})", m.target.0.x, m.target.0.y)
@@ -394,13 +508,16 @@ pub(crate) fn intent_label(
 }
 
 /// 消息日志：订阅并打印广播的战斗消息（演示模块间解耦通信）
+#[allow(clippy::too_many_arguments)]
 pub fn message_log_system(
     mut submits: MessageReader<ActionSubmitted>,
     mut hits: MessageReader<HitLanded>,
     mut rolls: MessageReader<RollExecuted>,
+    mut parries: MessageReader<ParryExecuted>,
     player_q: Query<Entity, With<Player>>,
     enemy_q: Query<Entity, With<Enemy>>,
     projectile_q: Query<Entity, With<Projectile>>,
+    mut log: ResMut<BattleLog>,
 ) {
     let player = player_q.single().ok();
     let enemy = enemy_q.single().ok();
@@ -418,17 +535,25 @@ pub fn message_log_system(
 
     for m in submits.read() {
         info!("[提交] {} 指令 {:?}", label(m.entity), m.action);
+        log.push(format!("[提交] {} 指令 {:?}", label(m.entity), m.action));
     }
     for m in hits.read() {
-        info!(
+        let msg = format!(
             "[命中] {} → {}：{} 伤害（先手判定 {:?}）",
             label(m.attacker),
             label(m.defender),
             m.damage,
             m.order
         );
+        info!("{msg}");
+        log.push(msg);
     }
     for m in rolls.read() {
         info!("[翻滚取消] {} 中断攻击转为翻滚", label(m.entity));
+        log.push(format!("[翻滚取消] {} 中断攻击转为翻滚", label(m.entity)));
+    }
+    for m in parries.read() {
+        info!("[招架] {} 转为招架姿态", label(m.entity));
+        log.push(format!("[招架] {} 转为招架姿态", label(m.entity)));
     }
 }

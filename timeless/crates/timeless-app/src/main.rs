@@ -32,9 +32,11 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.12, 0.14, 0.18)))
         .init_resource::<TimeLineState>()
         .init_resource::<MenuSelection>()
+        .init_resource::<combat::BattleLog>()
         .add_message::<menu::ActionSubmitted>()
         .add_message::<combat::HitLanded>()
         .add_message::<combat::RollExecuted>()
+        .add_message::<combat::ParryExecuted>()
         .add_message::<timeline::ResetBattle>()
         .add_message::<menu::SelectAction>()
         .add_message::<menu::CommitTurn>()
@@ -56,6 +58,7 @@ fn main() {
                 display::unit::billboard_system,
                 display::hints::move_arrow_system,
                 display::hud::hud_system,
+                display::hud::battle_log_system,
                 display::camera::camera_control_system,
             )
                 .chain(),

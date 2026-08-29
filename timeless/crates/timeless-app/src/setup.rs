@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use crate::combat::{AttackFrame, AttackRange, Damage, Enemy, Health, Impact, Player, Stamina};
 use crate::display::camera::MainCamera;
 use crate::display::hover::spawn_hover_info;
-use crate::display::hud::spawn_hud;
+use crate::display::hud::{spawn_battle_log, spawn_hud};
 use crate::display::map::{
     ENEMY_SPAWN, GRID_SIZE, PLAYER_SPAWN, cell_x, cell_z, spawn_decorations, spawn_ground,
 };
@@ -18,7 +18,7 @@ use crate::display::unit::{
     BILLBOARD_HEIGHT, BILLBOARD_WIDTH, Billboard, GroundShadow, PaperAssets, SHADOW_RADIUS,
     UnitRoot,
 };
-use crate::movement::Position;
+use crate::movement::{FireballAssets, Position};
 
 /// 场景搭建：相机、光照、地面、装饰、纸片单位、HUD
 pub fn setup(
@@ -88,8 +88,20 @@ pub fn setup(
     commands.insert_resource(paper.clone());
     spawn_combatants(&mut commands, &paper);
 
+    // 火球投射物共享资源（施放时由 combat::resolve_system 复用）
+    commands.insert_resource(FireballAssets {
+        mesh: meshes.add(Sphere::new(0.18)),
+        material: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.45, 0.1),
+            unlit: true,
+            ..default()
+        }),
+    });
+
     // HUD：屏幕底部状态文本（单位头顶标签在 3D 场景中暂用 HUD 展示）
     spawn_hud(&mut commands, &asset_server);
+    // 战斗日志：屏幕右下角
+    spawn_battle_log(&mut commands, &asset_server);
     // 悬停坐标读数：屏幕右上角专用区域
     spawn_hover_info(&mut commands, &asset_server);
 }

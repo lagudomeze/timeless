@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use timeless_domain::combat::HitOrder;
 use timeless_domain::grid::GridPos;
 
-use crate::combat::{Enemy, Health, HitLanded, Player, apply_hit};
+use crate::combat::{BattleLog, Enemy, Health, HitLanded, Player, apply_hit};
 use crate::display::map::{GRID_SIZE, cell_x, cell_x_f, cell_z, cell_z_f};
 use crate::timeline::{TimeLineState, TurnPhase};
 
@@ -57,6 +57,22 @@ pub struct ExplosionDamage {
     pub radius: u32,
 }
 
+/// 火球施放意图：提交时锁定目标格；结算时生成投射物（敌人若本回合移动可躲避）
+#[derive(Component, Debug, Clone, Copy)]
+pub struct FireballCast {
+    pub target: Position,
+    pub speed: f32,
+    pub amount: u32,
+    pub radius: u32,
+}
+
+/// 火球投射物共享渲染资源（setup 构建一次，施放时复用）
+#[derive(Resource, Clone)]
+pub struct FireballAssets {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<StandardMaterial>,
+}
+
 // ─────────────────────────── 系统 ───────────────────────────
 
 /// 结算位移意图（Resolving 阶段，先于战斗裁决）：
@@ -67,6 +83,7 @@ pub struct ExplosionDamage {
 pub fn apply_move_intents_system(
     tl: Res<TimeLineState>,
     mut commands: Commands,
+    mut log: ResMut<BattleLog>,
     mut q: Query<(
         Entity,
         &mut Position,
@@ -94,11 +111,23 @@ pub fn apply_move_intents_system(
         if let Some(m) = mov {
             pos.0 = m.target.0;
             info!("[移动] {} → {:?}", who(entity), pos.0);
+            log.push(format!(
+                "[移动] {} → ({},{})",
+                who(entity),
+                pos.0.x,
+                pos.0.y
+            ));
             moved = true;
         }
         if let Some(r) = retreat {
             pos.0 = retreat_from(pos.0, r.from);
             info!("[移动] {} 翻滚后退 → {:?}", who(entity), pos.0);
+            log.push(format!(
+                "[移动] {} 翻滚后退 → ({},{})",
+                who(entity),
+                pos.0.x,
+                pos.0.y
+            ));
             moved = true;
         }
         if moved {
@@ -117,6 +146,7 @@ pub fn apply_move_intents_system(
 pub fn projectile_system(
     time: Res<Time>,
     mut commands: Commands,
+    mut log: ResMut<BattleLog>,
     mut q: Query<(
         Entity,
         &mut Position,
@@ -133,7 +163,7 @@ pub fn projectile_system(
         let from = pos.0;
         let to = dest.0;
         if from == to {
-            explode(entity, to, *boom, &mut targets, &mut ev_hit);
+            explode(entity, to, *boom, &mut log, &mut targets, &mut ev_hit);
             commands.entity(entity).despawn();
             continue;
         }
@@ -146,7 +176,7 @@ pub fn projectile_system(
             // 到达目的地：逻辑坐标落格，触发爆炸后销毁
             pos.0 = to;
             tf.translation = Vec3::new(cell_x(to.x), 0.4, cell_z(to.y));
-            explode(entity, to, *boom, &mut targets, &mut ev_hit);
+            explode(entity, to, *boom, &mut log, &mut targets, &mut ev_hit);
             commands.entity(entity).despawn();
         } else {
             // 途中：按插值推进，渲染坐标保留小数（视觉平滑）
@@ -163,6 +193,7 @@ fn explode(
     source: Entity,
     origin: GridPos,
     boom: ExplosionDamage,
+    log: &mut BattleLog,
     targets: &mut Query<(Entity, &Position, &mut Health), Without<Projectile>>,
     ev_hit: &mut MessageWriter<HitLanded>,
 ) {
@@ -170,6 +201,10 @@ fn explode(
         "[爆炸] 火球命中 ({},{})：{} 伤害 / 半径 {}",
         origin.x, origin.y, boom.amount, boom.radius
     );
+    log.push(format!(
+        "[爆炸] 火球命中 ({},{})：{} 伤害 / 半径 {}",
+        origin.x, origin.y, boom.amount, boom.radius
+    ));
     for (target, pos, mut hp) in targets {
         if pos.0.chebyshev(origin) <= boom.radius {
             apply_hit(

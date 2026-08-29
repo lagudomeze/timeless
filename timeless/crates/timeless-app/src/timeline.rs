@@ -15,7 +15,7 @@
 
 use bevy::prelude::*;
 
-use crate::combat::{Enemy, Player};
+use crate::combat::{BattleLog, Enemy, Player};
 use crate::display::unit::PaperAssets;
 use crate::menu::MenuSelection;
 
@@ -73,6 +73,7 @@ pub fn reset_system(
     mut commands: Commands,
     mut tl: ResMut<TimeLineState>,
     mut menu: ResMut<MenuSelection>,
+    mut log: ResMut<BattleLog>,
     paper: Res<PaperAssets>,
     player_q: Query<Entity, With<Player>>,
     enemy_q: Query<Entity, With<Enemy>>,
@@ -90,5 +91,6 @@ pub fn reset_system(
     *tl = TimeLineState::default();
     menu.index = 0;
     crate::setup::spawn_combatants(&mut commands, &paper);
+    log.push("─ 战斗已重置 ─".to_string());
     info!("[重置] 战斗已还原（双方满状态，回合 {}）", tl.global_tick);
 }

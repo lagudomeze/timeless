@@ -10,18 +10,21 @@ use bevy::prelude::*;
 
 use timeless_domain::grid::GridPos;
 
-use crate::combat::{AttackIntent, DodgeActive, Enemy, Player, RollExecuted, Stamina};
+use crate::combat::{
+    AttackIntent, DodgeActive, Enemy, Parry, ParryExecuted, Player, RollExecuted, Stamina,
+};
 use crate::display::map::GRID_SIZE;
-use crate::movement::{MoveIntent, Position, RetreatIntent};
+use crate::movement::{FireballCast, MoveIntent, Position, RetreatIntent};
 use crate::timeline::{TimeLineState, TurnPhase};
 
 // ─────────────────────────── 状态 ───────────────────────────
 
-/// 反应选项（Reaction 阶段）：继续攻击 / 翻滚取消
+/// 反应选项（Reaction 阶段）：继续攻击 / 翻滚取消 / 招架
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReactionChoice {
     Continue,
     RollCancel,
+    Parry,
 }
 
 /// 行动选项（UI 层标识；提交时转换为意图组件）
@@ -32,6 +35,7 @@ pub enum Action {
     Attack,
     Move,
     Roll,
+    Fireball,
 }
 
 /// 菜单选择游标（Tab 循环导航行动/反应列表；index 指向当前选项）
@@ -41,10 +45,22 @@ pub struct MenuSelection {
 }
 
 /// 决策阶段可用行动（Tab 循环切换；WASD/方向键直接生成移动行动）
-pub(crate) const DECISION_OPTIONS: [Action; 3] = [Action::Attack, Action::Move, Action::Roll];
+pub(crate) const DECISION_OPTIONS: [Action; 4] =
+    [Action::Attack, Action::Move, Action::Roll, Action::Fireball];
 /// 反应阶段可用反应（Tab 循环切换）
-pub(crate) const REACTION_OPTIONS: [ReactionChoice; 2] =
-    [ReactionChoice::Continue, ReactionChoice::RollCancel];
+pub(crate) const REACTION_OPTIONS: [ReactionChoice; 3] = [
+    ReactionChoice::Continue,
+    ReactionChoice::RollCancel,
+    ReactionChoice::Parry,
+];
+
+/// 火球技能参数（Phase 2.1 将外置到 ActionTemplate 配置）
+pub(crate) const FIREBALL_COST: u32 = 2;
+const FIREBALL_SPEED: f32 = 4.0;
+const FIREBALL_AMOUNT: u32 = 8;
+const FIREBALL_RADIUS: u32 = 1;
+/// 招架反应消耗
+pub(crate) const PARRY_COST: u32 = 1;
 
 // ─────────────────────────── 消息 ───────────────────────────
 
@@ -78,12 +94,13 @@ type PlayerReactionQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static mut Stamina), (With<Player>, Without<Enemy>)>;
 
 /// 决策阶段输入（一切冻结，只等玩家）：
-/// - Tab / Shift+Tab 循环切换行动（攻击 / 移动 / 翻滚），选中项写入意图组件
+/// - Tab / Shift+Tab 循环切换行动（攻击 / 移动 / 翻滚 / 火球），选中项写入意图组件
 /// - WASD / 方向键：生成「移动」意图（支持同时按两个方向 → 斜向一格）
 /// - 面板 `SelectAction` 消息：设置玩家意图
 /// - 面板 `CommitTurn` 消息 或 Space 键：提交 → 威胁检测决定进入 Reaction 或 Resolving
+/// - 火球提交时消耗 2 精力（提交即扣，技能不可取消）
 ///
-/// 参数较多：键盘 + 状态 + 游标 + 命令 + 玩家/敌人查询 + 3 个消息通道，属合理边界。
+/// 参数较多：键盘 + 状态 + 游标 + 命令 + 玩家/敌人/精力查询 + 3 个消息通道，属合理边界。
 #[allow(clippy::too_many_arguments)]
 pub fn input_system(
     keys: Res<ButtonInput<KeyCode>>,
@@ -95,6 +112,7 @@ pub fn input_system(
     player_attack_q: Query<&AttackIntent, (With<Player>, Without<Enemy>)>,
     player_move_q: Query<&MoveIntent, (With<Player>, Without<Enemy>)>,
     enemy_attack_q: Query<&AttackIntent, (With<Enemy>, Without<Player>)>,
+    mut stamina_q: Query<&mut Stamina, (With<Player>, Without<Enemy>)>,
     mut ev_submit: MessageWriter<ActionSubmitted>,
     mut ev_select: MessageReader<SelectAction>,
     mut ev_commit: MessageReader<CommitTurn>,
@@ -193,6 +211,17 @@ pub fn input_system(
         info!("[决策] 移动行动需先用 WASD/方向键 指定方向");
         return;
     }
+    // 火球消耗 2 精力（提交即扣，技能不可取消）
+    if DECISION_OPTIONS[menu.index] == Action::Fireball
+        && let Ok(mut stamina) = stamina_q.get_mut(entity)
+        && !stamina.try_spend(FIREBALL_COST)
+    {
+        info!(
+            "[决策] 精力不足（需 {FIREBALL_COST}，当前 {}）—— 无法施放火球",
+            stamina.current
+        );
+        return;
+    }
 
     // 威胁检测：双方本回合都将攻击 → 进入 Reaction 暂停等待
     let player_attacks = player_attack_q.get(entity).is_ok();
@@ -213,7 +242,7 @@ pub fn input_system(
 }
 
 /// 反应阶段（玩家独有特权，一切冻结）：
-/// - Tab / Shift+Tab 导航反应列表（Continue / Roll-Cancel）
+/// - Tab / Shift+Tab 导航反应列表（Continue / Roll-Cancel / Parry）
 /// - Q 键：翻滚取消（精力×2；不足则留在此阶段）
 /// - Space 键：执行当前选中的反应
 ///
@@ -227,6 +256,7 @@ pub fn reaction_system(
     mut player_q: PlayerReactionQuery<'_, '_>,
     enemy_q: Query<&Position, (With<Enemy>, Without<Player>)>,
     mut ev_roll: MessageWriter<RollExecuted>,
+    mut ev_parry: MessageWriter<ParryExecuted>,
     mut ev_reaction: MessageReader<ReactionSelect>,
 ) {
     if tl.phase != TurnPhase::Reaction {
@@ -298,6 +328,28 @@ pub fn reaction_system(
                 stamina.current
             );
         }
+        ReactionChoice::Parry => {
+            // 招架：消耗 1 精力，本回合免疫敌方攻击且不位移（与翻滚的取舍）
+            if !stamina.try_spend(PARRY_COST) {
+                info!(
+                    "[招架] 精力不足（需 {PARRY_COST}，当前 {}）—— 仍在反应阶段，可改选继续攻击",
+                    stamina.current
+                );
+                return; // 留在 Reaction，等待再次选择
+            }
+            commands
+                .entity(entity)
+                .remove::<AttackIntent>()
+                .remove::<RetreatIntent>()
+                .remove::<DodgeActive>()
+                .insert(Parry);
+            tl.phase = TurnPhase::Resolving;
+            ev_parry.write(ParryExecuted { entity });
+            info!(
+                "[招架] 攻击中断！消耗 {PARRY_COST} 精力（剩余 {}），本回合转为招架姿态",
+                stamina.current
+            );
+        }
     }
 }
 
@@ -315,7 +367,9 @@ fn set_pending_action(
         .remove::<AttackIntent>()
         .remove::<MoveIntent>()
         .remove::<RetreatIntent>()
-        .remove::<DodgeActive>();
+        .remove::<DodgeActive>()
+        .remove::<Parry>()
+        .remove::<FireballCast>();
     match action {
         Action::Attack => {
             commands.entity(entity).insert(AttackIntent);
@@ -330,6 +384,14 @@ fn set_pending_action(
                 .entity(entity)
                 .insert(RetreatIntent { from: enemy_pos })
                 .insert(DodgeActive);
+        }
+        Action::Fireball => {
+            commands.entity(entity).insert(FireballCast {
+                target: Position(enemy_pos),
+                speed: FIREBALL_SPEED,
+                amount: FIREBALL_AMOUNT,
+                radius: FIREBALL_RADIUS,
+            });
         }
         Action::None => {}
     }
