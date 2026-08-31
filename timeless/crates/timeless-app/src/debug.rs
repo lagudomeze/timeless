@@ -1,21 +1,22 @@
 //! # 应用层：极简调试面板
 //!
-//! 展示战斗关键状态，并按阶段提供**可用操作列表**：
-//! - Decision（暂停）：从 `SKILLS` 表渲染技能按钮（可用性由能力组件过滤），提交 [Commit]
-//! - Reaction（暂停）：从 `REACTIONS` 表渲染反应按钮
-//! - 任意阶段：重置 [Reset Battle]
+//! 展示战斗关键状态，并提供可用操作列表：
+//! - 技能按钮（可用性由能力组件过滤）+ 提交 [Commit]
+//! - 实时反应按钮（翻滚取消 / 招架，前摇窗口内有效）
+//! - 任意时刻：重置 [Reset Battle]
 //!
 //! 面板不直接改状态，只写 Message，由对应系统消费（模块间解耦）。
 
 use bevy::prelude::*;
+use bevy::time::Virtual;
 use bevy_egui::EguiContexts;
 use bevy_egui::egui;
 
 use crate::combat::*;
 use crate::display::map::GRID_SIZE;
 use crate::menu::{
-    CanAttack, CanFireball, CanMove, CanRoll, CommitTurn, MenuSelection, REACTIONS, ReactionSelect,
-    SKILLS, SelectSkill, available_skills,
+    CanAttack, CanFireball, CanMove, CanRoll, CommitAction, MenuSelection, ReactionInput,
+    ReactionKind, SKILLS, SelectSkill, available_skills,
 };
 use crate::movement::Position;
 use crate::timeline::*;
@@ -38,19 +39,19 @@ type DebugCapabilityQuery<'w, 's> = Query<
 
 /// 极简调试面板（egui 窗口）
 ///
-/// 参数较多：egui 上下文 + 菜单游标 + 数值/能力查询 + 消息写出器，属合理边界。
+/// 参数较多：egui 上下文 + 虚拟时间 + 菜单游标 + 数值/能力查询 + 消息写出器，属合理边界。
 #[allow(clippy::too_many_arguments)]
 pub fn debug_panel_system(
     mut contexts: EguiContexts,
-    tl: Res<TimeLineState>,
+    time: Res<Time<Virtual>>,
     menu: Res<MenuSelection>,
     player_q: PlayerDebugQuery<'_, '_>,
     enemy_q: EnemyDebugQuery<'_, '_>,
     capability_q: DebugCapabilityQuery<'_, '_>,
     actions: ActionLabelQuery<'_, '_>,
     mut ev_select: MessageWriter<SelectSkill>,
-    mut ev_commit: MessageWriter<CommitTurn>,
-    mut ev_reaction: MessageWriter<ReactionSelect>,
+    mut ev_commit: MessageWriter<CommitAction>,
+    mut ev_reaction: MessageWriter<ReactionInput>,
     mut ev_reset: MessageWriter<ResetBattle>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -67,14 +68,7 @@ pub fn debug_panel_system(
     egui::Window::new("Combat Debug")
         .default_width(420.0)
         .show(ctx, |ui| {
-            ui.heading(format!("Tick {}", tl.global_tick));
-            let phase_str = match tl.phase {
-                TurnPhase::Decision => "DECISION (paused)",
-                TurnPhase::Reaction => "REACTION (paused)",
-                TurnPhase::Resolving => "RESOLVING",
-                TurnPhase::GameOver => "GAME OVER",
-            };
-            ui.label(format!("Phase: {phase_str}"));
+            ui.heading(format!("Virtual Time {:.2}s", time.elapsed().as_secs_f64()));
             ui.separator();
 
             // 双方状态
@@ -104,89 +98,61 @@ pub fn debug_panel_system(
             }
             ui.separator();
 
-            // 按阶段给出可用操作列表（选中高亮跟随键盘 Tab 游标）
-            match tl.phase {
-                TurnPhase::Decision => {
-                    ui.label("Available skills (Tab):");
-                    ui.horizontal_wrapped(|ui| {
-                        for (i, &skill) in available.iter().enumerate() {
-                            let def = &SKILLS[skill];
-                            let selected = menu.index == i;
-                            let can_afford = player_sta.unwrap_or(0) >= def.cost;
-                            let label = format!(
-                                "{} {}",
-                                def.label,
-                                if def.cost > 0 {
-                                    format!("(-{})", def.cost)
-                                } else {
-                                    String::new()
-                                }
-                            );
-                            let btn = ui.add_enabled(
-                                can_afford,
-                                egui::Button::new(label).selected(selected),
-                            );
-                            if btn.clicked() {
-                                ev_select.write(SelectSkill(skill));
-                            }
+            // 技能选择（选中高亮跟随键盘 Tab 游标）+ 提交
+            ui.label("Skills (Tab):");
+            ui.horizontal_wrapped(|ui| {
+                for (i, &skill) in available.iter().enumerate() {
+                    let def = &SKILLS[skill];
+                    let selected = menu.index == i;
+                    let can_afford = player_sta.unwrap_or(0) >= def.cost;
+                    let label = format!(
+                        "{} {}",
+                        def.label,
+                        if def.cost > 0 {
+                            format!("(-{})", def.cost)
+                        } else {
+                            String::new()
                         }
-                    });
-                    if ui.button("✅ Commit (Space)").clicked() {
-                        ev_commit.write(CommitTurn);
+                    );
+                    let btn =
+                        ui.add_enabled(can_afford, egui::Button::new(label).selected(selected));
+                    if btn.clicked() {
+                        ev_select.write(SelectSkill(skill));
                     }
                 }
-                TurnPhase::Reaction => {
-                    ui.label("Available reactions (Tab):");
-                    ui.horizontal_wrapped(|ui| {
-                        for (i, def) in REACTIONS.iter().enumerate() {
-                            let selected = menu.index == i;
-                            let can_afford = player_sta.unwrap_or(0) >= def.cost;
-                            let label = format!(
-                                "{} {}",
-                                def.label,
-                                if def.cost > 0 {
-                                    format!("(-{})", def.cost)
-                                } else {
-                                    String::new()
-                                }
-                            );
-                            let btn = ui.add_enabled(
-                                can_afford,
-                                egui::Button::new(label).selected(selected),
-                            );
-                            if btn.clicked() {
-                                ev_reaction.write(ReactionSelect(i));
-                            }
-                        }
-                    });
-                    if stamina_too_low(player_sta) {
-                        ui.colored_label(
-                            egui::Color32::YELLOW,
-                            format!(
-                                "Stamina too low ({}), cannot cancel / parry",
-                                player_sta.unwrap_or(0)
-                            ),
-                        );
-                    }
-                    ui.small("Enemy will hit you — cancel to dodge / parry");
-                }
-                TurnPhase::Resolving => {
-                    ui.label("Resolving… (timeline)");
-                }
-                TurnPhase::GameOver => {
-                    ui.colored_label(egui::Color32::RED, "Battle finished");
-                }
+            });
+            if ui.button("✅ Commit (Space)").clicked() {
+                ev_commit.write(CommitAction);
             }
-            ui.separator();
 
+            // 实时反应（前摇窗口内有效，校验在消费端）
+            ui.separator();
+            ui.label("Reactions (during windup):");
+            ui.horizontal_wrapped(|ui| {
+                let can_cancel = player_sta.unwrap_or(0) >= 2;
+                if ui
+                    .add_enabled(can_cancel, egui::Button::new("翻滚取消 Q (-2)"))
+                    .clicked()
+                {
+                    ev_reaction.write(ReactionInput {
+                        kind: ReactionKind::RollCancel,
+                    });
+                }
+                let can_parry = player_sta.unwrap_or(0) >= 1;
+                if ui
+                    .add_enabled(can_parry, egui::Button::new("招架 E (-1)"))
+                    .clicked()
+                {
+                    ev_reaction.write(ReactionInput {
+                        kind: ReactionKind::Parry,
+                    });
+                }
+            });
+
+            ui.separator();
             ui.small(format!("Grid {}×{}", GRID_SIZE, GRID_SIZE));
             if ui.button("🔄 Reset Battle (also R)").clicked() {
                 ev_reset.write(ResetBattle);
             }
         });
-}
-
-/// 精力是否不足以做任何消耗性反应（< 2 时提示）
-fn stamina_too_low(sta: Option<u32>) -> bool {
-    sta.is_some_and(|s| s < 2)
 }

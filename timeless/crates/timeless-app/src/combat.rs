@@ -17,17 +17,15 @@ use std::collections::VecDeque;
 
 use bevy::ecs::template::FromTemplate;
 use bevy::prelude::*;
+use bevy::time::Virtual;
 
 use timeless_domain::combat::{
     AttackStats as DomainAttackStats, HitOrder, Side, resolve_attack, resolve_combat,
 };
 
 use crate::display::map::{cell_x, cell_z};
-use crate::menu::MenuSelection;
 use crate::movement::{Destination, GridMath, LinearVelocity, MoveTo, Position, Projectile, Roll};
-use crate::timeline::{
-    Committed, Declared, Pending, ScheduledAction, TICK_MS, TimeLineState, TurnPhase,
-};
+use crate::timeline::{Committed, Declared, Pending, ScheduledAction, TICK_MS};
 
 // ─────────────────────────── 属性组件（单位常驻） ───────────────────────────
 
@@ -135,9 +133,15 @@ pub struct FireballAssets {
 
 // ─────────────────────────── 防御标记与结算结果 ───────────────────────────
 
-/// 闪避标记（挂在单位上）：本回合翻滚中，攻击对其落空
+/// 闪避标记（挂在单位上）：翻滚后短暂无敌，攻击对其落空
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Dodging;
+pub struct Dodging {
+    /// 过期时刻（虚拟时间毫秒），到达后自动移除
+    pub expires_at: u64,
+}
+
+/// 闪避（翻滚 i 帧）持续时间（虚拟时间毫秒）
+pub const DODGE_MS: u64 = 500;
 
 /// 招架标记（挂在单位上）：绑定到被招架的攻击实体
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +227,10 @@ type EnemyAiQuery<'w, 's> = Query<
 type PlayerPairQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static Position), (With<Player>, Without<Enemy>)>;
 
+/// 动作残留查询（任一状态，AI 判断是否还有动作在时间线上）
+type AnyActionQuery<'w, 's> =
+    Query<'w, 's, &'static ScheduledAction, Or<(With<Declared>, With<Pending>, With<Committed>)>>;
+
 /// 动作标签查询（HUD / 调试面板共用）：读某执行者当前 Declared / Pending 动作
 pub(crate) type ActionLabelQuery<'w, 's> = Query<
     'w,
@@ -240,29 +248,29 @@ pub(crate) type ActionLabelQuery<'w, 's> = Query<
 
 // ─────────────────────────── 声明 / 调度侧系统 ───────────────────────────
 
-/// 敌人 AI：决策阶段开始即声明动作（进入射程锁定攻击，否则逼近一格）。
-/// 动作 = 实体，经时间线调度执行；仅在本回合尚未声明时执行，避免重复决策。
+/// 敌人 AI：上一个动作清空后立即生成下一个意图（不等待回合）。
+/// 进入射程锁定攻击（带前摇），否则逼近一格；动作直接以 `Pending` 入队，
+/// `execute_at` 按当前虚拟时间计算，由调度器按前摇到期执行。
 pub fn ai_system(
-    tl: Res<TimeLineState>,
+    time: Res<Time<Virtual>>,
     mut commands: Commands,
     enemy_q: EnemyAiQuery<'_, '_>,
     player_q: PlayerPairQuery<'_, '_>,
-    declared: Query<&ScheduledAction, With<Declared>>,
+    actions: AnyActionQuery<'_, '_>,
 ) {
-    if tl.phase != TurnPhase::Decision {
-        return;
-    }
     let Ok((enemy, pos, frame, range, impact, damage)) = enemy_q.single() else {
         return;
     };
-    if declared.iter().any(|s| s.actor == enemy) {
-        return; // 本回合已声明
+    if actions.iter().any(|s| s.actor == enemy) {
+        return; // 上一个动作仍在时间线上，等它完成
     }
     let Ok((player, player_pos)) = player_q.single() else {
         return;
     };
+    let now = time.elapsed().as_millis() as u64;
 
     if pos.0.chebyshev(player_pos.0) <= range.0 {
+        let cast = frame.0 as u64 * TICK_MS;
         commands.spawn_scene(bsn! {
             Attack {
                 target: {player},
@@ -270,45 +278,18 @@ pub fn ai_system(
                 range: {range.0},
                 impact: {impact.0},
             }
-            ScheduledAction {
-                execute_at: 0,
-                cast_duration: {frame.0 as u64 * TICK_MS},
-                actor: {enemy},
-            }
-            Declared
+            ScheduledAction { execute_at: {now + cast}, cast_duration: {cast}, actor: {enemy} }
+            Pending
         });
-        info!("[AI] 敌人锁定攻击（帧 {}）", frame.0);
+        info!("[AI] 敌人锁定攻击（前摇 {cast}ms）");
     } else {
         let velocity = (player_pos.0 - pos.0).signum();
         commands.spawn_scene(bsn! {
             MoveTo { velocity: {velocity} }
-            ScheduledAction { execute_at: 0, cast_duration: 0, actor: {enemy} }
-            Declared
+            ScheduledAction { execute_at: {now}, cast_duration: 0, actor: {enemy} }
+            Pending
         });
         info!("[AI] 敌人逼近玩家，速度 {velocity:?}");
-    }
-}
-
-/// 威胁检测：双方都有 Pending 攻击 → 进入 Reaction 暂停等待玩家反应
-pub fn reaction_trigger_system(
-    mut tl: ResMut<TimeLineState>,
-    mut menu: ResMut<MenuSelection>,
-    player_q: Query<Entity, With<Player>>,
-    enemy_q: Query<Entity, With<Enemy>>,
-    actions: Query<&ScheduledAction, (With<Attack>, With<Pending>)>,
-) {
-    if tl.phase != TurnPhase::Resolving || tl.reaction_resolved {
-        return;
-    }
-    let (Ok(player), Ok(enemy)) = (player_q.single(), enemy_q.single()) else {
-        return;
-    };
-    let player_attacks = actions.iter().any(|s| s.actor == player);
-    let enemy_attacks = actions.iter().any(|s| s.actor == enemy);
-    if player_attacks && enemy_attacks {
-        tl.phase = TurnPhase::Reaction;
-        menu.index = 0; // 反应列表从头开始
-        info!("[威胁] 双方都将攻击 —— 进入反应阶段（暂停等待选择）");
     }
 }
 
@@ -641,10 +622,10 @@ pub fn explosion_system(
     }
 }
 
-/// 死亡检查 + 阶段推进：血量归零的实体统一清场；任一方阵亡 → GameOver。
+/// 死亡检查：血量归零的实体统一清场；任一方阵亡 → 暂停虚拟时间并宣告战斗结束。
 /// 每帧运行，火球在任意时刻击杀也能正确收尾。
 pub fn death_check_system(
-    mut tl: ResMut<TimeLineState>,
+    mut time: ResMut<Time<Virtual>>,
     mut commands: Commands,
     mut log: ResMut<BattleLog>,
     q: Query<(Entity, &Health)>,
@@ -654,18 +635,41 @@ pub fn death_check_system(
     for (entity, hp) in &q {
         if !hp.is_alive() {
             commands.entity(entity).despawn();
-            info!("☠ 实体 {:?} 被击败！（回合 {}）", entity, tl.global_tick);
+            info!("☠ 实体 {entity:?} 被击败！");
         }
     }
-    if tl.phase == TurnPhase::GameOver {
+    if time.is_paused() {
         return;
     }
     let p_alive = player_q.single().is_ok_and(Health::is_alive);
     let e_alive = enemy_q.single().is_ok_and(Health::is_alive);
     if !p_alive || !e_alive {
-        tl.phase = TurnPhase::GameOver;
+        time.pause();
         log.push("── 战斗结束 ──".to_string());
-        info!("══ 战斗结束（回合 {}）══", tl.global_tick);
+        info!("══ 战斗结束 ══");
+    }
+}
+
+/// 防御标记过期清理（无回合后标记按虚拟时间 / 目标实体生命周期结束）：
+/// - `Dodging` 到达 `expires_at` 后移除（翻滚 i 帧窗口结束）；
+/// - `Parrying` 绑定的攻击实体销毁后移除（招架只在该次攻击结算前有效）。
+pub fn expire_defense_markers_system(
+    time: Res<Time<Virtual>>,
+    mut commands: Commands,
+    dodging_q: Query<(Entity, &Dodging)>,
+    parrying_q: Query<(Entity, &Parrying)>,
+    attacks: Query<(), With<Attack>>,
+) {
+    let now = time.elapsed().as_millis() as u64;
+    for (entity, dodging) in &dodging_q {
+        if now >= dodging.expires_at {
+            commands.entity(entity).remove::<Dodging>();
+        }
+    }
+    for (entity, parrying) in &parrying_q {
+        if !attacks.contains(parrying.target_attack) {
+            commands.entity(entity).remove::<Parrying>();
+        }
     }
 }
 

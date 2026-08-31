@@ -4,7 +4,8 @@
 
 ## 项目定位
 
-回合制战棋 + 戴森球式供应链 + 信息即力量的 roguelike 策略游戏，代号 Project Timeless，基于 Bevy 0.19 实现。
+无回合（`Time<Virtual>` 驱动的行动时间线）+ 戴森球式供应链 + 信息即力量的
+roguelike 策略游戏，代号 Project Timeless，基于 Bevy 0.19 实现。
 
 ## 文档地图
 

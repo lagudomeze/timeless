@@ -1,15 +1,15 @@
 //! # HUD：屏幕底部状态文本
 //!
-//! 回合 / 阶段状态、双方数值（生命 / 精力 / 当前意图）与按键提示。
+//! 虚拟时间、双方数值（生命 / 精力 / 当前意图）、技能选择与按键提示。
 
 use bevy::prelude::*;
+use bevy::time::Virtual;
 
 use crate::combat::{ActionLabelQuery, BattleLog, Enemy, Health, Player, Stamina, action_label};
 use crate::menu::{
-    CanAttack, CanFireball, CanMove, CanRoll, MenuSelection, REACTIONS, SKILLS, available_skills,
+    CanAttack, CanFireball, CanMove, CanRoll, MenuSelection, SKILLS, available_skills,
 };
 use crate::movement::Position;
-use crate::timeline::{TimeLineState, TurnPhase};
 
 /// HUD 文本标记（屏幕底部）
 #[derive(Component, Debug, Clone, Copy)]
@@ -27,7 +27,7 @@ type PlayerHudQuery<'w, 's> =
 type EnemyHudQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static Health, &'static Position), With<Enemy>>;
 
-/// HUD 能力查询（决策选项展示）
+/// HUD 能力查询（技能选项展示）
 type HudCapabilityQuery<'w, 's> = Query<
     'w,
     's,
@@ -98,9 +98,9 @@ pub fn battle_log_system(log: Res<BattleLog>, mut text_q: Query<&mut Text, With<
     }
 }
 
-/// HUD：回合状态 + 双方数值 + 按键提示
+/// HUD：虚拟时间 + 双方数值 + 技能选择 + 按键提示
 pub fn hud_system(
-    tl: Res<TimeLineState>,
+    time: Res<Time<Virtual>>,
     menu: Res<MenuSelection>,
     mut hud_q: Query<&mut Text, With<HudText>>,
     player_q: PlayerHudQuery<'_, '_>,
@@ -112,53 +112,22 @@ pub fn hud_system(
         return;
     };
 
-    let (state, keys_hint, sel_line) = match tl.phase {
-        TurnPhase::Decision => {
-            let available = capability_q
-                .single()
-                .ok()
-                .map(|(a, m, r, f)| available_skills(a, m, r, f))
-                .unwrap_or_default();
-            let mut sel = String::new();
-            for (i, &skill) in available.iter().enumerate() {
-                sel.push_str(if i == menu.index { " ▶ " } else { "   " });
-                let def = &SKILLS[skill];
-                sel.push_str(def.label);
-                if def.cost > 0 {
-                    sel.push_str(&format!("（-{} 精力）", def.cost));
-                }
-                sel.push('\n');
-            }
-            (
-                "决策暂停：选择行动，空格提交".to_string(),
-                "Tab 切换技能 | WASD/方向键 移动 | 空格 提交 | R 重置 | 右键拖动 视角 | 滚轮 缩放"
-                    .to_string(),
-                sel,
-            )
+    // 技能选择列表（Tab / 面板选择，随时可改）
+    let available = capability_q
+        .single()
+        .ok()
+        .map(|(a, m, r, f)| available_skills(a, m, r, f))
+        .unwrap_or_default();
+    let mut sel = String::new();
+    for (i, &skill) in available.iter().enumerate() {
+        sel.push_str(if i == menu.index { " ▶ " } else { "   " });
+        let def = &SKILLS[skill];
+        sel.push_str(def.label);
+        if def.cost > 0 {
+            sel.push_str(&format!("（-{} 精力）", def.cost));
         }
-        TurnPhase::Reaction => {
-            let mut sel = String::new();
-            for (i, def) in REACTIONS.iter().enumerate() {
-                sel.push_str(if i == menu.index { " ▶ " } else { "   " });
-                sel.push_str(def.label);
-                if def.cost > 0 {
-                    sel.push_str(&format!("（-{} 精力）", def.cost));
-                }
-                sel.push('\n');
-            }
-            (
-                "反应暂停：敌人也在攻击你！".to_string(),
-                "Tab 选择 | 空格 执行 | Q 翻滚取消 | 右键拖动 视角 | 滚轮 缩放".to_string(),
-                sel,
-            )
-        }
-        TurnPhase::Resolving => ("结算中...".to_string(), String::new(), String::new()),
-        TurnPhase::GameOver => (
-            "战斗结束".to_string(),
-            "R 重置战斗 | 右键拖动 视角 | 滚轮 缩放".to_string(),
-            String::new(),
-        ),
-    };
+        sel.push('\n');
+    }
 
     let p_line = match player_q.single() {
         Ok((entity, h, s, p)) => {
@@ -182,7 +151,10 @@ pub fn hud_system(
     };
 
     **text = format!(
-        "[回合 {}] {}\n{sel_line}{}\n{}\n{}",
-        tl.global_tick, state, p_line, e_line, keys_hint
+        "时间 {:.1}s\n{sel}{}\n{}\n{}",
+        time.elapsed().as_secs_f64(),
+        p_line,
+        e_line,
+        "Tab 切换技能 | WASD/方向键 移动 | 空格 提交 | Q 翻滚取消 | E 招架 | R 重置 | 右键拖动 视角 | 滚轮 缩放"
     );
 }

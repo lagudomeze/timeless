@@ -36,9 +36,10 @@ cargo fmt --check            # 格式校验
 1. **分层解耦**：`timeless-domain` 绝不引入 Bevy；应用层不含伤害公式。
 2. **数据驱动**：数值/技能/标签反应走外部配置（Phase 2.1，serde+ron），应用层不硬编码。
 3. **消息通信**：模块间用 Bevy `Message`；组件/消息/系统同属一个领域文件（高内聚）。
-   UI 输入只翻译成 Message 不直接改状态（`SelectSkill` / `MoveInput` / `CommitTurn` /
-   `ReactionSelect` → 对应系统），输入类消息在 `main.rs` 注册并注明谁写谁消费；
-   消息定义与消费它的系统同属一个领域文件（`MoveInput` → movement、`TurnCommitted` → timeline）。
+   UI 输入只翻译成 Message 不直接改状态（`SelectSkill` / `MoveInput` / `CommitAction` /
+   `ReactionInput` → 对应系统），输入类消息在 `main.rs` 注册并注明谁写谁消费；
+   消息定义与消费它的系统同属一个领域文件（`MoveInput` → movement、
+   `ActionsCommitted` → timeline）。
 4. **文档先行**：任何 Bevy API 使用前先查 docs.rs / 官方示例（见 `skills/bevy-019-docs`），
    不依赖训练记忆；本项目固定 Bevy 0.19.1。
 
@@ -103,6 +104,13 @@ cargo fmt --check            # 格式校验
   `scheduler` 按 `Time<Virtual>` 到期转 `Committed`；两阶段结算（阶段 1 只读裁决 +
   `CombatResult`，阶段 2 统一扣血 + despawn）；防御改为 `Dodging` / `Parrying` 标记；
   动作实体统一用 `bsn!` / `spawn_scene` 构建（组件只需 `Default + Clone` 或 `FromTemplate`）。
+- **Phase 1.13 无回合化重构**：删除 `TurnPhase` 状态机 / `TimeLineState`（回合计数）/
+  `TurnCommitted` / `CommitTurn` / `phase_advance_system` / `turn_end_system` /
+  `sync_pause_system` / 开局暂停；`Time<Virtual>` 默认持续流动，动作实体按
+  `execute_at` 调度；玩家草案 `Declared` → 提交（`ActionsCommitted`）→ `Pending`，
+  AI 动作清空后直接入队；反应改为实时前摇窗口（Q 翻滚取消 / E 招架，不暂停）；
+  `Dodging` 带 `expires_at` 过期清理，`Parrying` 随绑定攻击销毁而移除；
+  战斗结束才暂停虚拟时间。
 
 ### Phase 2.0 — 技能与反馈（进行中）
 

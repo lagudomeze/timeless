@@ -13,12 +13,10 @@
 use bevy::prelude::*;
 use bevy::time::Virtual;
 
-use crate::combat::{BattleLog, Dodging, Enemy, Player, ProjectileArrived};
+use crate::combat::{BattleLog, DODGE_MS, Dodging, Enemy, Player, ProjectileArrived};
 use crate::display::map::{GRID_SIZE, cell_x, cell_z};
 use crate::menu::{CanAttack, CanFireball, CanMove, CanRoll, MenuSelection, available_skills};
-use crate::timeline::{
-    Committed, Declared, ScheduledAction, TimeLineState, TurnPhase, despawn_declared_for,
-};
+use crate::timeline::{Committed, Declared, ScheduledAction, despawn_declared_for};
 
 // ─────────────────────────── 坐标与网格数学 ───────────────────────────
 
@@ -53,13 +51,13 @@ impl GridMath for IVec2 {
 
 // ─────────────────────────── 位移动作载荷（动作实体） ───────────────────────────
 
-/// 移动动作：本回合位移速度，执行时 新位置 = 当前位置 + 速度
+/// 移动动作：位移速度，执行时 新位置 = 当前位置 + 速度
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct MoveTo {
     pub velocity: IVec2,
 }
 
-/// 翻滚动作：朝决策时锁定的敌人反方向退一格，并进入本回合闪避
+/// 翻滚动作：朝声明时锁定的敌人反方向退一格，并短暂进入闪避
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Roll {
     /// 决策时锁定的敌人位置（远离方向以此为准，保证结算确定性）
@@ -106,10 +104,9 @@ type PlayerInputQuery<'w, 's> =
     Query<'w, 's, (Entity, &'static Position), (With<Player>, Without<Enemy>)>;
 
 /// 移动方向落格（消费 `MoveInput`）：把方向增量叠加到玩家当前格并钳制
-/// 在地图内，生成 Declared `MoveTo` 动作（替换玩家已声明的其他动作）。
+/// 在地图内，生成 Declared `MoveTo` 草案（替换玩家已声明的其他草案）。
 /// 移动领域唯一入口——其他需要请求移动的地方都写 `MoveInput`，不重复实现。
 pub fn move_input_system(
-    tl: Res<TimeLineState>,
     mut menu: ResMut<MenuSelection>,
     mut commands: Commands,
     player_q: PlayerInputQuery<'_, '_>,
@@ -117,9 +114,6 @@ pub fn move_input_system(
     declared_q: Query<(Entity, &ScheduledAction), With<Declared>>,
     mut ev_move: MessageReader<MoveInput>,
 ) {
-    if tl.phase != TurnPhase::Decision {
-        return;
-    }
     let Ok((player, pos)) = player_q.single() else {
         return;
     };
@@ -190,8 +184,10 @@ pub fn move_executor(
     }
 }
 
-/// 翻滚执行器：`Committed` 翻滚动作 → 远离锁定敌人一格 + 挂 `Dodging` 闪避标记
+/// 翻滚执行器：`Committed` 翻滚动作 → 远离锁定敌人一格 + 挂
+/// `Dodging` 闪避标记（`DODGE_MS` 后由 combat::expire_defense_markers_system 清理）
 pub fn roll_executor(
+    time: Res<Time<Virtual>>,
     mut commands: Commands,
     q: Query<(Entity, &ScheduledAction, &Roll), With<Committed>>,
     mut pos_q: Query<&mut Position>,
@@ -221,7 +217,9 @@ pub fn roll_executor(
             pos.0.x,
             pos.0.y
         ));
-        commands.entity(scheduled.actor).insert(Dodging);
+        commands.entity(scheduled.actor).insert(Dodging {
+            expires_at: time.elapsed().as_millis() as u64 + DODGE_MS,
+        });
         commands.entity(action).despawn();
     }
 }

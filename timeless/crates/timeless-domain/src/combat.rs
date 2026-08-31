@@ -1,6 +1,6 @@
 //! # 领域层：战斗裁决（纯 Rust，零 Bevy 依赖）
 //!
-//! 实现「速度帧 → 距离 → 破势」三层裁决逻辑（We-Go 同时行动结算）。
+//! 实现「速度帧 → 距离 → 破势」三层裁决逻辑（双方同刻出手时的先后结算）。
 //!
 //! 设计约束：
 //! - 本模块**绝不** `use bevy::*`，保证可被 `cargo test` 独立覆盖；
@@ -49,7 +49,7 @@ pub enum HitOrder {
     Simultaneous,
 }
 
-/// 一次 We-Go 交锋的裁决结果
+/// 一次双方交锋的裁决结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HitResult {
     pub attacker_hits: bool,
@@ -59,13 +59,13 @@ pub struct HitResult {
     pub interrupted: Option<Side>,
 }
 
-/// 单方攻击（对方本回合未攻击，如正在移动/翻滚）：仅做射程判定。
+/// 单方攻击（对方未同时出手，如正在移动/翻滚）：仅做射程判定。
 /// 应用层在「只有一方提交了 Attack」时调用。
 pub fn resolve_attack(attacker: &AttackStats, distance: u32) -> bool {
     distance <= attacker.range
 }
 
-/// 双方同时攻击时的三层裁决（We-Go 核心）。
+/// 双方同时攻击时的三层裁决。
 ///
 /// 裁决链（仅在**双方都命中**时生效）：
 /// 1. **速度帧**：`frame` 小者先中（快拳破慢拳）；

@@ -3,6 +3,11 @@
 > 状态：设计定稿 v0.2。本文取代 [timeline-core-design.md](timeline-core-design.md)（v0.1）中与本文冲突的约定（如 `ActionId(&'static str)`、旧 `Event` 用法、DecisionPause 冻结模式）。
 > 关联：[game-design.md](game-design.md)（动机）、[architecture.md](architecture.md)（分层与通信）、[../bevy/action-graph.md](../bevy/action-graph.md)（行为描述）、[../bevy/bevy-019.md](../bevy/bevy-019.md)（Bevy 0.19 速查）。
 
+> ⚠️ 已过时：自 Phase 1.13 起，代码实现改为**无回合**模型——`Time<Virtual>`
+> 持续流动驱动动作调度，不再有 Planning / Resolving 阶段状态机与逻辑刻度跳跃。
+> 本文的 We-Go 阶段机、`CombatTimeline` 逻辑刻度等约定待重写；动作实体 +
+> `Declared → Pending → Committed` + 两阶段结算与三层裁决仍有效。
+
 ## 1. 目标与范围
 
 把 **We-Go 同步回合**落实为可实现的领域模型与 Bevy 0.19 映射，覆盖：两阶段循环、逻辑刻度时间模型、执行队列与三层裁决、时间线特权（无限撤销 / 翻滚取消）、怪物意图循环、延迟命中（`PendingHit`）、UI 信息需求。

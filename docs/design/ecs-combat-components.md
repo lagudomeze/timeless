@@ -42,24 +42,26 @@
 | `Fireball`（载荷） | `target` / `speed` / `amount` / `radius` | 火球动作 | 动作实体 |
 | `Parry`（载荷） | `target_attack: Entity` | 招架动作（挂 `Parrying`） | 动作实体 |
 | `CombatResult` | `target` / `final_damage` / `counter_damage` / `order` | 阶段 1 计算结果，阶段 2 应用 | 结算帧 |
-| `Dodging` / `Parrying` | — / `target_attack` | 单位防御标记（本回合闪避 / 招架） | 回合内 |
+| `Dodging` | `expires_at` | 翻滚后的闪避标记（i 帧窗口，到期自动移除） | 闪避窗口内 |
+| `Parrying` | `target_attack` | 招架标记，绑定被招架的攻击实体 | 本次攻击结算前 |
 | `Projectile` | —（标记） | 投射物标记，配合 `LinearVelocity` + `Destination` | 飞行中 |
 | `LinearVelocity` | `Vec2`（格/秒） | 线性速度，位置 += 速度×dt 自动移动 | 飞行中 |
 | `Destination` | `IVec2` | 投射物目标格（到达后触发爆炸） | 飞行中 |
 | `ExplosionDamage` | `amount` / `radius` | 到达后范围伤害 | 飞行中 |
 
-每个单位每回合至多声明一个动作（选择 / WASD 会先清掉旧的 Declared 动作实体）；
-动作实体与单位分离，调度器不感知载荷类型。
+无回合设计下，每个单位同一时刻至多有一个动作在时间线上（玩家提交时校验；
+选择 / WASD 会先清掉旧的 Declared 草案）。动作实体与单位分离，调度器不感知载荷类型。
 
 ## 调度与两阶段结算
 
 ```text
+commit_system（校验 + 扣费 → ActionsCommitted）→
 finalize_declared_actions（Declared → Pending，分配 execute_at = now + 前摇）
   → scheduler（Time<Virtual> 到期 → Committed）
   → 执行器（move / roll / parry / fireball：位移、挂防御标记、生成投射物）
   → combat_phase1_system（只读裁决：射程 / 同刻破势 / 闪避 / 招架 → CombatResult）
   → combat_phase2_system（统一扣血 + 反制 + despawn → HitLanded）
-  → death_check_system（清场 + GameOver）
+  → death_check_system（清场 + 战斗结束暂停虚拟时间）
 ```
 
 同刻互击（`execute_at` 相同且互为目标）用领域层 `resolve_combat`
@@ -91,42 +93,45 @@ commands.spawn((
 ## 结算流水线（main.rs 系统链）
 
 ```text
-sync_pause_system（按阶段同步 Time<Virtual> 暂停）
-  → ai_system（敌人声明动作实体）
-  → menu 键盘→消息→选择/提交管线（玩家声明动作实体）
-  → finalize_declared_actions（Declared → Pending）
-  → reaction_trigger_system（双方 Pending 攻击 → Reaction 暂停）
+reset_system（R / 面板：清场重生 + 恢复虚拟时间）
+  → ai_system（敌人动作清空后直接入队 Pending）
+  → menu 键盘 → 消息 → 选择 / 提交管线（玩家 Declared 草案 → ActionsCommitted）
+  → finalize_declared_actions（Declared → Pending，分配 execute_at）
+  → reaction_execution_system（实时 Q 翻滚取消 / E 招架，前摇窗口内有效）
   → scheduler（Pending → Committed）
   → move / roll / parry / fireball 执行器（位移、防御标记、投射物）
   → combat_phase1 → combat_phase2（两阶段结算）
   → movement::projectile_motion_system（位置+速度自动飞行 → ProjectileArrived）
   → combat::explosion_system（到达爆炸 + 销毁投射物）
-  → combat::death_check_system（清场 + GameOver）
-  → timeline::turn_end_system（动作清空 → 下一回合 Decision）
+  → combat::death_check_system（清场 + 战斗结束暂停虚拟时间）
+  → combat::expire_defense_markers_system（Dodging / Parrying 过期清理）
   → combat::message_log_system（HitLanded 日志）
   → display（同步坐标 → 纸片朝向 → 移动箭头 → HUD → 相机）
 ```
 
-暂停由 `Time<Virtual>` 驱动（Decision / Reaction / GameOver 冻结，Resolving 放行），
-不再用手写阶段门控；死亡检查独立成系统，火球在任何时刻炸死目标都能正确收尾。
+虚拟时间默认持续流动，不存在回合 / 阶段状态机；暂停只用于「战斗结束」等全局停顿，
+`Time<Virtual>` 暂停期间 `now` 冻结，调度自然停表。死亡检查独立成系统，
+火球在任何时刻炸死目标都能正确收尾。
 
 ## 领域文件归属
 
 - `timeline.rs`：`ScheduledAction` / `Declared` / `Pending` / `Committed`、
-  回合阶段机（`TurnPhase` + `Time<Virtual>` 暂停同步）、
-  `finalize_declared_actions` / `scheduler` / `turn_end_system`
+  `ResetBattle` / `ActionsCommitted` 消息 + `reset_system` /
+  `finalize_declared_actions` / `scheduler`
 - `combat.rs`：`Health` / `Damage` / 攻击属性三件套 / `Stamina` +
   动作载荷（`Attack` / `Parry` / `Fireball`）、防御标记（`Dodging` / `Parrying`）、
   `CombatResult` / `ExplosionDamage` / `FireballAssets` +
-  `ai_system` / `reaction_trigger_system` / `combat_phase1_system` /
+  `ai_system` / `combat_phase1_system` /
   `combat_phase2_system` / `fireball_executor` / `parry_executor` /
-  `explosion_system` / `death_check_system` / `message_log_system` / `spawn_fireball`
+  `explosion_system` / `death_check_system` / `expire_defense_markers_system` /
+  `message_log_system` / `spawn_fireball`
 - `movement.rs`：`Position` / `GridMath` / `Projectile` / `LinearVelocity` /
   `Destination` + 位移动作载荷（`MoveTo` / `Roll`）、用户移动指令（`MoveInput`）+
   `move_input_system` / `move_executor` / `roll_executor` / `projectile_motion_system`；
   火球/爆炸归 `combat.rs`
-- `menu.rs`：能力标记（`Can*`）、`SKILLS` / `REACTIONS` 展示表、`MenuSelection`、
-  键盘翻译 + 面板消息 → 单一职责系统（选择 / 声明动作 / 提交 / 反应执行）
+- `menu.rs`：能力标记（`Can*`）、`SKILLS` 展示表、`MenuSelection`、
+  `CommitAction` / `ReactionInput` 消息 + 键盘翻译 + 面板消息 →
+  单一职责系统（选择 / 声明草案 / 提交 / 实时反应执行）
 - `display/`：表现子域（`camera` / `unit` / `hints` / `hud` / `map`），
   不参与规则
 

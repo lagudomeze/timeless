@@ -1,23 +1,24 @@
-//! # 时间线领域：动作实体调度 + 回合状态机
+//! # 时间线领域：动作实体调度（虚拟时间驱动，无回合）
 //!
-//! We-Go 同步回合 + 逻辑刻度时间线：
+//! 战斗不再有「回合 / 阶段」概念：`Time<Virtual>` 持续流动，所有行动都是
+//! 独立实体（载荷组件 + [`ScheduledAction`]），按虚拟时间推进：
 //!
 //! ```text
-//! 动作实体（Action Entity）：
-//!   生成(Declared) ──finalize──▶ Pending ──scheduler(时间到期)──▶ Committed ──执行器──▶ despawn
+//! 玩家草案(Declared) ──提交──▶ Pending(execute_at = now + 前摇) ──scheduler 到期──▶ Committed ──执行器──▶ despawn
+//! AI 动作直接入队 Pending
 //! ```
 //!
-//! - 行动 = 实体：载荷组件（`Attack` / `MoveTo` / `Roll` / `Fireball` / `Parry`）+
-//!   [`ScheduledAction`]，状态标记 `Declared` → `Pending` → `Committed`；
-//! - 虚拟时间 [`Time<Virtual>`] 控制时间流动：Decision / Reaction / GameOver 暂停，
-//!   Resolving 推进（调度器按 `execute_at` 到期转 `Committed`）；
-//! - 回合收尾：无动作 / 投射物残留 → 下一回合 Decision（或 GameOver）。
+//! - 玩家选择技能只生成可覆盖的 `Declared` 草案；`menu::commit_system` 校验 / 扣费后写
+//!   `ActionsCommitted`，本文件 `finalize_declared_actions` 落地入队并分配 `execute_at`；
+//! - AI 意图由 `combat::ai_system` 在动作清空后直接生成 `Pending` 动作；
+//! - 虚拟时间默认流动，只有「战斗结束」等全局停顿才 `Time<Virtual>::pause()`；
+//!   暂停期间 `now` 冻结，调度自然停表。
 
 use bevy::ecs::template::FromTemplate;
 use bevy::prelude::*;
 use bevy::time::Virtual;
 
-use crate::combat::{BattleLog, Dodging, Enemy, Parrying, Player};
+use crate::combat::{BattleLog, Enemy, Player};
 use crate::display::unit::PaperAssets;
 use crate::menu::MenuSelection;
 use crate::movement::Projectile;
@@ -25,49 +26,11 @@ use crate::movement::Projectile;
 /// 逻辑刻度：1 帧前摇 = TICK_MS 毫秒（`AttackFrame` 换算 `execute_at` 用）
 pub const TICK_MS: u64 = 100;
 
-/// 动作实体残留查询（任一状态）
-type AnyActionQuery<'w, 's> =
-    Query<'w, 's, (), Or<(With<Declared>, With<Pending>, With<Committed>)>>;
-
 /// 动作实体 Entity 查询（重置清场用）
 type ActionEntityQuery<'w, 's> =
     Query<'w, 's, Entity, Or<(With<Declared>, With<Pending>, With<Committed>)>>;
 
-/// 回合阶段（We-Go 同步回合；暂停由 `Time<Virtual>` 驱动，阶段只做 UI / 门控）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TurnPhase {
-    /// 决策暂停：等待玩家选择行动（时间冻结）
-    Decision,
-    /// 反应暂停：双方都将攻击，等待玩家选择（时间冻结）
-    Reaction,
-    /// 结算：时间流动，动作按 `execute_at` 依次执行
-    Resolving,
-    /// 战斗结束（时间冻结）
-    GameOver,
-}
-
-/// 时间线状态（全局资源）
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TimeLineState {
-    pub global_tick: u32,
-    pub phase: TurnPhase,
-    /// 本回合是否已处理过反应（防止 Resolving 中重复触发 Reaction）
-    pub reaction_resolved: bool,
-}
-
-impl Default for TimeLineState {
-    fn default() -> Self {
-        Self {
-            global_tick: 0,
-            phase: TurnPhase::Decision,
-            reaction_resolved: false,
-        }
-    }
-}
-
-// ─────────────────────────── 动作实体调度 ───────────────────────────
-
-/// 动作实体统一调度数据：`execute_at` 由 `finalize_declared_actions` 分配
+/// 动作实体统一调度数据：`execute_at` 由入队时分配
 /// （now + cast_duration），调度器与执行器只读本字段，不感知载荷类型。
 #[derive(Component, Debug, Clone, Copy, FromTemplate)]
 pub struct ScheduledAction {
@@ -79,7 +42,7 @@ pub struct ScheduledAction {
     pub actor: Entity,
 }
 
-/// 状态标记（ZST）：刚生成，未分配执行时间
+/// 状态标记（ZST）：玩家草案，未入队（可覆盖）
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Declared;
 
@@ -97,31 +60,14 @@ pub struct Committed;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResetBattle;
 
-/// 提交成功（由 `menu::commit_system` 发出，本文件 `phase_advance_system` 消费）
+/// 玩家行动已提交（由 `menu::commit_system` 发出，本文件
+/// `finalize_declared_actions` 消费）：把玩家全部 `Declared` 草案入队为 `Pending`。
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TurnCommitted;
+pub struct ActionsCommitted;
 
 // ─────────────────────────── 系统 ───────────────────────────
 
-/// 初始化：开局 Decision 暂停（虚拟时间冻结，等待第一次决策）
-pub fn start_paused(mut time: ResMut<Time<Virtual>>) {
-    time.pause();
-}
-
-/// 暂停与阶段同步：Decision / Reaction / GameOver 冻结时间，Resolving 放行
-pub fn sync_pause_system(tl: Res<TimeLineState>, mut time: ResMut<Time<Virtual>>) {
-    let paused = matches!(
-        tl.phase,
-        TurnPhase::Decision | TurnPhase::Reaction | TurnPhase::GameOver
-    );
-    if paused {
-        time.pause();
-    } else {
-        time.unpause();
-    }
-}
-
-/// 清掉指定执行者已声明的动作（决策阶段替换旧选择用）
+/// 清掉指定执行者已声明的动作（选择新草案时替换旧草案用）
 pub(crate) fn despawn_declared_for(
     commands: &mut Commands,
     actor: Entity,
@@ -135,13 +81,13 @@ pub(crate) fn despawn_declared_for(
 }
 
 /// 战斗重置：R 键或调试面板的 `ResetBattle` 消息触发。
-/// 清场（含动作实体 / 投射物）→ 重置状态 → 重生双方。
+/// 清场（含动作实体 / 投射物）→ 恢复虚拟时间 → 重生双方。
 #[allow(clippy::too_many_arguments)]
 pub fn reset_system(
     mut ev_reset: MessageReader<ResetBattle>,
     keys: Res<ButtonInput<KeyCode>>,
+    mut time: ResMut<Time<Virtual>>,
     mut commands: Commands,
-    mut tl: ResMut<TimeLineState>,
     mut menu: ResMut<MenuSelection>,
     mut log: ResMut<BattleLog>,
     paper: Res<PaperAssets>,
@@ -160,34 +106,22 @@ pub fn reset_system(
     for e in actions.iter().chain(projectiles.iter()) {
         commands.entity(e).despawn();
     }
-    *tl = TimeLineState::default();
+    time.unpause();
     menu.index = 0;
     crate::setup::spawn_combatants(&mut commands, &paper);
     log.push("─ 战斗已重置 ─".to_string());
-    info!("[重置] 战斗已还原（双方满状态，回合 {}）", tl.global_tick);
-}
-
-/// 阶段推进（消费 `TurnCommitted`）：提交通过 → 进入 Resolving（时间放行）
-pub fn phase_advance_system(
-    mut tl: ResMut<TimeLineState>,
-    mut ev_committed: MessageReader<TurnCommitted>,
-) {
-    if ev_committed.read().next().is_none() {
-        return;
-    }
-    tl.phase = TurnPhase::Resolving;
-    tl.reaction_resolved = false;
+    info!("[重置] 战斗已还原（双方满状态）");
 }
 
 /// 入队：`Declared` → `Pending`，分配 `execute_at = now + cast_duration`
-/// （时间暂停时 now 冻结，前摇自然停表）
+/// （虚拟时间暂停时 now 冻结，前摇自然停表）。消费 `ActionsCommitted`。
 pub fn finalize_declared_actions(
-    tl: Res<TimeLineState>,
     time: Res<Time<Virtual>>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut ScheduledAction), With<Declared>>,
+    mut ev_committed: MessageReader<ActionsCommitted>,
 ) {
-    if tl.phase != TurnPhase::Resolving {
+    if ev_committed.read().next().is_none() {
         return;
     }
     let now = time.elapsed().as_millis() as u64;
@@ -197,7 +131,7 @@ pub fn finalize_declared_actions(
     }
 }
 
-/// 调度：`Pending` → `Committed`（`execute_at` 到期；暂停期间不推进）
+/// 调度：`Pending` → `Committed`（`execute_at` 到期；虚拟时间暂停期间不推进）
 pub fn scheduler(
     time: Res<Time<Virtual>>,
     mut commands: Commands,
@@ -215,37 +149,4 @@ pub fn scheduler(
                 .insert(Committed);
         }
     }
-}
-
-/// 回合收尾：无动作 / 投射物残留 → 清除防御标记，下一回合 Decision（或 GameOver）
-#[allow(clippy::too_many_arguments)]
-pub fn turn_end_system(
-    time: Res<Time<Virtual>>,
-    mut tl: ResMut<TimeLineState>,
-    mut menu: ResMut<MenuSelection>,
-    mut commands: Commands,
-    mut log: ResMut<BattleLog>,
-    actions: AnyActionQuery<'_, '_>,
-    projectiles: Query<(), With<Projectile>>,
-    markers: Query<(Entity, Option<&Dodging>, Option<&Parrying>)>,
-) {
-    if time.is_paused() || tl.phase != TurnPhase::Resolving {
-        return;
-    }
-    if !actions.is_empty() || !projectiles.is_empty() {
-        return;
-    }
-    for (entity, dodging, parrying) in &markers {
-        if dodging.is_some() || parrying.is_some() {
-            commands
-                .entity(entity)
-                .remove::<Dodging>()
-                .remove::<Parrying>();
-        }
-    }
-    tl.global_tick += 1;
-    tl.phase = TurnPhase::Decision;
-    menu.index = 0;
-    log.push(format!("──── 回合 {} 结算完毕 ────", tl.global_tick));
-    info!("[回合] {} 结算完毕，进入下一回合决策", tl.global_tick);
 }
