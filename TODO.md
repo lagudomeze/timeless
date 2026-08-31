@@ -36,6 +36,9 @@ cargo fmt --check            # 格式校验
 1. **分层解耦**：`timeless-domain` 绝不引入 Bevy；应用层不含伤害公式。
 2. **数据驱动**：数值/技能/标签反应走外部配置（Phase 2.1，serde+ron），应用层不硬编码。
 3. **消息通信**：模块间用 Bevy `Message`；组件/消息/系统同属一个领域文件（高内聚）。
+   UI 输入只翻译成 Message 不直接改状态（`SelectSkill` / `MoveInput` / `CommitTurn` /
+   `ReactionSelect` → 对应系统），输入类消息在 `main.rs` 注册并注明谁写谁消费；
+   消息定义与消费它的系统同属一个领域文件（`MoveInput` → movement、`TurnCommitted` → timeline）。
 4. **文档先行**：任何 Bevy API 使用前先查 docs.rs / 官方示例（见 `skills/bevy-019-docs`），
    不依赖训练记忆；本项目固定 Bevy 0.19.1。
 
@@ -73,6 +76,33 @@ cargo fmt --check            # 格式校验
   （`Can*`）驱动 + `SKILLS` 展示表（标签/消耗/插入工厂）；结算泛化为「收集所有带/不带
   行动组件的实体 → 按 帧→射程→破势 裁决」；闪避 / 招架+反制拆成独立系统，
   走 `HitPending → dodge → parry → damage` 消息链。
+- **Phase 1.8 坐标与输入系统重构**：删除领域层 `grid.rs`（`GridPos`），网格坐标直接使用
+  Bevy 的 `IVec2`（`Position` / `Roll` / `Destination` / `world_to_cell` 迁移），
+  切比雪夫 / 逼近 / 翻滚后退以 `GridMath` 扩展 trait 落在应用层（含单测）；
+  `menu::input_system` 拆分为消息驱动的单一职责管线：
+  `decision_keyboard_system`（键盘→`CycleSkill` / `MoveInput` / `CommitTurn`）→
+  `select_skill_system` / `move_input_system` / `commit_system`（→`TurnCommitted`）→
+  `phase_advance_system`（威胁检测）；反应阶段拆为 `reaction_keyboard_system` →
+  `reaction_execution_system`（`ReactionSelect`）。
+- **Phase 1.9 移动领域瘦身（高内聚低耦合）**：火球行动 / 爆炸伤害 / 渲染资源与爆炸结算
+  从 `movement.rs` 迁到 `combat.rs`（`Fireball` / `ExplosionDamage` / `FireballAssets` /
+  `spawn_fireball` / `explosion_system`）；`movement.rs` 只保留网格坐标（`Position` /
+  `GridMath`）、回合位移（`Velocity` / `Roll` + `apply_move_intents_system`）、用户移动指令
+  （`MoveInput` + `move_input_system`）与投射物飞行（`Projectile` + `LinearVelocity` +
+  `Destination` + `projectile_motion_system`），到达后广播 `ProjectileArrived` 由爆炸系统消费。
+- **Phase 1.10 位移速度化**：移除 `Move { target }` 组件，回合位移改为 `Velocity(IVec2)`
+  （当前位置 + 速度 = 新位置）；玩家 WASD / 敌人 AI 直接设速度，提交校验 / HUD 意图 /
+  移动箭头全部改用 `Velocity`，`GridMath::step_toward` 一并删除（AI 用 signum 算速度）。
+- **Phase 1.11 投射物实体运动化**：投射物实体 = 位置（`Transform`）+ 速度
+  （`LinearVelocity`），由 `projectile_motion_system` 自动飞行；初始位置 = 释放者 +
+  朝向目标一格；到达目标格后，范围内有 PC/NPC 才产生爆炸伤害（无单位则落空）；
+  `cell_x_f` / `cell_z_f` 等仅服务于旧插值的换算函数删除。
+- **Phase 1.12 动作实体化 + BSN**：行动从「挂在单位上的组件」改为「独立动作实体」——
+  载荷组件（`Attack` / `MoveTo` / `Roll` / `Fireball` / `Parry`）+ `ScheduledAction`
+  + 状态标记 `Declared → Pending → Committed`；`finalize` 按前摇分配 `execute_at`，
+  `scheduler` 按 `Time<Virtual>` 到期转 `Committed`；两阶段结算（阶段 1 只读裁决 +
+  `CombatResult`，阶段 2 统一扣血 + despawn）；防御改为 `Dodging` / `Parrying` 标记；
+  动作实体统一用 `bsn!` / `spawn_scene` 构建（组件只需 `Default + Clone` 或 `FromTemplate`）。
 
 ### Phase 2.0 — 技能与反馈（进行中）
 
@@ -95,7 +125,8 @@ cargo fmt --check            # 格式校验
 ### Phase 2.2 — 逻辑刻度时间线（docs/design/timeline.md v0.2）
 
 - [x] 防御系统消息链（HitPending → dodge → parry → damage）已落地（Phase 1.7）。
-- [ ] `ExecutionQueue` / `ScheduledAction`：按 hit_clock → distance → poise → actor 排序结算。
+- [x] `ExecutionQueue` / `ScheduledAction`：按 hit_clock（`execute_at`）→ distance → poise → actor 排序结算
+      （Phase 1.12 已落地为 动作实体 + `Time<Virtual>` 调度 + 两阶段结算）。
 - [ ] 攻击动作三段式：前摇（可翻滚取消）/ 判定帧 / 后摇，`GlobalTime` 跳跃式推进。
 - [ ] `PendingHit` 延迟命中物化（弹道飞行、延迟 AOE 排程），`CombatTimeline` 未来事件堆。
 - [ ] 威胁提示改为「前摇窗口」表达（v0.1 的 DecisionPause 冻结降级为可选项）。

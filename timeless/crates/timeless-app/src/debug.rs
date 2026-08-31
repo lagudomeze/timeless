@@ -17,38 +17,16 @@ use crate::menu::{
     CanAttack, CanFireball, CanMove, CanRoll, CommitTurn, MenuSelection, REACTIONS, ReactionSelect,
     SKILLS, SelectSkill, available_skills,
 };
-use crate::movement::{Fireball, Move, Position, Roll};
+use crate::movement::Position;
 use crate::timeline::*;
 
-/// 调试面板玩家查询（数值 + 行动组件组合）
-type PlayerDebugQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        &'static Position,
-        &'static Health,
-        &'static Stamina,
-        Option<&'static Attack>,
-        Option<&'static Move>,
-        Option<&'static Roll>,
-        Option<&'static Fireball>,
-        Option<&'static Parry>,
-    ),
-    With<Player>,
->;
+/// 调试面板玩家查询（数值 + 位置）
+type PlayerDebugQuery<'w, 's> =
+    Query<'w, 's, (Entity, &'static Position, &'static Health, &'static Stamina), With<Player>>;
 
-/// 调试面板敌人查询（数值 + 行动组件组合）
-type EnemyDebugQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        &'static Position,
-        &'static Health,
-        Option<&'static Attack>,
-        Option<&'static Move>,
-    ),
-    With<Enemy>,
->;
+/// 调试面板敌人查询（数值 + 位置）
+type EnemyDebugQuery<'w, 's> =
+    Query<'w, 's, (Entity, &'static Position, &'static Health), With<Enemy>>;
 
 /// 调试面板能力查询（玩家可行动标记）
 type DebugCapabilityQuery<'w, 's> = Query<
@@ -69,6 +47,7 @@ pub fn debug_panel_system(
     player_q: PlayerDebugQuery<'_, '_>,
     enemy_q: EnemyDebugQuery<'_, '_>,
     capability_q: DebugCapabilityQuery<'_, '_>,
+    actions: ActionLabelQuery<'_, '_>,
     mut ev_select: MessageWriter<SelectSkill>,
     mut ev_commit: MessageWriter<CommitTurn>,
     mut ev_reaction: MessageWriter<ReactionSelect>,
@@ -78,7 +57,7 @@ pub fn debug_panel_system(
         return;
     };
 
-    let player_sta = player_q.single().map(|(_, _, s, ..)| s.current).ok();
+    let player_sta = player_q.single().map(|(_, _, _, s)| s.current).ok();
     let available = capability_q
         .single()
         .ok()
@@ -100,8 +79,8 @@ pub fn debug_panel_system(
 
             // 双方状态
             match player_q.single() {
-                Ok((p, h, s, attack, mov, roll, fireball, parry)) => {
-                    let action = intent_label(attack, mov, roll, fireball, parry);
+                Ok((entity, p, h, s)) => {
+                    let action = action_label(entity, &actions);
                     ui.label(format!(
                         "Player @({},{})  HP {}/{}  STA {}/{}  act {action}",
                         p.0.x, p.0.y, h.current, h.max, s.current, s.max
@@ -112,8 +91,8 @@ pub fn debug_panel_system(
                 }
             }
             match enemy_q.single() {
-                Ok((p, h, attack, mov)) => {
-                    let action = intent_label(attack, mov, None, None, None);
+                Ok((entity, p, h)) => {
+                    let action = action_label(entity, &actions);
                     ui.label(format!(
                         "Enemy  @({},{})  HP {}/{}  act {action}",
                         p.0.x, p.0.y, h.current, h.max
@@ -192,7 +171,7 @@ pub fn debug_panel_system(
                     ui.small("Enemy will hit you — cancel to dodge / parry");
                 }
                 TurnPhase::Resolving => {
-                    ui.label("Resolving… (instant)");
+                    ui.label("Resolving… (timeline)");
                 }
                 TurnPhase::GameOver => {
                     ui.colored_label(egui::Color32::RED, "Battle finished");

@@ -7,7 +7,9 @@
 
 use bevy::prelude::*;
 
-use crate::combat::{AttackFrame, AttackRange, Damage, Enemy, Health, Impact, Player, Stamina};
+use crate::combat::{
+    AttackFrame, AttackRange, Damage, Enemy, FireballAssets, Health, Impact, Player, Stamina,
+};
 use crate::display::camera::MainCamera;
 use crate::display::hover::spawn_hover_info;
 use crate::display::hud::{spawn_battle_log, spawn_hud};
@@ -19,7 +21,7 @@ use crate::display::unit::{
     UnitRoot,
 };
 use crate::menu::{CanAttack, CanFireball, CanMove, CanRoll};
-use crate::movement::{FireballAssets, Position};
+use crate::movement::Position;
 
 /// 场景搭建：相机、光照、地面、装饰、纸片单位、HUD
 pub fn setup(
@@ -89,7 +91,7 @@ pub fn setup(
     commands.insert_resource(paper.clone());
     spawn_combatants(&mut commands, &paper);
 
-    // 火球投射物共享资源（施放时由 combat::resolve_system 复用）
+    // 火球投射物共享资源（施放时由 combat::fireball_executor 复用）
     commands.insert_resource(FireballAssets {
         mesh: meshes.add(Sphere::new(0.18)),
         material: materials.add(StandardMaterial {
@@ -141,9 +143,9 @@ pub fn spawn_combatants(commands: &mut Commands, paper: &PaperAssets) {
     );
 }
 
-/// 单个战斗单位：根节点（承载逻辑坐标与意图/属性组件）+ 纸片 / 阴影两个子实体。
+/// 单个战斗单位：根节点（承载逻辑坐标与属性组件）+ 纸片 / 阴影两个子实体。
 /// 攻击属性拆成 `AttackFrame` / `AttackRange` / `Impact` / `Damage` 四个小组件，
-/// 由 `combat::resolve_system` 在裁决前组装成领域层 `AttackStats`。
+/// 声明攻击动作时快照进载荷，由领域层 `resolve_attack` / `resolve_combat` 裁决。
 #[allow(clippy::too_many_arguments)]
 fn spawn_combatant<M: Component>(
     commands: &mut Commands,

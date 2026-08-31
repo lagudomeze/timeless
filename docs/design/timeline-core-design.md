@@ -147,8 +147,8 @@ pub struct ScheduleEntry {
 
 pub enum TimedEvent {
     ProjectileImpact { target: Entity, damage: i32, element: Option<Element> },
-    AoeDetonation { cell: GridPos, spec: ImpactSpec },
-    GroundEffectEnd { cell: GridPos, effect: Element },
+    AoeDetonation { cell: IVec2, spec: ImpactSpec },
+    GroundEffectEnd { cell: IVec2, effect: Element },
 }
 ```
 

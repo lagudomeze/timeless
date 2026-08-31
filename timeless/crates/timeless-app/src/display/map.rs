@@ -8,8 +8,6 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-use timeless_domain::grid::GridPos;
-
 /// 地图网格尺寸（21×21，为战棋推演留足空间）
 pub const GRID_SIZE: i32 = 21;
 /// 单格世界尺寸（1 个单位，与 Kenney 模型比例一致）
@@ -49,20 +47,12 @@ pub fn cell_z(y: i32) -> f32 {
     (y as f32 - (GRID_SIZE as f32 - 1.0) / 2.0) * CELL_SIZE
 }
 
-/// 网格坐标（可带小数，投射物插值用）→ 世界坐标
-pub fn cell_x_f(x: f32) -> f32 {
-    (x - (GRID_SIZE as f32 - 1.0) / 2.0) * CELL_SIZE
-}
-pub fn cell_z_f(y: f32) -> f32 {
-    (y - (GRID_SIZE as f32 - 1.0) / 2.0) * CELL_SIZE
-}
-
-/// 世界坐标（地面 y≈0 平面）→ 网格坐标；超出地图范围返回 `None`
-pub fn world_to_cell(world: Vec3) -> Option<GridPos> {
+/// 世界坐标（地面 y≈0 平面）→ 网格坐标（Bevy `IVec2`）；超出地图范围返回 `None`
+pub fn world_to_cell(world: Vec3) -> Option<IVec2> {
     let x = (world.x / CELL_SIZE + (GRID_SIZE as f32 - 1.0) / 2.0).round() as i32;
     let y = (world.z / CELL_SIZE + (GRID_SIZE as f32 - 1.0) / 2.0).round() as i32;
     let in_bounds = (0..GRID_SIZE).contains(&x) && (0..GRID_SIZE).contains(&y);
-    in_bounds.then_some(GridPos::new(x, y))
+    in_bounds.then_some(IVec2::new(x, y))
 }
 
 /// 地面：深色大底板 + 每格一块草地贴图（共享 mesh/material；尺寸留 2% 间隙形成网格线）

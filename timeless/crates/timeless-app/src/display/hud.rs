@@ -4,11 +4,11 @@
 
 use bevy::prelude::*;
 
-use crate::combat::{Attack, BattleLog, Enemy, Health, Parry, Player, Stamina, intent_label};
+use crate::combat::{ActionLabelQuery, BattleLog, Enemy, Health, Player, Stamina, action_label};
 use crate::menu::{
     CanAttack, CanFireball, CanMove, CanRoll, MenuSelection, REACTIONS, SKILLS, available_skills,
 };
-use crate::movement::{Fireball, Move, Position, Roll};
+use crate::movement::Position;
 use crate::timeline::{TimeLineState, TurnPhase};
 
 /// HUD 文本标记（屏幕底部）
@@ -19,35 +19,13 @@ pub struct HudText;
 #[derive(Component, Debug, Clone, Copy)]
 pub struct BattleLogText;
 
-/// HUD 玩家行查询（数值 + 意图组合）
-type PlayerHudQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        &'static Health,
-        &'static Stamina,
-        &'static Position,
-        Option<&'static Attack>,
-        Option<&'static Move>,
-        Option<&'static Roll>,
-        Option<&'static Fireball>,
-        Option<&'static Parry>,
-    ),
-    With<Player>,
->;
+/// HUD 玩家行查询（数值 + 位置）
+type PlayerHudQuery<'w, 's> =
+    Query<'w, 's, (Entity, &'static Health, &'static Stamina, &'static Position), With<Player>>;
 
-/// HUD 敌人行查询（数值 + 意图组合）
-type EnemyHudQuery<'w, 's> = Query<
-    'w,
-    's,
-    (
-        &'static Health,
-        &'static Position,
-        Option<&'static Attack>,
-        Option<&'static Move>,
-    ),
-    With<Enemy>,
->;
+/// HUD 敌人行查询（数值 + 位置）
+type EnemyHudQuery<'w, 's> =
+    Query<'w, 's, (Entity, &'static Health, &'static Position), With<Enemy>>;
 
 /// HUD 能力查询（决策选项展示）
 type HudCapabilityQuery<'w, 's> = Query<
@@ -128,6 +106,7 @@ pub fn hud_system(
     player_q: PlayerHudQuery<'_, '_>,
     enemy_q: EnemyHudQuery<'_, '_>,
     capability_q: HudCapabilityQuery<'_, '_>,
+    actions: ActionLabelQuery<'_, '_>,
 ) {
     let Ok(mut text) = hud_q.single_mut() else {
         return;
@@ -182,8 +161,8 @@ pub fn hud_system(
     };
 
     let p_line = match player_q.single() {
-        Ok((h, s, p, attack, mov, roll, fireball, parry)) => {
-            let action = intent_label(attack, mov, roll, fireball, parry);
+        Ok((entity, h, s, p)) => {
+            let action = action_label(entity, &actions);
             format!(
                 "玩家  生命 {}/{}  精力 {}/{}  行动 {}  @({},{})",
                 h.current, h.max, s.current, s.max, action, p.0.x, p.0.y
@@ -192,14 +171,13 @@ pub fn hud_system(
         Err(_) => "玩家  已阵亡".to_string(),
     };
     let e_line = match enemy_q.single() {
-        Ok((h, p, attack, mov)) => format!(
-            "敌人  生命 {}/{}  行动 {}  @({},{})",
-            h.current,
-            h.max,
-            intent_label(attack, mov, None, None, None),
-            p.0.x,
-            p.0.y
-        ),
+        Ok((entity, h, p)) => {
+            let action = action_label(entity, &actions);
+            format!(
+                "敌人  生命 {}/{}  行动 {}  @({},{})",
+                h.current, h.max, action, p.0.x, p.0.y
+            )
+        }
         Err(_) => "敌人  已被击败".to_string(),
     };
 

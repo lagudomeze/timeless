@@ -33,39 +33,60 @@ fn main() {
         .init_resource::<TimeLineState>()
         .init_resource::<MenuSelection>()
         .init_resource::<combat::BattleLog>()
-        .add_message::<combat::HitPending>()
-        .add_message::<combat::HitPostDodge>()
-        .add_message::<combat::HitPostParry>()
-        .add_message::<combat::CounterHit>()
         .add_message::<combat::HitLanded>()
-        .add_message::<combat::RollExecuted>()
-        .add_message::<combat::ParryExecuted>()
+        .add_message::<combat::ProjectileArrived>()
         .add_message::<timeline::ResetBattle>()
+        .add_message::<timeline::TurnCommitted>()
         .add_message::<menu::SelectSkill>()
+        .add_message::<menu::CycleSkill>()
+        .add_message::<movement::MoveInput>()
         .add_message::<menu::CommitTurn>()
         .add_message::<menu::ReactionSelect>()
-        .add_systems(Startup, (setup::setup, display::hints::configure_gizmos))
+        .add_systems(
+            Startup,
+            (
+                setup::setup,
+                display::hints::configure_gizmos,
+                timeline::start_paused, // 开局 Decision 冻结虚拟时间
+            ),
+        )
         .add_systems(
             Update,
             (
-                timeline::reset_system,
-                combat::ai_system, // 先于玩家输入决策（威胁判定需要敌人已定指令）
-                menu::input_system,
-                menu::reaction_system,
-                movement::apply_move_intents_system, // 先位移（改变站位）
-                combat::resolve_system,              // 裁决 → 产出 HitPending
-                combat::dodge_system,                // 闪避（Roll）独立系统
-                combat::parry_system,                // 招架 + 反制独立系统
-                combat::damage_system,               // 应用剩余伤害
-                movement::projectile_system,         // 投射物每帧推进，命中写入 HitLanded
-                combat::death_check_system,          // 清场 + 阶段推进
-                combat::message_log_system,
-                display::unit::sync_transforms,
-                display::unit::billboard_system,
-                display::hints::move_arrow_system,
-                display::hud::hud_system,
-                display::hud::battle_log_system,
-                display::camera::camera_control_system,
+                (
+                    timeline::sync_pause_system, // 按阶段同步 Time<Virtual> 暂停
+                    timeline::reset_system,
+                    combat::ai_system,              // Decision：敌人声明动作实体
+                    menu::decision_keyboard_system, // 键盘 → 消息（CycleSkill / MoveInput / CommitTurn）
+                    menu::select_skill_system,      // Tab / 面板 → 声明动作实体
+                    movement::move_input_system,    // MoveInput → Declared MoveTo
+                    menu::commit_system,            // 提交校验 + 扣费 → TurnCommitted
+                    timeline::phase_advance_system, // TurnCommitted → Resolving（时间放行）
+                    timeline::finalize_declared_actions, // Declared → Pending（分配 execute_at）
+                    combat::reaction_trigger_system, // 双方 Pending 攻击 → Reaction（暂停）
+                    menu::reaction_keyboard_system, // 反应阶段键盘 → ReactionSelect
+                    menu::reaction_execution_system, // 反应执行：继续 / 翻滚取消 / 招架
+                ),
+                (
+                    timeline::scheduler,                // Pending → Committed（时间到期）
+                    movement::move_executor,            // MoveTo：新位置 = 当前位置 + 速度
+                    movement::roll_executor,            // Roll：后退 + Dodging 闪避标记
+                    combat::parry_executor,             // Parry：挂 Parrying 招架标记
+                    combat::combat_phase1_system,       // 阶段 1 计算（只读 + CombatResult）
+                    combat::fireball_executor,          // Fireball → 生成投射物
+                    combat::combat_phase2_system,       // 阶段 2 应用（扣血 + despawn）
+                    movement::projectile_motion_system, // 位置+速度自动飞行 → ProjectileArrived
+                    combat::explosion_system,           // 到达爆炸：范围伤害 + 销毁投射物
+                    combat::death_check_system,         // 清场 + GameOver
+                    timeline::turn_end_system,          // 动作清空 → 下一回合 Decision
+                    combat::message_log_system,
+                    display::unit::sync_transforms,
+                    display::unit::billboard_system,
+                    display::hints::move_arrow_system,
+                    display::hud::hud_system,
+                    display::hud::battle_log_system,
+                    display::camera::camera_control_system,
+                ),
             )
                 .chain(),
         )

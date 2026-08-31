@@ -6,8 +6,6 @@
 
 use bevy::prelude::*;
 
-use timeless_domain::grid::GridPos;
-
 use crate::display::camera::MainCamera;
 use crate::display::map::world_to_cell;
 
@@ -61,7 +59,7 @@ pub fn hover_info_system(
 }
 
 /// 鼠标 → 世界射线 → 地面交点 → 网格坐标（越界 / 无光标 / 射线平行地面时返回 `None`）
-fn hovered_cell(camera: &Camera, cam_tf: &GlobalTransform, window: &Window) -> Option<GridPos> {
+fn hovered_cell(camera: &Camera, cam_tf: &GlobalTransform, window: &Window) -> Option<IVec2> {
     let cursor = window.cursor_position()?;
     let ray = camera.viewport_to_world(cam_tf, cursor).ok()?;
     if ray.direction.y.abs() < f32::EPSILON {

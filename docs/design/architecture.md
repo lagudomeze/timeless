@@ -12,6 +12,12 @@
 
 - **Message**（`#[derive(Message)]` + `app.add_message::<T>()`，经 `MessageWriter` / `MessageReader`）：系统间**解耦、批量、有序**的缓冲队列；双缓冲存活 2 帧，不消费会被静默清理。
 - **Event / EntityEvent + Observer**（`GlobalTrigger` / `EntityTrigger`，`On<T, B>`，`commands.trigger` / `trigger_targets`）：**即时响应、定向实体**。
+- **UI 输入只翻译、不执行**：键盘 / egui 面板把操作翻译成 Message（`SelectSkill`、
+  `MoveInput`、`CommitTurn`、`ReactionSelect`），由对应领域的单一职责系统消费落地；
+  输入系统不得同时做决策与状态修改。
+- **消息与其消费系统同属一个领域文件**：`MoveInput` + `move_input_system` 在
+  `movement.rs`、`TurnCommitted` + `phase_advance_system` 在 `timeline.rs`；
+  其他领域需要该操作时只写消息，不重复实现。
 
 选型规则：需要立即生效或针对具体实体 → Event + Observer；批量广播、允许晚一帧、强调解耦 → Message。`MessageWriter` 发送不会触发 Observer，两者不可混用。
 
@@ -36,9 +42,9 @@
 
 ```
 src/
-├── combat.rs      # 战斗：Health/Damage、攻击属性、意图/状态组件 + 结算系统
-├── movement.rs    # 移动：Position、位移意图、投射物（火球）组件与系统
-├── menu.rs        # 菜单：Action（UI 选项）+ 输入系统（写入意图组件）
+├── combat.rs      # 战斗：Health/Damage、攻击属性、意图/状态组件、火球/爆炸 + 结算系统
+├── movement.rs    # 移动：Position、位移行动、投射物飞行（位置+速度）；不含火球/爆炸
+├── menu.rs        # 菜单：能力标记 + 技能表 + 键盘/面板消息 + 单一职责输入系统
 ├── timeline.rs    # 时间线：回合阶段机
 ├── display/       # 展示层子域：camera / unit / hints / hud / map
 ├── setup.rs       # 场景组合（地面/装饰/单位/HUD）
@@ -47,9 +53,10 @@ src/
 ```
 
 战斗数据建模遵循「实体 + 小组件组合」：`Health` 对应 `Damage`、攻击属性拆成
-`AttackFrame` / `AttackRange` / `Impact`、行动用意图组件表达
-（`Attack` / `Move` / `Roll` / `Fireball`，由能力标记 + 技能表驱动），详见
-[ecs-combat-components.md](ecs-combat-components.md)。
+`AttackFrame` / `AttackRange` / `Impact`、行动用**动作实体**表达
+（载荷组件 + `ScheduledAction` + `Declared/Pending/Committed`，由能力标记 +
+技能表声明，经 `Time<Virtual>` 时间线调度 + 两阶段结算），动作实体用 `bsn!` 构建，
+详见 [ecs-combat-components.md](ecs-combat-components.md)。
 
 ## 现状与差距（WIP）
 
