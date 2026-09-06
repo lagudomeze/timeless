@@ -3,6 +3,7 @@ use bevy::prelude::*;
 mod camera;
 mod character;
 mod decoration;
+pub mod domain;
 mod map;
 mod movement;
 
