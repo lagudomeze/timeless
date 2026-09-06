@@ -8,11 +8,5 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/timeless-domain",   # 领域层：纯 Rust，零 Bevy 依赖，可单测
-    "crates/timeless-app",      # 应用层：Bevy 组件 / 系统 / 渲染
+    "crates/*",   # 领域层：纯 Rust，零 Bevy 依赖，可单测
 ]
-
-# 本地补丁：parley 0.9.0 原版对 CJK 分词只用 new_for_non_complex_scripts，
-# 中文 HUD 会触发 ICU4X "No segmentation model" 刷屏。见 vendor/parley/README.patch.md。
-[patch.crates-io]
-parley = { path = "vendor/parley" }
