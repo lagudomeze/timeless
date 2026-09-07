@@ -1,10 +1,11 @@
 use bevy::prelude::*;
 
+pub mod combat;
+pub mod health;
+
 mod camera;
 mod character;
-pub mod combat;
 mod decoration;
-pub mod domain;
 mod map;
 mod movement;
 
