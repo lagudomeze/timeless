@@ -11,6 +11,8 @@
 > 旧「网格回合仲裁」方向的 T2–T4 迁移暂缓；下面的映射仅作旧代码索引。
 > 落地状态见仓库代码（`crates/app/src/combat` 已有箭头碰撞扣血端到端测试）。
 
+> 旧内容逐项盘点与「按 app 范式重设计」见 [app-redesign.md](app-redesign.md)。
+
 ## 迁移原则
 
 1. **纯逻辑进 `app/src/domain/`**：零 Bevy 依赖、可独立单测；日后若想恢复
