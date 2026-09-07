@@ -40,7 +40,8 @@ pub fn setup(mut commands: Commands, natures: Res<decoration::Natures>) {
             }
         )
     });
-    commands.spawn_scene(character::test());
+    commands.spawn_scene(character::player());
+    commands.spawn_scene(character::enemy());
 
     for x in 0..5 {
         for y in 0..5 {

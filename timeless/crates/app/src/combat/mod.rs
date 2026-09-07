@@ -17,6 +17,7 @@
 pub mod cleanup;
 pub mod components;
 pub mod damage;
+pub mod faction;
 pub mod lifecycle;
 pub mod movement;
 pub mod targeting;
@@ -26,6 +27,7 @@ pub use components::{
     Armor, Collidable, CollisionTarget, HitRadius, Owner, PhysicalDamage, Projectile, Velocity,
 };
 pub use damage::apply_physical_damage_system;
+pub use faction::Faction;
 pub use lifecycle::manage_projectile_hits_system;
 pub use movement::move_entities_system;
 pub use targeting::detect_collisions_system;
