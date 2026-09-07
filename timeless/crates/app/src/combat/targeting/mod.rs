@@ -5,5 +5,7 @@
 //! 临时标记挂到攻击实体上。后续「对波」「友伤过滤」等都是独立扩展点。
 
 pub mod detection;
+pub mod melee;
 
 pub use detection::detect_collisions_system;
+pub use melee::detect_melee_system;

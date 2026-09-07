@@ -24,10 +24,11 @@ pub mod targeting;
 
 pub use cleanup::cleanup_finished_attacks_system;
 pub use components::{
-    Armor, Collidable, CollisionTarget, HitRadius, Owner, PhysicalDamage, Projectile, Velocity,
+    Armor, Collidable, CollisionTarget, HitOnce, HitRadius, Lifetime, MeleeShape, Owner,
+    PhysicalDamage, Projectile, Velocity,
 };
 pub use damage::apply_physical_damage_system;
 pub use faction::Faction;
-pub use lifecycle::manage_projectile_hits_system;
+pub use lifecycle::{expire_attack_entities_system, manage_projectile_hits_system};
 pub use movement::move_entities_system;
-pub use targeting::detect_collisions_system;
+pub use targeting::{detect_collisions_system, detect_melee_system};

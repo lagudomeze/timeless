@@ -5,3 +5,7 @@ use bevy::prelude::*;
 /// 消息不含目标——生成系统自行查询最近的敌人决定朝向。
 #[derive(Message, Debug, Clone, Copy)]
 pub struct FireCommand;
+
+/// 玩家请求近战横扫：由输入系统写入，`player_melee_system` 消费并生成攻击实体。
+#[derive(Message, Debug, Clone, Copy)]
+pub struct MeleeCommand;

@@ -64,6 +64,7 @@ pub fn add_combat(app: &mut App) {
         .add_message::<restart::ResetBattle>()
         .add_message::<control::MoveCommand>()
         .add_message::<attacks::FireCommand>()
+        .add_message::<attacks::MeleeCommand>()
         .init_resource::<battlelog::BattleLog>()
         .add_systems(
             Update,
@@ -74,13 +75,16 @@ pub fn add_combat(app: &mut App) {
                 ai::enemy_ai_system,
                 attacks::player_fire_input_system,
                 attacks::player_fire_arrow_system,
+                attacks::player_melee_system,
                 control::apply_move_command_system,
                 combat::move_entities_system,
                 combat::detect_collisions_system,
+                combat::detect_melee_system,
                 combat::apply_physical_damage_system,
                 combat::manage_projectile_hits_system,
                 health::apply_damage_system,
                 combat::cleanup_finished_attacks_system,
+                combat::expire_attack_entities_system,
                 despawn::despawn_dead_system,
                 battlelog::battle_log_system,
             )
@@ -92,6 +96,7 @@ pub fn add_combat(app: &mut App) {
 mod tests {
     use super::*;
     use bevy::input::keyboard::KeyCode;
+    use std::time::Duration;
 
     fn test_app() -> App {
         let mut app = App::new();
@@ -212,5 +217,51 @@ mod tests {
         let world = app.world_mut();
         let velocity = world.query::<&combat::Velocity>().single(world).unwrap().0;
         assert_eq!(velocity, Vec3::Y * 5.0, "按住 W 应给玩家 +Y 速度");
+    }
+
+    #[test]
+    fn melee_swing_hits_once_then_expires() {
+        let mut app = test_app();
+        let enemy = app
+            .world_mut()
+            .spawn((
+                combat::Faction::Enemy,
+                health::Health::new(50.0),
+                combat::Collidable,
+                combat::HitRadius(0.8),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+        let swing = app
+            .world_mut()
+            .spawn((
+                combat::Faction::Player,
+                combat::PhysicalDamage(15.0),
+                combat::MeleeShape::default(),
+                combat::HitOnce::default(),
+                combat::Lifetime::default(),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+
+        app.update(); // 命中结算
+
+        let world = app.world_mut();
+        let hp = world.query::<&health::Health>().get(world, enemy).unwrap();
+        assert_eq!(hp.current, 35.0, "近战 15 点伤害只应结算一次");
+
+        // 直接让计时器到期，验证 Lifetime 销毁（避免依赖测试时间推进）
+        app.world_mut()
+            .entity_mut(swing)
+            .get_mut::<combat::Lifetime>()
+            .unwrap()
+            .0
+            .set_elapsed(Duration::from_secs(1));
+        app.update();
+
+        assert!(
+            app.world_mut().get_entity(swing).is_err(),
+            "近战攻击实体应在 Lifetime 结束后销毁"
+        );
     }
 }

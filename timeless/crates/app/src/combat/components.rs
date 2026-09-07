@@ -63,3 +63,37 @@ pub struct PhysicalDamage(pub f32);
 /// 护甲（目标挂载，物理伤害先扣护甲）
 #[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
 pub struct Armor(pub f32);
+
+/// 近战命中形状：攻击实体以自身为圆心、朝 `Transform` 正前方扫扇形，
+/// 只命中一次。数值进组件，目标获取与伤害完全解耦。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct MeleeShape {
+    pub range: f32,
+    /// 扇形半角（弧度）
+    pub half_arc: f32,
+}
+
+impl Default for MeleeShape {
+    fn default() -> Self {
+        Self {
+            range: 2.5,
+            half_arc: 60.0_f32.to_radians(),
+        }
+    }
+}
+
+/// 一次性命中开关：近战等攻击实体用，命中一次后不再重复结算。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HitOnce {
+    pub spent: bool,
+}
+
+/// 攻击实体存活时长（近战横扫等一次性攻击到期自动销毁）
+#[derive(Component, Debug, Clone)]
+pub struct Lifetime(pub Timer);
+
+impl Default for Lifetime {
+    fn default() -> Self {
+        Self(Timer::from_seconds(0.18, TimerMode::Once))
+    }
+}

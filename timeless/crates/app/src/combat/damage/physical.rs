@@ -11,11 +11,11 @@ use super::super::components::{Armor, CollisionTarget, PhysicalDamage, Projectil
 /// 新增元素伤害（火 / 毒）只需新增系统，本系统不改。
 pub fn apply_physical_damage_system(
     mut damage_events: MessageWriter<DamageEvent>,
-    attacks: Query<(&Projectile, &PhysicalDamage, &CollisionTarget)>,
+    attacks: Query<(Option<&Projectile>, &PhysicalDamage, &CollisionTarget)>,
     armor_q: Query<&Armor>,
 ) {
     for (projectile, physical, target) in &attacks {
-        if projectile.finished {
+        if projectile.is_some_and(|p| p.finished) {
             continue;
         }
         let armor = armor_q.get(target.0).map(|a| a.0).unwrap_or(0.0);

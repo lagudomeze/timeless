@@ -5,10 +5,12 @@
 
 pub mod arrow;
 pub mod input;
+pub mod melee;
 pub mod messages;
 pub mod systems;
 
 pub use arrow::arrow_scene;
 pub use input::player_fire_input_system;
-pub use messages::FireCommand;
-pub use systems::player_fire_arrow_system;
+pub use melee::melee_scene;
+pub use messages::{FireCommand, MeleeCommand};
+pub use systems::{player_fire_arrow_system, player_melee_system};

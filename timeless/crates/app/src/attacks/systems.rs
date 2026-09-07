@@ -4,7 +4,11 @@ use bevy::prelude::*;
 use crate::combat::Faction;
 use crate::health::Health;
 
-use super::{arrow_scene, messages::FireCommand};
+use super::melee::melee_scene;
+use super::{
+    arrow_scene,
+    messages::{FireCommand, MeleeCommand},
+};
 
 /// 玩家开火：找到最近敌人，从玩家前方一小段距离生成普通箭矢。
 /// 只负责生成；命中、伤害、清理全部交给 combat 流水线。
@@ -38,6 +42,42 @@ pub fn player_fire_arrow_system(
     let direction = (enemy_pos - player_pos).normalize_or_zero();
     commands.spawn_scene(arrow_scene(
         player_pos + direction * 1.2,
+        direction,
+        Faction::Player,
+    ));
+}
+
+/// 玩家近战：向最近敌人的方向生成一次性横扫攻击实体。
+pub fn player_melee_system(
+    mut melee_requests: MessageReader<MeleeCommand>,
+    mut commands: Commands,
+    units: Query<(&Transform, &Health, &Faction)>,
+) {
+    if melee_requests.read().next().is_none() {
+        return;
+    }
+    let Some((player_pos, _)) = units
+        .iter()
+        .find(|(_, _, faction)| **faction == Faction::Player)
+        .map(|(tf, _, _)| (tf.translation, tf))
+    else {
+        return;
+    };
+    let Some(enemy_pos) = units
+        .iter()
+        .filter(|(_, _, faction)| **faction == Faction::Enemy)
+        .map(|(tf, ..)| tf.translation)
+        .min_by(|a, b| {
+            a.distance_squared(player_pos)
+                .total_cmp(&b.distance_squared(player_pos))
+        })
+    else {
+        return;
+    };
+
+    let direction = (enemy_pos - player_pos).normalize_or_zero();
+    commands.spawn_scene(melee_scene(
+        player_pos + direction * 0.6,
         direction,
         Faction::Player,
     ));
