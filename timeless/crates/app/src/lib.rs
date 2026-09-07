@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 mod ai;
 pub mod attacks;
+pub mod battlelog;
 mod camera;
 mod character;
 pub mod combat;
@@ -11,6 +12,7 @@ pub mod despawn;
 pub mod events;
 pub mod health;
 mod map;
+pub mod restart;
 
 pub fn preload(mut commands: Commands) {
     commands.insert_resource(GlobalAmbientLight {
@@ -59,11 +61,15 @@ pub fn setup(mut commands: Commands, natures: Res<decoration::Natures>) {
 pub fn add_combat(app: &mut App) {
     app.add_message::<events::DamageEvent>()
         .add_message::<events::DeathEvent>()
+        .add_message::<restart::ResetBattle>()
         .add_message::<control::MoveCommand>()
         .add_message::<attacks::FireCommand>()
+        .init_resource::<battlelog::BattleLog>()
         .add_systems(
             Update,
             (
+                restart::reset_input_system,
+                restart::reset_system,
                 control::player_move_input_system,
                 ai::enemy_ai_system,
                 attacks::player_fire_input_system,
@@ -76,6 +82,7 @@ pub fn add_combat(app: &mut App) {
                 health::apply_damage_system,
                 combat::cleanup_finished_attacks_system,
                 despawn::despawn_dead_system,
+                battlelog::battle_log_system,
             )
                 .chain(),
         );
