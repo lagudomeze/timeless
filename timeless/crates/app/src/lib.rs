@@ -25,11 +25,19 @@ pub fn setup(mut commands: Commands, natures: Res<decoration::Natures>) {
 
     commands.spawn_scene(camera::main_camera());
     commands.spawn_scene(camera::light());
-    commands.spawn_scene(bsn! {
-        @map::BatteMap {
-            @width : 10.0,
-            @height : 10.0,
-        }
+    commands.spawn_scene_list(bsn_list! {
+        (
+            @map::Ground {
+                @width : 10.0,
+                @height : 10.0,
+            }
+        ),
+        (
+            @map::GroundGrid {
+                @width : 10.0,
+                @height : 10.0,
+            }
+        )
     });
     commands.spawn_scene(character::test());
 
