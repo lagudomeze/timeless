@@ -5,6 +5,12 @@
 > `fmt` / `clippy` / `test` 全绿。旧 crate 在完全迁移前**保留**作对照，
 > 迁移完成后由用户决定何时删除。
 
+> ⚠️ 2026-09-07 更新：新战斗蓝图已定稿并开始落地（世界空间流水线：
+> `events.rs` + `health/` + `combat/`（movement / targeting / lifecycle /
+> damage / cleanup）+ `despawn/`，全部按 Bevy 0.19 `Message` 实现）。
+> 旧「网格回合仲裁」方向的 T2–T4 迁移暂缓；下面的映射仅作旧代码索引。
+> 落地状态见仓库代码（`crates/app/src/combat` 已有箭头碰撞扣血端到端测试）。
+
 ## 迁移原则
 
 1. **纯逻辑进 `app/src/domain/`**：零 Bevy 依赖、可独立单测；日后若想恢复
