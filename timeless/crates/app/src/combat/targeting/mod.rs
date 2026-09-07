@@ -1,13 +1,9 @@
-pub mod aoe;
-pub mod melee;
-pub mod projectile;
+//! # 目标获取层
+//!
+//! 只回答「打到了谁」：纯物理检测，不关心敌我、不排除自己 / 其它射弹，
+//! 把命中候选以 [`CollisionTarget`](crate::combat::components::CollisionTarget)
+//! 临时标记挂到攻击实体上。后续「对波」「友伤过滤」等都是独立扩展点。
 
-use bevy::prelude::*;
+pub mod detection;
 
-// 单体目标
-#[derive(Component)]
-pub struct Target(pub Entity);
-
-// 多体目标（用于 AOE、横扫等）
-#[derive(Component)]
-pub struct Targets(pub Vec<Entity>);
+pub use detection::detect_collisions_system;
