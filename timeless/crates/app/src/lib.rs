@@ -1,8 +1,11 @@
 use bevy::prelude::*;
 
+mod ai;
+pub mod attacks;
 mod camera;
 mod character;
 pub mod combat;
+pub mod control;
 mod decoration;
 pub mod despawn;
 pub mod events;
@@ -56,9 +59,16 @@ pub fn setup(mut commands: Commands, natures: Res<decoration::Natures>) {
 pub fn add_combat(app: &mut App) {
     app.add_message::<events::DamageEvent>()
         .add_message::<events::DeathEvent>()
+        .add_message::<control::MoveCommand>()
+        .add_message::<attacks::FireCommand>()
         .add_systems(
             Update,
             (
+                control::player_move_input_system,
+                ai::enemy_ai_system,
+                attacks::player_fire_input_system,
+                attacks::player_fire_arrow_system,
+                control::apply_move_command_system,
                 combat::move_entities_system,
                 combat::detect_collisions_system,
                 combat::apply_physical_damage_system,
@@ -74,10 +84,12 @@ pub fn add_combat(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::input::keyboard::KeyCode;
 
     fn test_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
+        app.insert_resource(ButtonInput::<KeyCode>::default());
         add_combat(&mut app);
         app
     }
@@ -173,5 +185,25 @@ mod tests {
             app.world_mut().get_entity(target).is_err(),
             "致命伤害应触发 DeathEvent 并销毁目标"
         );
+    }
+
+    #[test]
+    fn wasd_moves_player_through_move_command() {
+        let mut app = test_app();
+        app.world_mut().spawn((
+            combat::Faction::Player,
+            combat::Velocity(Vec3::ZERO),
+            control::MoveSpeed(5.0),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        ));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+
+        app.update();
+
+        let world = app.world_mut();
+        let velocity = world.query::<&combat::Velocity>().single(world).unwrap().0;
+        assert_eq!(velocity, Vec3::Y * 5.0, "按住 W 应给玩家 +Y 速度");
     }
 }

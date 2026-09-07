@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 
 use super::super::components::{Collidable, CollisionTarget, HitRadius, Projectile};
+use super::super::faction::Faction;
 
 /// 每帧：
 /// 1. 先清掉上一帧残留的 `CollisionTarget`（临时标记只存活一帧的检测周期）；
@@ -13,21 +14,29 @@ use super::super::components::{Collidable, CollisionTarget, HitRadius, Projectil
 pub fn detect_collisions_system(
     mut commands: Commands,
     stale: Query<Entity, With<CollisionTarget>>,
-    projectiles: Query<(Entity, &Transform, &HitRadius, &Projectile)>,
-    targets: Query<(Entity, &Transform, &HitRadius), With<Collidable>>,
+    projectiles: Query<(
+        Entity,
+        &Transform,
+        &HitRadius,
+        &Projectile,
+        Option<&Faction>,
+    )>,
+    targets: Query<(Entity, &Transform, &HitRadius, Option<&Faction>), With<Collidable>>,
 ) {
     for entity in &stale {
         commands.entity(entity).remove::<CollisionTarget>();
     }
 
-    for (projectile, p_pos, p_radius, state) in &projectiles {
+    for (projectile, p_pos, p_radius, state, p_faction) in &projectiles {
         if state.finished {
             continue;
         }
         let hit = targets
             .iter()
-            .filter(|(target, ..)| *target != projectile)
-            .map(|(target, t_pos, t_radius)| {
+            .filter(|(target, _, _, t_faction)| {
+                *target != projectile && !(p_faction.is_some() && *t_faction == p_faction)
+            })
+            .map(|(target, t_pos, t_radius, _)| {
                 (
                     target,
                     t_pos.translation.distance(p_pos.translation),

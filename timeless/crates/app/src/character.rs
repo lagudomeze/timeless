@@ -6,27 +6,37 @@
 
 use bevy::prelude::*;
 
+use crate::ai::{AttackCooldown, EnemyBrain};
 use crate::combat::{Collidable, Faction, HitRadius, Velocity};
+use crate::control::MoveSpeed;
 use crate::health::Health;
 
 /// 玩家单位：示例用 glTF 岩石占位（后续替换角色模型）
 pub fn player() -> impl Scene {
-    unit(
-        Faction::Player,
-        Vec3::new(2.0, 0.0, 2.0),
-        3.0,
-        "models/nature/rock_largeA.glb#Scene0",
-    )
+    bsn! {
+        unit(
+            Faction::Player,
+            Vec3::new(2.0, 0.0, 2.0),
+            3.0,
+            "models/nature/rock_largeA.glb#Scene0"
+        )
+        MoveSpeed(5.0)
+    }
 }
 
 /// 敌人单位：示例用 glTF 树木占位（后续替换怪物模型）
 pub fn enemy() -> impl Scene {
-    unit(
-        Faction::Enemy,
-        Vec3::new(7.0, 0.0, 7.0),
-        1.6,
-        "models/nature/tree_oak.glb#Scene0",
-    )
+    bsn! {
+        unit(
+            Faction::Enemy,
+            Vec3::new(7.0, 0.0, 7.0),
+            1.6,
+            "models/nature/tree_oak.glb#Scene0"
+        )
+        MoveSpeed(2.0)
+        EnemyBrain
+        AttackCooldown
+    }
 }
 
 /// 单位场景模板：根实体承载逻辑组件，glTF 作为视觉子节点由 `WorldAssetRoot` 挂载。
