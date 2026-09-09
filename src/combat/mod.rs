@@ -13,11 +13,14 @@
 //!
 //! 目标获取（targeting）只回答「打到了谁」，伤害计算（damage）只回答
 //! 「打多少血」，两者通过临时标记 [`components::CollisionTarget`] 解耦。
+//!
+use bevy::prelude::*;
 
 pub mod cleanup;
 pub mod components;
 pub mod damage;
 pub mod faction;
+pub mod health;
 pub mod lifecycle;
 pub mod movement;
 pub mod targeting;
@@ -32,3 +35,15 @@ pub use faction::Faction;
 pub use lifecycle::{expire_attack_entities_system, manage_projectile_hits_system};
 pub use movement::move_entities_system;
 pub use targeting::{detect_collisions_system, detect_melee_system};
+
+#[derive(Debug, Default)]
+pub struct CombatPlugin;
+
+impl Plugin for CombatPlugin {
+    fn build(&self, app: &mut App) {
+        // health ecs
+        app.add_message::<health::ModifyHealthEvent>()
+            .add_message::<health::DeathEvent>()
+            .add_systems(Update, health::apply_damage);
+    }
+}

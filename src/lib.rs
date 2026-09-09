@@ -1,16 +1,19 @@
 use bevy::prelude::*;
 
+pub mod combat;
+pub mod movement;
+pub mod scene;
+
+// ----------------
 mod ai;
 pub mod attacks;
 pub mod battlelog;
 mod camera;
 mod character;
-pub mod combat;
 pub mod control;
 mod decoration;
 pub mod despawn;
 pub mod events;
-pub mod health;
 mod map;
 pub mod restart;
 
@@ -82,7 +85,6 @@ pub fn add_combat(app: &mut App) {
                 combat::detect_melee_system,
                 combat::apply_physical_damage_system,
                 combat::manage_projectile_hits_system,
-                health::apply_damage_system,
                 combat::cleanup_finished_attacks_system,
                 combat::expire_attack_entities_system,
                 despawn::despawn_dead_system,

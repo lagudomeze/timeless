@@ -7,7 +7,7 @@ fn main() {
         .add_plugins(FbxPlugin)
         .add_systems(Startup, (app::preload, app::setup).chain())
         .add_systems(Update, system);
-    app::add_combat(&mut app);
+    app::add_combat(&mut app);·
     app.run();
 }
 fn system(mut gizmos: Gizmos) {
