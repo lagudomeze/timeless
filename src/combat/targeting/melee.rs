@@ -1,11 +1,15 @@
-//! 近战形状检测：扇形内最接近的敌对单位 → `CollisionTarget`
+//! 近战形状检测：扇形范围内最近的敌对单位。
+
 use bevy::prelude::*;
 
-use super::super::components::{Collidable, CollisionTarget, HitOnce, MeleeShape};
-use super::super::faction::Faction;
+use crate::combat::components::{Collidable, Faction};
+use crate::combat::lifecycle::HitOnce;
 
-/// 对每个未命中的近战攻击，在其正前方的扇形内找最近的敌对单位并挂
-/// `CollisionTarget`，然后置 `HitOnce::spent`（每段横扫只结算一次）。
+use super::components::{CollisionTarget, MeleeShape};
+
+/// 对每个还没打中的近战攻击，在正前方扇形内找最近的敌对单位挂 [`CollisionTarget`]。
+///
+/// 命中后置 `HitOnce::spent`，保证一次横扫只结算一次。
 pub fn detect_melee_system(
     mut commands: Commands,
     mut attacks: Query<(Entity, &Transform, &Faction, &MeleeShape, &mut HitOnce)>,
@@ -19,7 +23,9 @@ pub fn detect_melee_system(
         let best = units
             .iter()
             .filter(|(_, _, unit_faction)| **unit_faction != *faction)
-            .map(|(unit, unit_tf, _)| (unit, unit_tf.translation - transform.translation))
+            .map(|(unit, unit_transform, _)| {
+                (unit, unit_transform.translation - transform.translation)
+            })
             .filter(|(_, to_unit)| {
                 let distance = to_unit.length();
                 if distance > shape.range {

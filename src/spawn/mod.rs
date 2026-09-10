@@ -1,0 +1,50 @@
+//! # spawn — 实体组装车间
+//!
+//! 「玩家」「怪物」**不是模块**，而是多个领域提供的组件在同一个实体上的组合：
+//!
+//! | 零件 | 提供方 |
+//! | :--- | :--- |
+//! | `Health` | [`crate::combat::health`] |
+//! | `PhysicalDamage` / `Armor` / `HitRadius` | [`crate::combat::attributes`] |
+//! | `Faction` / `Collidable` | [`crate::combat`] |
+//! | `Velocity` / `MoveSpeed` | [`crate::movement`] |
+//! | `EnemyBrain` / `AttackCooldown` | [`crate::ai`] |
+//! | `ChunkLoader` | [`crate::world`] |
+//! | 模型 / 相机 / 装饰 / 日志 | [`crate::presentation`] |
+//!
+//! 本域把零件**拼装**成实体（[`player`] / [`enemy`]），并负责「开局组装」
+//! （[`assembly`]）与「清场后重新组装」这类功能胶水（[`restart`]）。
+//!
+//! 依赖方向是单向的：
+//!
+//! ```text
+//! spawn ──▶ combat / movement / ai / world / presentation
+//! ```
+//!
+//! **没有任何领域依赖 `spawn`**——所以改角色配置永远不会波及战斗、移动、渲染的规则。
+//! 攻击实体（箭矢、近战横扫）不在这里，它是技能的产物，工厂归
+//! [`crate::combat::skills`]。
+
+use bevy::prelude::*;
+
+pub mod assembly;
+pub mod enemy;
+pub mod player;
+pub mod plugin;
+pub mod restart;
+pub mod unit;
+
+pub use assembly::setup_scene;
+pub use enemy::enemy_scene;
+pub use player::player_scene;
+pub use plugin::SpawnPlugin;
+pub use restart::{ResetBattle, reset_battle_system, restart_input_system};
+pub use unit::unit_scene;
+
+/// 开局组装（Startup）：在资源预载之后跑。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AssemblySet;
+
+/// 运行期的「重新组装」（`Update`）：清场重建等功能，排在 AI / 移动 / 战斗之前。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SpawnSet;

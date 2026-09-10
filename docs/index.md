@@ -14,6 +14,7 @@ roguelike 策略游戏，代号 Project Timeless，基于 Bevy 0.19 实现。
 | 游戏设计总纲 | [design/game-design.md](design/game-design.md) |
 | 时间线系统详细设计 | [design/timeline.md](design/timeline.md) |
 | 架构原则与分层 | [design/architecture.md](design/architecture.md) |
+| 根目录 app 原型的领域化模块设计 | [design/app-modules.md](design/app-modules.md) |
 | ECS 战斗组件化设计 | [design/ecs-combat-components.md](design/ecs-combat-components.md) |
 | Bevy 0.19 速查与最佳实践 | [bevy/bevy-019.md](bevy/bevy-019.md) |
 | Action Graph 设计 | [bevy/action-graph.md](bevy/action-graph.md) |

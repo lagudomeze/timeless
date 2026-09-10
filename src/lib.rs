@@ -1,112 +1,185 @@
+//! # app — Project Timeless 世界空间原型（Bevy 0.19）
+//!
+//! 组织方式：**一个领域 = 一个目录 = 一个 [`Plugin`]**，领域内部按职责分文件
+//! （`components` / `events` / `systems` / `resources`），跨领域只经 Bevy `Message`
+//! 或公共组件类型通信；输入一律「只翻译、不执行」。
+//!
+//! | 领域 | 职责 |
+//! | :--- | :--- |
+//! | [`world`] | 体素地图**数据**：区块、地形生成、体素存取（零渲染依赖，可脱离渲染单测） |
+//! | [`voxel_render`] | 体素**表现**：异步网格化、材质、明暗 |
+//! | [`movement`] | 速度与位移（位置用 Bevy `Transform`） |
+//! | [`combat`] | 生命 / 伤害 / 目标获取 / 攻击实体生命周期 / 技能生成 |
+//! | [`ai`] | 敌人决策（只写 `Velocity`） |
+//! | [`timeline`] | We-Go 时间线：规划阶段冻结虚拟时间等玩家提交，推进阶段结算行动 |
+//! | [`input`] | 玩家输入源（键盘 → 消息，只翻译） |
+//! | [`presentation`] | 表现：相机 / 装饰 / 日志（将来还有 UI / 动画 / 特效） |
+//! | [`spawn`] | **组装车间**：把各域零件拼成「玩家 / 敌人」实体，含开局组装与重建功能 |
+//!
+//! 「玩家」「敌人」不是模块，而是组件的组合体——零件归各领域，组装归 [`spawn`]，
+//! 且**没有任何领域依赖 `spawn`**：
+//!
+//! ```text
+//! spawn ──▶ combat / movement / ai / world / presentation
+//! input ──▶ movement / combat / timeline（只写它们的消息）
+//! ai    ──▶ movement / combat（只声明行动实体）
+//! ```
+//!
+//! 跨领域**执行顺序**只在 [`GamePlugin`] 里声明一次，领域内部顺序由各插件自己维护：
+//!
+//! ```text
+//! Startup:  PreloadSet ─▶ AssemblySet
+//! Update:   SpawnSet ─▶ InputSet ─▶ TimelineSet ─▶ AiSet ─▶ MovementSet ─▶ CombatSet
+//!           ─▶ VoxelRenderSet ─▶ PresentationSet
+//! WorldSet ────────────────────────▶（必须早于 VoxelRenderSet）
+//! ```
+
 use bevy::prelude::*;
 
+pub mod ai;
 pub mod combat;
+pub mod input;
 pub mod movement;
-pub mod scene;
+pub mod presentation;
+pub mod spawn;
+pub mod timeline;
+pub mod voxel_render;
 pub mod world;
 
-// ----------------
-mod ai;
-pub mod attacks;
-pub mod battlelog;
-mod camera;
-mod character;
-pub mod control;
-mod decoration;
-pub mod despawn;
-pub mod events;
-mod map;
-pub mod restart;
+pub use ai::{AiPlugin, AiSet};
+pub use combat::{CombatPlugin, CombatSet};
+pub use input::{InputPlugin, InputSet};
+pub use movement::{MovementPlugin, MovementSet};
+pub use presentation::{PreloadSet, PresentationPlugin, PresentationSet};
+pub use spawn::{AssemblySet, SpawnPlugin, SpawnSet};
+pub use timeline::{TimelinePlugin, TimelineSet};
+pub use voxel_render::{VoxelRenderPlugin, VoxelRenderSet};
+pub use world::{WorldPlugin, WorldSet};
 
-pub fn preload(mut commands: Commands) {
-    commands.insert_resource(GlobalAmbientLight {
-        color: Color::WHITE,
-        brightness: 400.0,
-        ..default()
-    });
-    decoration::load_natures(&mut commands);
+/// 游戏装配插件：把各领域插件按流水线接起来。
+///
+/// `main.rs` 只加引擎插件 + 本插件；领域之间谁先谁后只在这里说一次。
+#[derive(Debug, Default)]
+pub struct GamePlugin;
+
+/// 声明跨领域执行顺序（领域内部的顺序由各插件自己维护）。
+///
+/// [`GamePlugin`] 与单元测试共用这一个入口，保证测试跑的就是真实流水线顺序；
+/// 只装了部分领域的 App 也能安全调用（空系统集不产生任何影响）。
+pub fn configure_pipeline(app: &mut App) {
+    app.configure_sets(Startup, (PreloadSet, AssemblySet).chain())
+        .configure_sets(
+            Update,
+            (
+                SpawnSet,
+                InputSet,
+                TimelineSet,
+                AiSet,
+                MovementSet,
+                CombatSet,
+                VoxelRenderSet,
+                PresentationSet,
+            )
+                .chain(),
+        )
+        // 数据先于表现：区块先有数据，网格化才有东西可画
+        .configure_sets(Update, WorldSet.before(VoxelRenderSet));
 }
 
-pub fn setup(mut commands: Commands, natures: Res<decoration::Natures>) {
-    commands.spawn((
-        DirectionalLight::default(),
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.5, 0.8, 0.0)),
-    ));
-
-    commands.spawn_scene(camera::main_camera());
-    commands.spawn_scene(camera::light());
-    commands.spawn_scene_list(bsn_list! {
-        (
-            @map::Ground {
-                @width : 10.0,
-                @height : 10.0,
-            }
-        ),
-        (
-            @map::GroundGrid {
-                @width : 10.0,
-                @height : 10.0,
-            }
-        )
-    });
-    commands.spawn_scene(character::player());
-    commands.spawn_scene(character::enemy());
-
-    for x in 0..5 {
-        for y in 0..5 {
-            let transform = Transform::from_xyz(x as f32, 0.0, y as f32);
-            commands.spawn_scene(natures.random(transform));
-        }
+impl Plugin for GamePlugin {
+    fn build(&self, app: &mut App) {
+        configure_pipeline(app);
+        app.add_plugins((
+            WorldPlugin,
+            VoxelRenderPlugin,
+            PresentationPlugin,
+            SpawnPlugin,
+            InputPlugin,
+            TimelinePlugin,
+            MovementPlugin,
+            CombatPlugin,
+            AiPlugin,
+        ));
     }
 }
 
-/// 装配战斗流水线（蓝图系统链，顺序不可乱）：
-/// 移动 → 碰撞检测 → 伤害计算 → 命中计数 → 扣血 → 清理 → 死亡销毁。
-pub fn add_combat(app: &mut App) {
-    app.add_message::<events::DamageEvent>()
-        .add_message::<events::DeathEvent>()
-        .add_message::<restart::ResetBattle>()
-        .add_message::<control::MoveCommand>()
-        .add_message::<attacks::FireCommand>()
-        .add_message::<attacks::MeleeCommand>()
-        .init_resource::<battlelog::BattleLog>()
-        .add_systems(
-            Update,
-            (
-                restart::reset_input_system,
-                restart::reset_system,
-                control::player_move_input_system,
-                ai::enemy_ai_system,
-                attacks::player_fire_input_system,
-                attacks::player_fire_arrow_system,
-                attacks::player_melee_system,
-                control::apply_move_command_system,
-                combat::move_entities_system,
-                combat::detect_collisions_system,
-                combat::detect_melee_system,
-                combat::apply_physical_damage_system,
-                combat::manage_projectile_hits_system,
-                combat::cleanup_finished_attacks_system,
-                combat::expire_attack_entities_system,
-                despawn::despawn_dead_system,
-                battlelog::battle_log_system,
-            )
-                .chain(),
-        );
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use bevy::scene::ScenePlugin;
+    use bevy::world_serialization::WorldSerializationPlugin;
+
+    /// 装齐「除渲染外」的整机 App：跨领域行为测试用（时间线、重置、场景组装）。
+    ///
+    /// 不含 `VoxelRenderPlugin`（网格化要 `Assets<Mesh>`，体素那侧自己搭 App）。
+    pub fn headless_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(AssetPlugin::default())
+            .add_plugins((ScenePlugin, WorldSerializationPlugin))
+            .insert_resource(ButtonInput::<bevy::input::keyboard::KeyCode>::default())
+            .insert_resource(ButtonInput::<bevy::input::mouse::MouseButton>::default())
+            .insert_resource(bevy::input::mouse::AccumulatedMouseMotion::default())
+            .add_plugins((
+                WorldPlugin,
+                PresentationPlugin,
+                SpawnPlugin,
+                InputPlugin,
+                TimelinePlugin,
+                MovementPlugin,
+                CombatPlugin,
+                AiPlugin,
+            ));
+        configure_pipeline(&mut app);
+        app
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use bevy::input::keyboard::KeyCode;
+    use bevy::scene::ScenePlugin;
+    use bevy::time::TimeUpdateStrategy;
+    use bevy::world_serialization::WorldSerializationPlugin;
     use std::time::Duration;
 
+    use crate::combat::{
+        Armor, Collidable, Faction, HitOnce, HitRadius, Lifetime, MeleeShape, PhysicalDamage,
+        Projectile, health::Health,
+    };
+    use crate::movement::{MoveSpeed, Velocity};
+    use crate::timeline::{Declared, Timeline};
+
+    /// 最小 App：装输入 / 时间线 / 战斗 / 移动领域，不启动渲染。
+    ///
+    /// 时间用 `ManualDuration` 手动步进，测试因此可以精确走完「声明 → 提交 →
+    /// 到点执行 → 窗口结束」的整条时间线。
     fn test_app() -> App {
         let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.insert_resource(ButtonInput::<KeyCode>::default());
-        add_combat(&mut app);
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(AssetPlugin::default())
+            .add_plugins((ScenePlugin, WorldSerializationPlugin))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                100,
+            )))
+            .insert_resource(ButtonInput::<KeyCode>::default())
+            .insert_resource(ButtonInput::<bevy::input::mouse::MouseButton>::default())
+            .insert_resource(bevy::input::mouse::AccumulatedMouseMotion::default())
+            // 输入域写的消息由「消费它们的领域」注册；轻量 App 里手动补上相机平移
+            .add_message::<crate::presentation::PanCamera>()
+            .add_plugins((InputPlugin, TimelinePlugin, MovementPlugin, CombatPlugin));
+        configure_pipeline(&mut app);
         app
+    }
+
+    fn velocity_of(app: &mut App, entity: Entity) -> Vec3 {
+        app.world().get::<Velocity>(entity).unwrap().0
+    }
+
+    fn declared_actions(app: &mut App) -> usize {
+        let mut query = app.world_mut().query_filtered::<Entity, With<Declared>>();
+        query.iter(app.world()).count()
     }
 
     #[test]
@@ -115,19 +188,19 @@ mod tests {
         let target = app
             .world_mut()
             .spawn((
-                health::Health::new(100.0),
-                combat::Collidable,
-                combat::HitRadius(0.8),
+                Health::new(100.0),
+                Collidable,
+                HitRadius(0.8),
                 Transform::from_xyz(0.0, 0.0, 0.0),
             ))
             .id();
         let arrow = app
             .world_mut()
             .spawn((
-                combat::Velocity(Vec3::ZERO),
-                combat::Projectile::default(),
-                combat::HitRadius(0.2),
-                combat::PhysicalDamage(10.0),
+                Velocity(Vec3::ZERO),
+                Projectile::default(),
+                HitRadius(0.2),
+                PhysicalDamage(10.0),
                 Transform::from_xyz(0.5, 0.0, 0.0),
             ))
             .id();
@@ -140,7 +213,7 @@ mod tests {
             world.get_entity(arrow).is_err(),
             "普通射弹（穿透 1）命中后应被清理"
         );
-        let hp = world.query::<&health::Health>().get(world, target).unwrap();
+        let hp = world.query::<&Health>().get(world, target).unwrap();
         assert_eq!(hp.current, 90.0, "10 点物理伤害应扣减 10 点生命");
     }
 
@@ -150,18 +223,18 @@ mod tests {
         let target = app
             .world_mut()
             .spawn((
-                health::Health::new(100.0),
-                combat::Collidable,
-                combat::HitRadius(0.8),
-                combat::Armor(3.0),
+                Health::new(100.0),
+                Collidable,
+                HitRadius(0.8),
+                Armor(3.0),
                 Transform::from_xyz(0.0, 0.0, 0.0),
             ))
             .id();
         app.world_mut().spawn((
-            combat::Velocity(Vec3::ZERO),
-            combat::Projectile::default(),
-            combat::HitRadius(0.2),
-            combat::PhysicalDamage(10.0),
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.2),
+            PhysicalDamage(10.0),
             Transform::from_xyz(0.5, 0.0, 0.0),
         ));
 
@@ -169,7 +242,7 @@ mod tests {
         app.update();
 
         let world = app.world_mut();
-        let hp = world.query::<&health::Health>().get(world, target).unwrap();
+        let hp = world.query::<&Health>().get(world, target).unwrap();
         assert_eq!(hp.current, 93.0, "10 点物理伤害应被 3 点护甲减免");
     }
 
@@ -179,17 +252,17 @@ mod tests {
         let target = app
             .world_mut()
             .spawn((
-                health::Health::new(5.0),
-                combat::Collidable,
-                combat::HitRadius(0.8),
+                Health::new(5.0),
+                Collidable,
+                HitRadius(0.8),
                 Transform::from_xyz(0.0, 0.0, 0.0),
             ))
             .id();
         app.world_mut().spawn((
-            combat::Velocity(Vec3::ZERO),
-            combat::Projectile::default(),
-            combat::HitRadius(0.2),
-            combat::PhysicalDamage(10.0),
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.2),
+            PhysicalDamage(10.0),
             Transform::from_xyz(0.5, 0.0, 0.0),
         ));
 
@@ -203,23 +276,148 @@ mod tests {
     }
 
     #[test]
-    fn wasd_moves_player_through_move_command() {
+    fn wasd_declares_a_move_then_enter_commits_the_round() {
         let mut app = test_app();
-        app.world_mut().spawn((
-            combat::Faction::Player,
-            combat::Velocity(Vec3::ZERO),
-            control::MoveSpeed(5.0),
-            Transform::from_xyz(0.0, 0.0, 0.0),
-        ));
+        let player = app
+            .world_mut()
+            .spawn((
+                Faction::Player,
+                Velocity(Vec3::ZERO),
+                MoveSpeed(5.0),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+
+        // 规划阶段：虚拟时间冻结，按键只**声明**行动，不产生位移
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyW);
+        app.update();
+        assert!(
+            app.world().resource::<Timeline>().is_planning(),
+            "没有提交时应当停在规划阶段"
+        );
+        assert_eq!(declared_actions(&mut app), 1, "W 应当声明一条移动草案");
+        assert_eq!(velocity_of(&mut app, player), Vec3::ZERO, "冻结期间不移动");
+        assert!(
+            app.world().resource::<Time<Virtual>>().is_paused(),
+            "规划阶段虚拟时间必须暂停"
+        );
 
+        // Enter 提交 → 进入推进阶段，草案变成待执行行动
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        // 只提交这一次：清掉按键状态，避免后面每帧重复提交
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+        assert!(
+            !app.world().resource::<Timeline>().is_planning(),
+            "提交后应开始推进"
+        );
+        assert_eq!(declared_actions(&mut app), 0, "草案应全部转为待执行");
+        assert!(
+            !app.world().resource::<Time<Virtual>>().is_paused(),
+            "推进阶段虚拟时间必须恢复流动"
+        );
+
+        // 推进：前摇 0.15s，100ms/帧 → 两帧之内落地
+        let mut moved = false;
+        for _ in 0..3 {
+            app.update();
+            if velocity_of(&mut app, player).y > 0.0 {
+                moved = true;
+                break;
+            }
+        }
+        assert!(moved, "到点后执行器应给玩家 +Y 速度");
+
+        // 窗口（1s）走完 → 世界重新冻结并广播 RoundEnded
+        for _ in 0..12 {
+            app.update();
+        }
+        assert!(
+            app.world().resource::<Timeline>().is_planning(),
+            "窗口结束应回到规划阶段等待下一次提交"
+        );
+        assert_eq!(
+            velocity_of(&mut app, player),
+            Vec3::ZERO,
+            "本轮结束单位应当停下"
+        );
+    }
+
+    #[test]
+    fn declaration_replaces_the_previous_draft() {
+        let mut app = test_app();
+        app.world_mut().spawn((
+            Faction::Player,
+            Velocity(Vec3::ZERO),
+            MoveSpeed(5.0),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        ));
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyW);
         app.update();
 
-        let world = app.world_mut();
-        let velocity = world.query::<&combat::Velocity>().single(world).unwrap().0;
-        assert_eq!(velocity, Vec3::Y * 5.0, "按住 W 应给玩家 +Y 速度");
+        // 同一轮里改声明：射击覆盖移动（一个单位同时只有一个行动）
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.release(KeyCode::KeyW);
+        input.press(KeyCode::Space);
+        app.update();
+
+        assert_eq!(declared_actions(&mut app), 1, "同一轮只允许一个草案");
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<crate::combat::skills::ShootAction>>()
+                .iter(app.world())
+                .count(),
+            1,
+            "后声明的技能应当顶掉移动草案"
+        );
+    }
+
+    #[test]
+    fn held_movement_key_keeps_a_declared_skill() {
+        let mut app = test_app();
+        app.world_mut().spawn((
+            Faction::Player,
+            Velocity(Vec3::ZERO),
+            MoveSpeed(5.0),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        ));
+
+        // 按住 W 移动，再按 Space 声明射击
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        app.update();
+
+        fn shoot_drafts(app: &mut App) -> usize {
+            app.world_mut()
+                .query_filtered::<Entity, With<crate::combat::skills::ShootAction>>()
+                .iter(app.world())
+                .count()
+        }
+        assert_eq!(shoot_drafts(&mut app), 1, "Space 应当声明射击");
+
+        // Space 已经松开（只按过一次），W 仍按住：移动输入没变化
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.clear();
+        input.press(KeyCode::KeyW);
+        app.update();
+        assert_eq!(
+            shoot_drafts(&mut app),
+            1,
+            "按住移动键不应把已声明的技能草案顶掉"
+        );
+        assert_eq!(declared_actions(&mut app), 1, "同一轮只允许一个草案");
     }
 
     #[test]
@@ -228,21 +426,21 @@ mod tests {
         let enemy = app
             .world_mut()
             .spawn((
-                combat::Faction::Enemy,
-                health::Health::new(50.0),
-                combat::Collidable,
-                combat::HitRadius(0.8),
+                Faction::Enemy,
+                Health::new(50.0),
+                Collidable,
+                HitRadius(0.8),
                 Transform::from_xyz(0.0, 0.0, 0.0),
             ))
             .id();
         let swing = app
             .world_mut()
             .spawn((
-                combat::Faction::Player,
-                combat::PhysicalDamage(15.0),
-                combat::MeleeShape::default(),
-                combat::HitOnce::default(),
-                combat::Lifetime::default(),
+                Faction::Player,
+                PhysicalDamage(15.0),
+                MeleeShape::default(),
+                HitOnce::default(),
+                Lifetime::default(),
                 Transform::from_xyz(0.0, 0.0, 0.0),
             ))
             .id();
@@ -250,13 +448,13 @@ mod tests {
         app.update(); // 命中结算
 
         let world = app.world_mut();
-        let hp = world.query::<&health::Health>().get(world, enemy).unwrap();
+        let hp = world.query::<&Health>().get(world, enemy).unwrap();
         assert_eq!(hp.current, 35.0, "近战 15 点伤害只应结算一次");
 
         // 直接让计时器到期，验证 Lifetime 销毁（避免依赖测试时间推进）
         app.world_mut()
             .entity_mut(swing)
-            .get_mut::<combat::Lifetime>()
+            .get_mut::<Lifetime>()
             .unwrap()
             .0
             .set_elapsed(Duration::from_secs(1));

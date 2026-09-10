@@ -1,5 +1,10 @@
 # 旧项目 → `crates/app` 增量迁移路线图
 
+> ⚠️ 2026-09-10 更新：`crates/app` 已移到**仓库根目录**（package `app`，`src/`），并按
+> `req0.MD` 的领域化模块范式重构（`world` / `voxel_render` / `movement` / `combat` /
+> `ai` / `restart` / `scene`）。本文下面的路径与列表现已过期，**当前结构以
+> [app-modules.md](app-modules.md) 为准**；本文保留作迁移过程记录。
+
 > 目标：把旧 `timeless-app` + `timeless-domain` 的内容一点点迁移进新
 > `crates/app`（Bevy 0.19 + BSN 场景体系），迁移过程中每个里程碑保持
 > `fmt` / `clippy` / `test` 全绿。旧 crate 在完全迁移前**保留**作对照，

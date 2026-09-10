@@ -18,6 +18,7 @@ cargo fmt --check            # 格式校验
 根目录
 ├── AGENTS.md                     # 仓库指南（构建/风格/提交规范）
 ├── TODO.md                       # 本文件：路线图 + 依赖索引
+├── src/                          # app 原型（Bevy 0.19 世界空间纵切，领域化模块）
 ├── docs/                         # 设计文档
 │   ├── design/                   #   游戏设计 / 时间线 / ECS 组件化 / 架构
 │   ├── bevy/                     #   Bevy 0.19 速查 / Action Graph
@@ -30,6 +31,25 @@ cargo fmt --check            # 格式校验
     ├── vendor/parley/            # 本地补丁：CJK 分词（README.patch.md）
     └── README.md
 ```
+
+## 根目录 app 原型（package `app`）
+
+按 `req0.MD` 的「数据域 / 表现域分离」范式重构后的独立原型，模块布局与后续项见
+[docs/design/app-modules.md](docs/design/app-modules.md)。命令在仓库根目录执行：
+
+```bash
+cargo run                    # 启动（体素地形 + 世界空间战斗）
+cargo test --lib             # 单元测试（world 数据域可脱离渲染环境运行）
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+```
+
+状态：`world`（区块 / 地形 / 体素读写，零渲染依赖）+ `voxel_render`（异步面剔除网格化、
+材质、面朝向明暗）+ `timeline`（We-Go：规划阶段冻结虚拟时间等提交，推进窗口按
+`execute_at` 结算）+ `movement` / `combat` / `ai` / `input` / `presentation` 各领域插件，
+以及 `spawn` 组装车间（单位零件共用 + 玩家/敌人驱动分叉、开局组装、战斗重置功能）已落地；
+待办：反应窗口（前摇内翻滚/招架）、单位贴地与体素碰撞、贪婪网格化、纹理图集、AO、
+区块持久化、表现层补齐血条/动画/特效。
 
 ## 开发规范（沿袭 AGENTS.md / docs/design/architecture.md）
 

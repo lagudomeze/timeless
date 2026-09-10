@@ -1,56 +1,67 @@
-//! 敌人 AI：接近 / 停火
+//! 敌人 AI：在规划阶段声明本轮的移动 / 射击。
+//!
+//! AI 与玩家遵守同一套规则：**同时规划、一起结算**。它只声明行动实体，
+//! 到点后由移动 / 技能领域的执行器落地，因此 AI 不碰规则、也不碰表现。
+
 use bevy::prelude::*;
 
-use crate::attacks::arrow_scene;
-use crate::combat::{Faction, Velocity};
+use crate::combat::Faction;
+use crate::combat::skills::shoot_action_scene;
+use crate::movement::move_action_scene;
+use crate::timeline::{RoundEnded, ScheduledAction, Timeline};
 
 use super::components::{AttackCooldown, EnemyBrain};
 
-/// 敌人决策：每帧对一个带 `EnemyBrain` 的敌人执行一次。
-/// 距离 > engage_range → 追踪；≤ engage_range 且冷却结束 → 面向玩家
-/// 生成箭矢并把速度归零（站桩出手）；否则维持当前速度。
-pub fn enemy_ai_system(
-    time: Res<Time>,
+/// 敌人决策：每个敌人在规划阶段声明**至多一条**行动（声明过就跳过）。
+///
+/// - 距离 > `engage_range`：按兵不动；
+/// - 距离 ≤ `attack_range` 且冷却结束：声明射击；
+/// - 其余情况：朝玩家声明移动。
+pub fn enemy_declare_system(
     mut commands: Commands,
-    mut enemies: Query<(
-        &Transform,
-        &mut Velocity,
-        &mut AttackCooldown,
-        &EnemyBrain,
-        &Faction,
-    )>,
+    timeline: Res<Timeline>,
+    mut enemies: Query<(Entity, &Transform, &mut AttackCooldown, &EnemyBrain)>,
     units: Query<(&Transform, &Faction)>,
+    declared: Query<&ScheduledAction>,
 ) {
-    let player = units
+    if !timeline.is_planning() {
+        return; // 推进阶段不接受新声明
+    }
+    let Some(player_pos) = units
         .iter()
         .find(|(_, faction)| **faction == Faction::Player)
-        .map(|(tf, _)| tf.translation);
-    let Some(player_pos) = player else {
-        return; // 玩家不存在：敌人静止
+        .map(|(transform, _)| transform.translation)
+    else {
+        return; // 玩家不存在：敌人不动
     };
 
-    for (transform, mut velocity, mut cooldown, brain, faction) in &mut enemies {
-        if *faction != Faction::Enemy {
-            continue;
+    for (entity, transform, mut cooldown, brain) in &mut enemies {
+        if declared.iter().any(|action| action.actor == entity) {
+            continue; // 本轮已经声明过
         }
         let to_player = player_pos - transform.translation;
         let distance = to_player.length();
-        if distance <= brain.engage_range {
-            if cooldown.0.tick(time.delta()).just_finished() && distance <= brain.attack_range {
-                let direction = to_player / distance.max(f32::EPSILON);
-                commands.spawn_scene(arrow_scene(
-                    transform.translation + direction * 1.2,
-                    direction,
-                    Faction::Enemy,
-                ));
-                velocity.0 = Vec3::ZERO;
-                continue;
-            }
-            if distance > brain.attack_range {
-                velocity.0 = to_player.normalize_or_zero() * brain.move_speed;
-            }
-        } else {
-            velocity.0 = Vec3::ZERO;
+        if distance > brain.engage_range {
+            continue; // 太远：按兵不动
+        }
+        if distance <= brain.attack_range && cooldown.is_ready() {
+            commands.spawn_scene(shoot_action_scene(entity));
+            cooldown.after_shot();
+            continue;
+        }
+        let axis = Vec2::new(to_player.x, to_player.z).normalize_or_zero();
+        commands.spawn_scene(move_action_scene(entity, axis));
+    }
+}
+
+/// 每轮结束：冷却走一格。
+pub fn tick_attack_cooldown_system(
+    mut ended: MessageReader<RoundEnded>,
+    mut cooldowns: Query<&mut AttackCooldown>,
+) {
+    for _ in ended.read() {
+        for mut cooldown in &mut cooldowns {
+            cooldown.tick_round();
         }
     }
 }

@@ -1,5 +1,9 @@
 # crates/app 未迁移内容盘点与按新范式重设计
 
+> ⚠️ 2026-09-10 更新：`crates/app` 已移到仓库根目录（package `app`，`src/`）并完成领域化
+> 重构，**当前结构见 [app-modules.md](app-modules.md)**；本文的「新 app 状态」列停留在
+> 重构前，保留作盘点记录。
+
 > 目标：列出旧 `timeless-app` / `timeless-domain` 尚未进入 `crates/app` 的内容，
 > 并按 app 的既定范式（Bevy 0.19 + BSN 场景、小组件 + 专属系统、`Message`
 > 流水线、世界空间 `Transform + Velocity`）重新设计，避免 OO 聚合与兼容包袱。
