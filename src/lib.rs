@@ -327,12 +327,14 @@ mod tests {
         let mut moved = false;
         for _ in 0..3 {
             app.update();
-            if velocity_of(&mut app, player).y > 0.0 {
+            if velocity_of(&mut app, player).z > 0.0 {
                 moved = true;
                 break;
             }
         }
-        assert!(moved, "到点后执行器应给玩家 +Y 速度");
+        assert!(moved, "到点后执行器应给玩家 +Z 速度（地面，不是天上）");
+        let velocity = velocity_of(&mut app, player);
+        assert_eq!(velocity.y, 0.0, "平面移动不该产生竖直速度");
 
         // 窗口（1s）走完 → 世界重新冻结并广播 RoundEnded
         for _ in 0..12 {
@@ -346,6 +348,62 @@ mod tests {
             velocity_of(&mut app, player),
             Vec3::ZERO,
             "本轮结束单位应当停下"
+        );
+    }
+
+    /// 整机回归：用真实斜视角机位跑一轮，按 W 必须贴地走向远处，而不是飞上天。
+    #[test]
+    fn committed_move_stays_on_the_ground_and_follows_the_camera() {
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        app.update(); // Startup：组装单位 + 相机
+
+        let (player, start) = {
+            let mut query = app.world_mut().query::<(Entity, &Faction, &Transform)>();
+            query
+                .iter(app.world())
+                .find(|(_, faction, _)| **faction == Faction::Player)
+                .map(|(entity, _, transform)| (entity, transform.translation))
+                .expect("应当有玩家")
+        };
+        let camera_forward = {
+            let mut query = app
+                .world_mut()
+                .query_filtered::<&Transform, With<crate::presentation::CameraRig>>();
+            let transform = *query.iter(app.world()).next().expect("应当有相机");
+            (transform.rotation * Vec3::NEG_Z).with_y(0.0).normalize()
+        };
+
+        // 按住 W（屏幕向上 = 远离相机）并提交本轮
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+
+        for _ in 0..6 {
+            app.update();
+        }
+
+        let moved = app.world().get::<Transform>(player).unwrap().translation - start;
+        assert!(
+            moved.y.abs() < 1e-3,
+            "移动必须留在地面上，实际位移 {moved:?}"
+        );
+        let ground = Vec2::new(moved.x, moved.z);
+        assert!(ground.length() > 0.5, "应当真的走了一段：{moved:?}");
+        let forward = Vec2::new(camera_forward.x, camera_forward.z).normalize();
+        assert!(
+            ground.normalize().dot(forward) > 0.9,
+            "W 应当朝远离相机的方向走：{moved:?}"
         );
     }
 
@@ -365,7 +423,7 @@ mod tests {
         // 同一轮里改声明：射击覆盖移动（一个单位同时只有一个行动）
         let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
         input.release(KeyCode::KeyW);
-        input.press(KeyCode::Space);
+        input.press(KeyCode::KeyQ);
         app.update();
 
         assert_eq!(declared_actions(&mut app), 1, "同一轮只允许一个草案");
@@ -396,7 +454,7 @@ mod tests {
         app.update();
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::Space);
+            .press(KeyCode::KeyQ);
         app.update();
 
         fn shoot_drafts(app: &mut App) -> usize {
@@ -418,6 +476,64 @@ mod tests {
             "按住移动键不应把已声明的技能草案顶掉"
         );
         assert_eq!(declared_actions(&mut app), 1, "同一轮只允许一个草案");
+    }
+
+    /// 空格声明跳跃：到点后离地，并在窗口内落回起跳高度。
+    #[test]
+    fn space_declares_a_jump_that_leaves_and_returns_to_the_ground() {
+        let mut app = test_app();
+        let player = app
+            .world_mut()
+            .spawn((
+                Faction::Player,
+                Velocity(Vec3::ZERO),
+                MoveSpeed(5.0),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<crate::movement::JumpAction>>()
+                .iter(app.world())
+                .count(),
+            1,
+            "空格应当声明一条跳跃草案"
+        );
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+
+        let mut peak = 0.0f32;
+        for _ in 0..5 {
+            app.update();
+            peak = peak.max(app.world().get::<Transform>(player).unwrap().translation.y);
+        }
+        assert!(peak > 0.3, "跳跃应当离地，实际最高 {peak}");
+
+        for _ in 0..6 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().get::<Transform>(player).unwrap().translation.y,
+            0.0,
+            "应当落回起跳高度"
+        );
+        assert!(
+            app.world()
+                .get::<crate::movement::Jumping>(player)
+                .is_none(),
+            "落地后应当移除跳跃状态"
+        );
     }
 
     #[test]

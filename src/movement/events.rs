@@ -10,3 +10,11 @@ use bevy::prelude::*;
 pub struct MoveCommand {
     pub axis: Vec2,
 }
+
+/// 跳跃指令（空格）。
+///
+/// 写：[`crate::input`]（键盘只翻译）；
+/// 消费：[`declare_jump_system`](super::actions::declare_jump_system)——只声明行动，
+/// 到点后由跳跃执行器起步。
+#[derive(Message, Debug, Clone, Copy)]
+pub struct JumpCommand;

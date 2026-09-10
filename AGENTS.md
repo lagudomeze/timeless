@@ -93,8 +93,10 @@ timeless/
   同一单位一轮至多一个行动，后声明覆盖先声明。
 - **暂停等输入**：规划阶段冻结 `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用
   `Time`，位移 / 计时器自动停表），`Enter` 提交后推进一个 1s 窗口再冻结；
-  禁止手写 `if paused` 阶段门控。键位：`WASD` 移动 · `Space` 射击 · `E` 近战 ·
-  `Enter` 提交 · `R` 重置 · 按住鼠标中键拖拽平移相机。
+  禁止手写 `if paused` 阶段门控。键位：`WASD` 移动 · `Q` 射击 · `E` 近战 ·
+  `Space` 跳跃 · `Enter` 提交 · `R` 重置 · 按住鼠标中键拖拽平移相机。
+  移动方向按**屏幕**算（W = 远离相机），由 `input` 的 `GroundBasis` 按相机朝向
+  换算到世界 XZ 平面；平面轴约定见 `movement::ground_direction`。
 - **表现层只读**：HUD（阶段 / 轮次 / 双方状态 / 本轮声明 / 战斗日志）与相机平移都在
   `presentation/`，只读游戏状态；HUD 文本用英文——Bevy 默认字体不含 CJK，
   中文界面需要自带字体资产。

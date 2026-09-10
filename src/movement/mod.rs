@@ -21,10 +21,12 @@ pub mod plugin;
 pub mod systems;
 
 pub use actions::{
-    MoveAction, declare_move_system, move_action_executor_system, move_action_scene,
+    JumpAction, Jumping, MoveAction, declare_jump_system, declare_move_system, ground_direction,
+    jump_action_executor_system, jump_action_scene, jump_motion_system,
+    move_action_executor_system, move_action_scene,
 };
 pub use components::{MoveSpeed, Velocity};
-pub use events::MoveCommand;
+pub use events::{JumpCommand, MoveCommand};
 pub use plugin::MovementPlugin;
 pub use systems::{move_entities_system, stop_on_round_end_system};
 

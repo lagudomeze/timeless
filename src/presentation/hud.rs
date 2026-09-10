@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use crate::ai::AttackCooldown;
 use crate::combat::skills::{MeleeAction, ShootAction};
 use crate::combat::{Faction, Health};
-use crate::movement::MoveAction;
+use crate::movement::{JumpAction, Jumping, MoveAction};
 use crate::timeline::{Declared, ScheduledAction, Timeline};
 
 use super::BattleLog;
@@ -18,6 +18,16 @@ use super::components::{HudLog, HudStatus};
 
 /// 战斗日志在 HUD 上显示的行数。
 const LOG_LINES: usize = 7;
+
+/// HUD 里一行单位信息（从查询结果里摘出来的快照）。
+struct UnitRow<'a> {
+    entity: Entity,
+    position: Vec3,
+    current: f32,
+    max: f32,
+    cooldown: Option<&'a AttackCooldown>,
+    airborne: bool,
+}
 
 /// 建立 HUD 节点（Startup 一次）。
 pub fn setup_hud(mut commands: Commands) {
@@ -61,35 +71,34 @@ pub fn setup_hud(mut commands: Commands) {
 pub fn update_hud_system(
     timeline: Res<Timeline>,
     log: Res<BattleLog>,
-    units: Query<(
-        Entity,
-        &Faction,
-        &Health,
-        &Transform,
-        Option<&AttackCooldown>,
-    )>,
+    units: Query<(Entity, &Faction, &Health, &Transform)>,
+    cooldowns: Query<&AttackCooldown>,
+    airborne: Query<&Jumping>,
     declared: Query<(Entity, &ScheduledAction), With<Declared>>,
     movements: Query<&MoveAction>,
+    jumps: Query<&JumpAction>,
     shoots: Query<&ShootAction>,
     melees: Query<&MeleeAction>,
     mut status_text: Query<&mut Text, (With<HudStatus>, Without<HudLog>)>,
     mut log_text: Query<&mut Text, (With<HudLog>, Without<HudStatus>)>,
 ) {
-    let mut player: Option<(Entity, Vec3, f32, f32)> = None;
-    let mut enemy: Option<(Entity, Vec3, f32, f32, Option<&AttackCooldown>)> = None;
-    for (entity, faction, health, transform, cooldown) in &units {
+    let mut player: Option<UnitRow> = None;
+    let mut enemy: Option<UnitRow> = None;
+    for (entity, faction, health, transform) in &units {
+        let row = UnitRow {
+            entity,
+            position: transform.translation,
+            current: health.current,
+            max: health.max,
+            cooldown: cooldowns.get(entity).ok(),
+            airborne: airborne.get(entity).is_ok(),
+        };
         match faction {
             Faction::Player => {
-                player = Some((entity, transform.translation, health.current, health.max));
+                player = Some(row);
             }
             Faction::Enemy => {
-                enemy = Some((
-                    entity,
-                    transform.translation,
-                    health.current,
-                    health.max,
-                    cooldown,
-                ));
+                enemy = Some(row);
             }
         }
     }
@@ -108,40 +117,45 @@ pub fn update_hud_system(
         String::new(),
     ];
     match player {
-        Some((entity, position, current, max)) => lines.push(format!(
-            "PLAYER   HP {current:>3.0}/{max:<3.0}   ({:>5.1}, {:>5.1})   act: {}",
-            position.x,
-            position.z,
-            declared_label(entity, &declared, &movements, &shoots, &melees)
-        )),
+        Some(ref row) => {
+            let action =
+                declared_label(row.entity, &declared, &movements, &jumps, &shoots, &melees);
+            let air = if row.airborne { " (air)" } else { "" };
+            lines.push(format!(
+                "PLAYER   HP {:>3.0}/{:<3.0}   ({:>5.1}, {:>5.1})   act: {action}{air}",
+                row.current, row.max, row.position.x, row.position.z
+            ));
+        }
         None => lines.push("PLAYER   down (press R to reset)".to_string()),
     }
     match enemy {
-        Some((entity, position, current, max, cooldown)) => {
+        Some(row) => {
             let distance = player
-                .map(|(_, player_position, _, _)| {
-                    let delta = position - player_position;
+                .as_ref()
+                .map(|player| {
+                    let delta = row.position - player.position;
                     Vec2::new(delta.x, delta.z).length()
                 })
                 .unwrap_or_default();
-            let ready = match cooldown {
+            let ready = match row.cooldown {
                 Some(cooldown) if cooldown.is_ready() => "gun ready",
                 Some(_) => "gun cooling",
                 None => "no gun",
             };
+            let action =
+                declared_label(row.entity, &declared, &movements, &jumps, &shoots, &melees);
+            let air = if row.airborne { " (air)" } else { "" };
             lines.push(format!(
-                "ENEMY    HP {current:>3.0}/{max:<3.0}   ({:>5.1}, {:>5.1})   act: {}",
-                position.x,
-                position.z,
-                declared_label(entity, &declared, &movements, &shoots, &melees)
+                "ENEMY    HP {:>3.0}/{:<3.0}   ({:>5.1}, {:>5.1})   act: {action}{air}",
+                row.current, row.max, row.position.x, row.position.z
             ));
             lines.push(format!("         dist {distance:>4.1}   {ready}"));
         }
         None => lines.push("ENEMY    none".to_string()),
     }
     lines.push(String::new());
-    lines.push("keys   WASD move | Space shoot | E melee | Enter commit".to_string());
-    lines.push("       R reset | middle-drag to pan the camera".to_string());
+    lines.push("keys   WASD move | Q shoot | E melee | Space jump".to_string());
+    lines.push("       Enter commit | R reset | middle-drag pan camera".to_string());
 
     for mut text in &mut status_text {
         **text = lines.join("\n");
@@ -164,6 +178,7 @@ fn declared_label(
     actor: Entity,
     declared: &Query<(Entity, &ScheduledAction), With<Declared>>,
     movements: &Query<&MoveAction>,
+    jumps: &Query<&JumpAction>,
     shoots: &Query<&ShootAction>,
     melees: &Query<&MeleeAction>,
 ) -> &'static str {
@@ -176,6 +191,9 @@ fn declared_label(
         } else {
             "move"
         };
+    }
+    if jumps.get(entity).is_ok() {
+        return "jump";
     }
     if shoots.get(entity).is_ok() {
         return "shoot";
@@ -211,10 +229,7 @@ mod tests {
         assert!(text.contains("PLANNING"), "应当显示规划阶段：{text}");
         assert!(text.contains("PLAYER"), "应当显示玩家信息：{text}");
         assert!(text.contains("ENEMY"), "应当显示敌人信息：{text}");
-        assert!(
-            text.contains("middle-drag to pan the camera"),
-            "应当提示中键平移：{text}"
-        );
+        assert!(text.contains("middle-drag"), "应当提示中键平移：{text}");
     }
 
     #[test]
@@ -223,7 +238,7 @@ mod tests {
         app.update();
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::Space);
+            .press(KeyCode::KeyQ);
         app.update(); // 声明射击
         app.update(); // 刷新文本
 
