@@ -3,6 +3,7 @@ use bevy::prelude::*;
 pub mod combat;
 pub mod movement;
 pub mod scene;
+pub mod world;
 
 // ----------------
 mod ai;
