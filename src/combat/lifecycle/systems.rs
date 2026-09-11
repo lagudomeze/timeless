@@ -9,10 +9,10 @@ use super::components::{Lifetime, Projectile};
 
 /// 命中处理：消费 [`CollisionTarget`]。
 ///
-/// - 射弹：命中计数 +1，达到上限就置 `finished` 并归零速度（位置推进立刻停）；
-/// - 没有 `Projectile` 的一次性攻击（近战横扫）：只移除标记。
-///
-/// 未结束的射弹下一帧可以继续飞向新目标。
+/// ⚠️ **当前未注册**：职责已由两阶段结算的 `phase2_apply_system` 接管
+/// （命中计数 + 归零速度 + 清标记在同一处落地，避免两个系统抢同一份
+/// `Projectile` / `CollisionTarget`）。保留为**穿透 / 多命中投射物**的参考实现，
+/// 将来做「穿透箭」时按它的循环计数逻辑扩展。
 pub fn manage_projectile_hits_system(
     mut commands: Commands,
     mut attacks: Query<(

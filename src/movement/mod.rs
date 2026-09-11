@@ -1,34 +1,39 @@
 //! # movement — 移动领域
 //!
-//! 只回答「实体在世界里怎么动」：速度、位移，以及**移动行动**（载荷 + 声明 +
-//! 执行器）。
-//! 不含伤害 / 命中 / 技能（那些属于 [`crate::combat`]），也不认识区块数据
-//! （体素碰撞是下一步：查 [`crate::world`] 的体素再决定是否位移）。
+//! 只回答「实体在世界里怎么动」：速度、位移、格子坐标，以及**移动行动**
+//! （载荷 + 声明 + 执行器）。不含伤害 / 命中 / 技能（那些属于 [`crate::combat`]），
+//! 也不认识区块数据（体素碰撞是下一步：查 [`crate::world`] 的体素再决定是否位移）。
 //!
-//! 位置沿用 Bevy 的 `Transform`（不另造 `Position` 组件，避免两份坐标真相），
-//! 本域只提供 [`Velocity`] / [`MoveSpeed`] 与位移系统。
+//! 坐标分两层（见 [docs/design/timeline-turnless.md](../../../docs/design/timeline-turnless.md)）：
 //!
-//! 规划阶段由 [`crate::timeline`] 冻结虚拟时间，玩家输入（[`crate::input`] 写
-//! [`MoveCommand`]）与 AI（[`crate::ai`] 写行动实体）都只是**声明**，
-//! 到点后由本域的执行器落地成 `Velocity`——移动不关心谁在推。
+//! - [`Cell`]：**决策层**——行动走格、同格判定、跨格射程；
+//! - `Transform` + [`Velocity`]：**结算层**——位移连续，命中 / 碰撞用真实距离。
+//!
+//! 位置仍然只有一份真相（Bevy 的 `Transform`，不另造 `Position` 组件），
+//! [`Cell`] 是它的整数投影，只在单位停下时更新。
+//!
+//! 玩家只要有 [`Ready`](crate::timeline::Ready) 就能决策；输入是「按下的一次」，
+//! 因此按一次走一格，不需要回合或窗口。
 
 use bevy::prelude::*;
 
 pub mod actions;
+pub mod cell;
 pub mod components;
 pub mod events;
 pub mod plugin;
 pub mod systems;
 
 pub use actions::{
-    JumpAction, Jumping, MoveAction, declare_jump_system, declare_move_system, ground_direction,
-    jump_action_executor_system, jump_action_scene, jump_motion_system,
-    move_action_executor_system, move_action_scene,
+    JumpAction, Jumping, MoveAction, RollAction, declare_jump_system, declare_move_system,
+    ground_direction, jump_action_executor_system, jump_action_scene, jump_motion_system,
+    move_action_executor_system, move_action_scene, roll_action_scene, step_from_axis,
 };
+pub use cell::{Cell, MoveGoal};
 pub use components::{MoveSpeed, Velocity};
 pub use events::{JumpCommand, MoveCommand};
 pub use plugin::MovementPlugin;
-pub use systems::{move_entities_system, stop_on_round_end_system};
+pub use systems::{DodgingOnArrival, move_entities_system};
 
 /// 移动领域在 `Update` 中的系统集。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

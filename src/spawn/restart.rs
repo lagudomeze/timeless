@@ -42,6 +42,9 @@ type ResetQuery<'w, 's> = Query<
 >;
 
 /// 清掉所有单位与攻击实体，再用同一组工厂重建：状态自然回到初始值。
+///
+/// 无回合模型下不需要「回到规划阶段」——重建出来的单位自带 `Ready`，
+/// 时间线的门控下一帧自会重新判断该不该停表；这里只把草案记录清干净。
 pub fn reset_battle_system(
     mut reset_requests: MessageReader<ResetBattle>,
     mut commands: Commands,
@@ -55,7 +58,7 @@ pub fn reset_battle_system(
     for entity in &entities {
         commands.entity(entity).despawn();
     }
-    timeline.restart(); // 回到规划阶段：虚拟时间重新冻结，等待玩家提交
+    timeline.set_draft(None);
     commands.spawn_scene(player_scene(&terrain));
     commands.spawn_scene(enemy_scene(&terrain));
     info!("🔄 战斗已重置");

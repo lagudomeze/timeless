@@ -189,7 +189,44 @@
 ## 六、统合后的 Backlog（唯一待办清单）
 
 > 每个条目标注适用树（**A** = 根原型 `src/`，**B** = `timeless/`）与验收方式。
-> P0 未决 → 不得开工；P1 是让 A 追上 B 的能力；P2 是让 A 追上设计文档。
+> D1–D5 已拍板（见第七节）；详细迁移步骤见
+> [design/timeline-turnless.md](design/timeline-turnless.md) 第 8 节（M1–M8）。
+> ⚠️ 本轮已按该设计改了 A 的代码（M1 时间线地基 + M2 格子移动），
+> 但**本会话无法运行 `cargo`**（shell 被沙箱拒绝），这些改动**尚未编译验证**。
+
+### 已完成（待本地编译验证）
+
+- [x] **M1 无回合时间线**：删 `Phase` / `round` / `window` / `RESOLUTION_WINDOW` / `RoundEnded` /
+      `pause_during_planning_system`；新增 `Ready` / `BusyRecovery` / `ActionTiming` /
+      `TimelineConfig`；系统链改为「门控 → 提交桥 → 调度 → 后摇恢复」。
+- [x] **M2 双层坐标与格子移动**：新增 `Cell` / `MoveGoal` / `step_from_axis`；
+      `MoveAction` 改为「走一格」；位移走到格中心自动吸附停下（删 `stop_on_round_end_system`）。
+- [x] 输入改为**方向变化才发消息**（按一次走一格，不会覆盖技能键）；`F1` 切 `require_commit`。
+- [x] **M3 资源与防御**：`combat/defense/` 新子域 —— `Stamina`（每次恢复 `Ready` 回 1 点）、
+      `RollAction` + `Dodging`（1 精力 / 退一格 / 0.5s 无敌帧）、`ParryAction` + `Parrying`
+      （1 精力 / 免伤 + 一半反制）、`AttackResolved` 判定消息、`expire_defense_markers_system`；
+      判定链改为 `resolve_attacks_system`（防御判定）→ `DamageEvent` → `apply_damage`（唯一扣血入口）。
+      键位新增 `F` 翻滚 / `V` 招架。
+- [x] **M4 火球**：`combat/skills/fireball.rs`（载荷 + 投射物工厂 + 到达判定 + `ProjectileArrived`）
+      与 `explosion.rs`（`radial_damage_units` 纯函数 + `explosion_system`）。
+      `Q` 从「放箭」改为**扔火球**：锁目标格、自由飞行、到达后按**真实距离**结算 12 点 AoE
+      （半径 3.0 世界单位 = 1.5 格），空地上爆炸完全落空。箭矢保留为单体碰撞投射物的参考实现。
+- [x] **M5 两阶段结算**：新增领域层纯逻辑 `combat/formula/domain.rs`（零 Bevy）——
+      三层裁决（帧→真实距离→破势）· `resolve_attack` · `DefenseState` + `resolve_defense` +
+      `counter_damage`，8 个纯单测；新增 `combat/formula/resolution.rs`：
+      `phase1_arbitrate_system`（**只读**裁决 → `CombatResult`）+ `phase2_apply_system`
+      （统一落地：伤害 / 反制 / 命中计数 / 清标记）。
+      攻击实体新增 `AttackFrame` / `Impact` 组件（近战 5/3、箭矢 4/1、火球 7/2）。
+- [x] **M6 AI 意图循环**：`decide_intent_system`（只读选意图）+ `enemy_declare_system`（声明行动）
+      拆成两个系统；`Intent` 扩到六种（`Idle` / `Approach` / `Melee` / `Shoot` / `Retreat` / `Dodge`）；
+      **威胁优先于贪刀** —— 有攻击正在前摇指向自己就翻滚（威胁用现成的 `CollisionTarget` 判定），
+      翻滚复用玩家的 `RollCommand` 路径（`declare_roll_system` 改为遍历所有 `Ready` 单位）。
+      `EnemyBrain::attack_range` 换成 `cautious_health_ratio`（射程归 `AttackRange`）。
+- [x] **M7 技能菜单与资源 HUD**：`combat/skills/registry.rs`（`SkillKind` / `SkillDef` / `SKILLS`
+      单一来源 + 精力可用性过滤）与 `combat/skills/menu.rs`（`MenuSelection` + `SelectSkill` /
+      `CycleSkill` / `UseSelectedSkill` + 选择 / 循环 / 派发系统，`Attack` 按真实距离派发近战或火球）；
+      输入新增 `1`~`4` / `Tab`(Shift+Tab) / `G`；HUD 新增技能行（`>` 选中、`x` 负担不起）、精力、
+      防御状态、敌人意图与距离。
 
 ### P0 — 必须先拍板（阻塞项，先做这 3 件）
 
@@ -249,19 +286,23 @@
 
 ---
 
-## 七、需要你拍板的决策（P0）
+## 七、已拍板的决策（P0 → 已解决）
 
-**D1 主线树：A 还是 B？**
+**D1 主线树 = A（根原型 `src/`）**，B 的能力迁进来。
+**D2 时间线 = 无回合**：所有 PC/NPC「能决策就决策」，仅当玩家等待输入时冻结虚拟时间；
+默认输入直接生效，另加 `require_commit` 开关（`F1`）要求 Enter 提交。
+**D3 坐标 = 决策按格、结算按真实距离**：保留 A 的世界空间几何判定，补一层 `Cell` 决策层。
+**D4 节奏 = 固定冷却**：每个动作自带前摇 + 后摇。
+**D5 投射物 = 锁目标格 + 自由飞行 + 到达后按真实距离结算 AoE**。
+
+权威设计文档：[docs/design/timeline-turnless.md](design/timeline-turnless.md)（含 8 个里程碑的迁移路线图）。
+
+### D1 当时的取舍（留档）
 
 | 选项 | 理由 | 代价 |
 | :--- | :--- | :--- |
-| **留 A（推荐）** | 领域化模块 + 零渲染依赖数据域（可 `MinimalPlugins` 单测）+ BSN + 体素 + 49 测试；`app-modules.md` 与代码一致；素材齐备（21 glb + 1 png + `LICENSES.md`），**能直接跑**；扩展空间大 | 需要把 B 的无回合时间线 / 防御 / 资源 / 两阶段结算迁过来（P1） |
-| 留 B | 设计文档描述的能力大多已在跑（翻滚 i 帧 / 招架 / 火球 / 精力 / egui 面板 / 中文 HUD / Tab 技能菜单），9 测试 | ① `timeless-app/assets/` **为空**，草地 / 模型 / 字体全部缺失，先得补素材；② 网格伪 3D 与体素世界路线冲突；③ 单文件领域、无数据域隔离；④ 文档写的路径（`app/src/...`）与 B 实际路径也不一致；⑤ 9 个测试远少于 A 的 49 |
-
-**D2 时间线：阶段机 vs 无回合？**（A 现状 = 阶段机；文档 = 无回合）
-**D3 坐标：世界空间真实距离 vs 逻辑刻度网格？**（A 现状 = 世界空间；`ecs-combat-components.md` = 网格）
-
-三个决策一旦给出，第二节的 P1/P2 排序即可直接执行。
+| **留 A（已选）** | 领域化模块 + 零渲染依赖数据域（可 `MinimalPlugins` 单测）+ BSN + 体素 + 49 测试；`app-modules.md` 与代码一致；素材齐备（21 glb + 1 png + `LICENSES.md`），**能直接跑**；扩展空间大 | 需要把 B 的能力迁过来（P1） |
+| 留 B（未选） | 设计文档描述的能力大多已在跑（翻滚 i 帧 / 招架 / 火球 / 精力 / egui 面板 / 中文 HUD / Tab 技能菜单），9 测试 | ① `timeless-app/assets/` **为空**，草地 / 模型 / 字体全部缺失；② 网格伪 3D 与体素世界路线冲突；③ 单文件领域、无数据域隔离；④ 9 个测试远少于 A 的 49 |
 
 ---
 

@@ -1,17 +1,20 @@
-//! HUD：阶段 / 轮次 / 双方状态 / 本轮声明 / 战斗日志 / 操作提示。
+//! HUD：是否在等玩家决策 / 双方状态 / 待执行行动 / 战斗日志 / 操作提示。
 //!
 //! 纯表现：只**读**游戏状态（时间线、单位、日志），不写任何规则数据。
 //!
 //! 文字一律用英文——Bevy 默认字体不含 CJK，中文界面需要自带字体资产
-//! （见 TODO.md 的表现层待办）；控制台日志仍输出中文。
+//! （见 TODO.md 的表现层待办）。注意：战斗日志正文目前是中文
+//! （[`crate::presentation::battle_log_system`]），在 HUD 上会显示成缺字方块，
+//! 见 [docs/status.md](../../../docs/status.md) 的 C11。
 
 use bevy::prelude::*;
 
-use crate::ai::AttackCooldown;
-use crate::combat::skills::{MeleeAction, ShootAction};
+use crate::ai::Intent;
+use crate::combat::defense::{Dodging, Parrying, Stamina};
+use crate::combat::skills::{FireballAction, MeleeAction, MenuSelection, SKILLS, skill_line};
 use crate::combat::{Faction, Health};
-use crate::movement::{JumpAction, Jumping, MoveAction};
-use crate::timeline::{Declared, ScheduledAction, Timeline};
+use crate::movement::{Cell, JumpAction, Jumping, MoveAction, RollAction};
+use crate::timeline::{Pending, Ready, ScheduledAction, Timeline};
 
 use super::BattleLog;
 use super::components::{HudLog, HudStatus};
@@ -20,12 +23,17 @@ use super::components::{HudLog, HudStatus};
 const LOG_LINES: usize = 7;
 
 /// HUD 里一行单位信息（从查询结果里摘出来的快照）。
-struct UnitRow<'a> {
+struct UnitRow {
     entity: Entity,
     position: Vec3,
+    cell: Cell,
     current: f32,
     max: f32,
-    cooldown: Option<&'a AttackCooldown>,
+    stamina: Option<(u32, u32)>,
+    ready: bool,
+    dodging: bool,
+    parrying: bool,
+    intent: Option<Intent>,
     airborne: bool,
 }
 
@@ -67,30 +75,47 @@ pub fn setup_hud(mut commands: Commands) {
 }
 
 /// 每帧刷新 HUD 文本。
+///
+/// 三个「只看有没有这个标记」的查询（`Ready` / `Dodging` / `Parrying`）合成一个
+/// [`ParamSet`]：Bevy 的系统元组最多 16 个参数，而本系统要读的状态确实很多。
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 pub fn update_hud_system(
     timeline: Res<Timeline>,
     log: Res<BattleLog>,
-    units: Query<(Entity, &Faction, &Health, &Transform)>,
-    cooldowns: Query<&AttackCooldown>,
+    menu: Res<MenuSelection>,
+    units: Query<(Entity, &Faction, &Health, &Transform, &Cell)>,
+    stamina_q: Query<&Stamina>,
+    mut flags: ParamSet<(
+        Query<(), With<Ready>>,
+        Query<(), With<Dodging>>,
+        Query<(), With<Parrying>>,
+    )>,
+    intents: Query<&Intent>,
     airborne: Query<&Jumping>,
-    declared: Query<(Entity, &ScheduledAction), With<Declared>>,
+    pending: Query<(Entity, &ScheduledAction), With<Pending>>,
     movements: Query<&MoveAction>,
     jumps: Query<&JumpAction>,
-    shoots: Query<&ShootAction>,
+    fireballs: Query<&FireballAction>,
     melees: Query<&MeleeAction>,
+    rolls: Query<&RollAction>,
     mut status_text: Query<&mut Text, (With<HudStatus>, Without<HudLog>)>,
     mut log_text: Query<&mut Text, (With<HudLog>, Without<HudStatus>)>,
 ) {
     let mut player: Option<UnitRow> = None;
     let mut enemy: Option<UnitRow> = None;
-    for (entity, faction, health, transform) in &units {
+    for (entity, faction, health, transform, cell) in &units {
         let row = UnitRow {
             entity,
             position: transform.translation,
+            cell: *cell,
             current: health.current,
             max: health.max,
-            cooldown: cooldowns.get(entity).ok(),
+            stamina: stamina_q.get(entity).ok().map(|s| (s.current, s.max)),
+            ready: flags.p0().get(entity).is_ok(),
+            dodging: flags.p1().get(entity).is_ok(),
+            parrying: flags.p2().get(entity).is_ok(),
+            intent: intents.get(entity).ok().copied(),
             airborne: airborne.get(entity).is_ok(),
         };
         match faction {
@@ -104,26 +129,31 @@ pub fn update_hud_system(
     }
 
     // 文本只用 ASCII：Bevy 默认字体没有 · / — / 中文这些字形
-    let phase = match timeline.phase() {
-        crate::timeline::Phase::Planning => "PLANNING  (frozen, waiting for commit)".to_string(),
-        crate::timeline::Phase::Resolving => match timeline.window_remaining() {
-            Some(remaining) => format!("RESOLVING  ({remaining:.2}s left)"),
-            None => "RESOLVING".to_string(),
-        },
+    let state = if timeline.waiting_for_input() {
+        if timeline.has_draft() {
+            "WAITING FOR INPUT  (draft ready, Enter to commit)"
+        } else {
+            "WAITING FOR INPUT  (frozen)"
+        }
+    } else {
+        "RUNNING"
     };
 
-    let mut lines = vec![
-        format!("ROUND {:>2}   {phase}", timeline.round()),
-        String::new(),
-    ];
+    let mut lines = vec![format!("TIMELINE   {state}"), String::new()];
     match player {
         Some(ref row) => {
-            let action =
-                declared_label(row.entity, &declared, &movements, &jumps, &shoots, &melees);
+            let action = pending_label(
+                row.entity, &pending, &movements, &jumps, &fireballs, &melees, &rolls,
+            );
             let air = if row.airborne { " (air)" } else { "" };
+            let defense = defense_label(row);
+            let stamina = row
+                .stamina
+                .map(|(current, max)| format!("{current}/{max}"))
+                .unwrap_or_else(|| "-".to_string());
             lines.push(format!(
-                "PLAYER   HP {:>3.0}/{:<3.0}   ({:>5.1}, {:>5.1})   act: {action}{air}",
-                row.current, row.max, row.position.x, row.position.z
+                "PLAYER   HP {:>3.0}/{:<3.0}   EN {:>3}   cell ({:>3},{:>3})   {defense}   act: {action}{air}",
+                row.current, row.max, stamina, row.cell.x, row.cell.z
             ));
         }
         None => lines.push("PLAYER   down (press R to reset)".to_string()),
@@ -137,25 +167,45 @@ pub fn update_hud_system(
                     Vec2::new(delta.x, delta.z).length()
                 })
                 .unwrap_or_default();
-            let ready = match row.cooldown {
-                Some(cooldown) if cooldown.is_ready() => "gun ready",
-                Some(_) => "gun cooling",
-                None => "no gun",
-            };
-            let action =
-                declared_label(row.entity, &declared, &movements, &jumps, &shoots, &melees);
+            let action = pending_label(
+                row.entity, &pending, &movements, &jumps, &fireballs, &melees, &rolls,
+            );
+            let intent = row.intent.map(intent_label).unwrap_or("no-brain");
             let air = if row.airborne { " (air)" } else { "" };
             lines.push(format!(
-                "ENEMY    HP {:>3.0}/{:<3.0}   ({:>5.1}, {:>5.1})   act: {action}{air}",
-                row.current, row.max, row.position.x, row.position.z
+                "ENEMY    HP {:>3.0}/{:<3.0}   cell ({:>3},{:>3})   {:<8}   act: {action}{air}",
+                row.current,
+                row.max,
+                row.cell.x,
+                row.cell.z,
+                defense_label(&row)
             ));
-            lines.push(format!("         dist {distance:>4.1}   {ready}"));
+            lines.push(format!("         dist {distance:>4.1}   intent {intent}"));
         }
         None => lines.push("ENEMY    none".to_string()),
     }
     lines.push(String::new());
-    lines.push("keys   WASD move | Q shoot | E melee | Space jump".to_string());
-    lines.push("       Enter commit | R reset | middle-drag pan camera".to_string());
+    // 技能菜单：只列精力负担得起的（其余打上 `x` 表示当前用不出来）
+    let stamina_current = player.as_ref().and_then(|row| row.stamina).map(|(c, _)| c);
+    let skills: Vec<String> = SKILLS
+        .iter()
+        .enumerate()
+        .map(|(index, def)| {
+            let affordable = stamina_current.is_some_and(|current| def.cost <= current);
+            let line = skill_line(index, menu.index());
+            if affordable {
+                line
+            } else {
+                format!("x{}", &line[1..])
+            }
+        })
+        .collect();
+    lines.push(format!("skills {}", skills.join("  ")));
+    lines.push(
+        "keys   WASD move | Q fireball | E melee | Space jump | F roll | V parry".to_string(),
+    );
+    lines.push("       1-4 pick | Tab cycle | G use | R reset".to_string());
+    lines.push("       F1 enter-to-commit | middle-drag pan".to_string());
 
     for mut text in &mut status_text {
         **text = lines.join("\n");
@@ -173,33 +223,58 @@ pub fn update_hud_system(
     }
 }
 
-/// 本轮该单位声明了什么（没声明就是 `—`）。
-fn declared_label(
+/// 敌人意图的可读标签。
+fn intent_label(intent: Intent) -> &'static str {
+    match intent {
+        Intent::Idle => "idle",
+        Intent::Approach => "approach",
+        Intent::Melee => "melee",
+        Intent::Shoot => "shoot",
+        Intent::Retreat => "retreat",
+        Intent::Dodge => "dodge",
+    }
+}
+
+/// 单位的当前状态：防御标记优先于「就绪 / 后摇」。
+fn defense_label(row: &UnitRow) -> &'static str {
+    if row.dodging {
+        "dodging"
+    } else if row.parrying {
+        "parrying"
+    } else if row.ready {
+        "ready"
+    } else {
+        "busy"
+    }
+}
+
+/// 该单位当前待执行的行动（没有就是 `-`）。
+fn pending_label(
     actor: Entity,
-    declared: &Query<(Entity, &ScheduledAction), With<Declared>>,
+    pending: &Query<(Entity, &ScheduledAction), With<Pending>>,
     movements: &Query<&MoveAction>,
     jumps: &Query<&JumpAction>,
-    shoots: &Query<&ShootAction>,
+    fireballs: &Query<&FireballAction>,
     melees: &Query<&MeleeAction>,
+    rolls: &Query<&RollAction>,
 ) -> &'static str {
-    let Some((entity, _)) = declared.iter().find(|(_, action)| action.actor == actor) else {
+    let Some((entity, _)) = pending.iter().find(|(_, action)| action.actor == actor) else {
         return "-";
     };
-    if let Ok(movement) = movements.get(entity) {
-        return if movement.axis == Vec2::ZERO {
-            "hold"
-        } else {
-            "move"
-        };
+    if movements.get(entity).is_ok() {
+        return "move";
     }
     if jumps.get(entity).is_ok() {
         return "jump";
     }
-    if shoots.get(entity).is_ok() {
-        return "shoot";
+    if fireballs.get(entity).is_ok() {
+        return "fireball";
     }
     if melees.get(entity).is_ok() {
         return "melee";
+    }
+    if rolls.get(entity).is_ok() {
+        return "roll";
     }
     "action"
 }
@@ -220,29 +295,49 @@ mod tests {
     }
 
     #[test]
-    fn hud_reports_phase_units_and_keys() {
+    fn hud_reports_waiting_state_and_units() {
         let mut app = headless_app();
         app.update(); // Startup：组装单位 + 建 HUD
         app.update(); // 刷新文本
 
         let text = text_of(&mut app);
-        assert!(text.contains("PLANNING"), "应当显示规划阶段：{text}");
+        assert!(
+            text.contains("WAITING FOR INPUT"),
+            "玩家就绪时世界应当停下等他：{text}"
+        );
         assert!(text.contains("PLAYER"), "应当显示玩家信息：{text}");
         assert!(text.contains("ENEMY"), "应当显示敌人信息：{text}");
         assert!(text.contains("middle-drag"), "应当提示中键平移：{text}");
     }
 
     #[test]
-    fn hud_reports_the_declared_action() {
+    fn hud_shows_the_pending_action_after_input() {
         let mut app = headless_app();
         app.update();
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyQ);
-        app.update(); // 声明射击
+        app.update(); // 声明射击 → 进入待执行
         app.update(); // 刷新文本
 
         let text = text_of(&mut app);
-        assert!(text.contains("shoot"), "应当显示本轮声明：{text}");
+        assert!(text.contains("fireball"), "应当显示待执行行动：{text}");
+    }
+
+    /// HUD 技能菜单：列出注册表里的技能、标出当前选择、并标出负担不起的。
+    #[test]
+    fn hud_lists_skills_and_marks_the_selection() {
+        let mut app = headless_app();
+        app.update();
+        app.update();
+
+        let text = text_of(&mut app);
+        assert!(text.contains("skills"), "应当有技能行：{text}");
+        assert!(text.contains("attack"), "技能行应当列出攻击：{text}");
+        assert!(
+            text.contains(">1:attack"),
+            "默认选中第一项应当被打上 `>`：{text}"
+        );
+        assert!(text.contains("Tab cycle"), "应当提示 Tab 循环技能：{text}");
     }
 }

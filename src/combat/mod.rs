@@ -14,10 +14,11 @@
 //! 流水线（`Update` 内按 [`CombatSet`] 链式执行）：
 //!
 //! ```text
-//! skills（输入 → 生成攻击实体）
+//! skills（声明 → 到点生成攻击实体 / 火球投射物）
+//!   ─▶ projectile_arrival + explosion（到达目标格 → 按真实距离 AoE）
 //!   ─▶ targeting（挂 CollisionTarget）
-//!   ─▶ formula（算伤害 → DamageEvent）
-//!   ─▶ lifecycle（命中计数 / 归零速度）
+//!   ─▶ phase1_arbitrate（只读裁决：三层裁决 + 防御判定 → CombatResult）
+//!   ─▶ phase2_apply（统一落地：DamageEvent / 反制 / 命中计数）
 //!   ─▶ health（扣血 → DeathEvent → 销毁实体）
 //!   ─▶ lifecycle（清理结束的攻击实体、到期销毁）
 //! ```
@@ -29,6 +30,7 @@ use bevy::prelude::*;
 
 pub mod attributes;
 pub mod components;
+pub mod defense;
 pub mod formula;
 pub mod health;
 pub mod lifecycle;
@@ -36,12 +38,19 @@ pub mod plugin;
 pub mod skills;
 pub mod targeting;
 
-pub use attributes::{Armor, HitRadius, PhysicalDamage};
+pub use attributes::{Armor, AttackFrame, AttackRange, HitRadius, Impact, PhysicalDamage};
 pub use components::{Collidable, Faction};
-pub use formula::{DamageEvent, DamageType};
+pub use defense::{
+    AttackResolved, DefenseOutcome, Dodging, ParryCommand, Parrying, RollCommand, Stamina,
+};
+pub use formula::{CombatResult, DamageEvent, DamageType, HitOrder};
 pub use health::{DeathEvent, Health, ModifyHealthEvent};
 pub use lifecycle::{HitOnce, Lifetime, Projectile};
 pub use plugin::CombatPlugin;
+pub use skills::{
+    FIREBALL_COST, FireCommand, Fireball, FireballAction, MeleeAction, MeleeCommand, MenuSelection,
+    ProjectileArrived, SKILLS, ShootAction, SkillDef, SkillKind,
+};
 pub use targeting::{CollisionTarget, MeleeShape};
 
 /// 战斗领域在 `Update` 中的系统集。

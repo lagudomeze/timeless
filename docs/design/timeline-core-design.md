@@ -1,5 +1,10 @@
 # 时间线核心（Timeline Core）设计文档 — v0.1
 
+> ⛔ **已废弃**：当前设计见 [timeline-turnless.md](timeline-turnless.md)
+> （无回合、决策按格、结算按真实距离）。本文的 `ActionId(&'static str)`、
+> `CombatPhase::DecisionPause`、`CombatTimeline` 逻辑刻度、`try_cancel` 等接口签名
+> **不会落地**，仅作接口讨论的历史留档。
+
 > 状态：**接口签名版**（只定义 API 与模块划分，不写实现）
 > 技术栈：Bevy (Rust, ECS)
 > 范围：第一梯队 —— 攻击类（轻击/蓄力/远程射击）+ 翻滚取消 + 基础移动 + 弹药装填，

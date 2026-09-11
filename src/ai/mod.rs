@@ -1,8 +1,11 @@
 //! # ai — 敌人行为领域
 //!
-//! 只做「世界空间下的持续决策」：离玩家远就写自己的速度靠过去，
-//! 进入攻击距离且冷却结束就生成攻击实体。AI 不感知命中结果，
+//! 只做「无回合决策」：敌人只要有 [`Ready`](crate::timeline::Ready) 就选一个意图
+//! 并**声明行动实体**，到点后由移动 / 技能领域的执行器落地。AI 不感知命中结果，
 //! 出手后的结算完全交给 [`crate::combat`] 流水线。
+//!
+//! 它**不写 `Velocity`、也不改任何游戏状态**——和玩家输入一样只声明行动，
+//! 这是「调度器不感知载荷」的必然结果。
 
 use bevy::prelude::*;
 
@@ -10,9 +13,9 @@ pub mod components;
 pub mod plugin;
 pub mod systems;
 
-pub use components::{AttackCooldown, EnemyBrain};
+pub use components::{EnemyBrain, Intent};
 pub use plugin::AiPlugin;
-pub use systems::{enemy_declare_system, tick_attack_cooldown_system};
+pub use systems::{decide_intent_system, enemy_declare_system};
 
 /// AI 领域在 `Update` 中的系统集（在移动之前决策，移动领域负责落地）。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

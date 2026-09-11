@@ -5,10 +5,11 @@
 //! | 零件 | 提供方 |
 //! | :--- | :--- |
 //! | `Health` | [`crate::combat::health`] |
-//! | `PhysicalDamage` / `Armor` / `HitRadius` | [`crate::combat::attributes`] |
+//! | `PhysicalDamage` / `Armor` / `HitRadius` / `AttackRange` | [`crate::combat::attributes`] |
 //! | `Faction` / `Collidable` | [`crate::combat`] |
-//! | `Velocity` / `MoveSpeed` | [`crate::movement`] |
-//! | `EnemyBrain` / `AttackCooldown` | [`crate::ai`] |
+//! | `Velocity` / `MoveSpeed` / `Cell` | [`crate::movement`] |
+//! | `Ready`（能决策） | [`crate::timeline`] |
+//! | `EnemyBrain` / `Intent` | [`crate::ai`] |
 //! | `ChunkLoader` | [`crate::world`] |
 //! | 模型 / 相机 / 装饰 / 日志 | [`crate::presentation`] |
 //!
@@ -18,10 +19,13 @@
 //! 依赖方向是单向的：
 //!
 //! ```text
-//! spawn ──▶ combat / movement / ai / world / presentation
+//! spawn ──▶ combat / movement / ai / world / presentation / timeline
 //! ```
 //!
-//! **没有任何领域依赖 `spawn`**——所以改角色配置永远不会波及战斗、移动、渲染的规则。
+//! 组装层会**贴共用零件**，因此可以引用各领域（含 [`crate::timeline`] 的
+//! [`Ready`](crate::timeline::Ready)——没有它就没有「可以决策」的单位）。
+//! 反向仍然禁止：**没有任何领域依赖 `spawn`**——所以改角色配置永远不会
+//! 波及战斗、移动、渲染的规则。
 //! 攻击实体（箭矢、近战横扫）不在这里，它是技能的产物，工厂归
 //! [`crate::combat::skills`]。
 

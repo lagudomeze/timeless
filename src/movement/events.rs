@@ -2,10 +2,10 @@
 
 use bevy::prelude::*;
 
-/// 移动指令：`axis` 是归一化的平面方向（无输入时为 `Vec2::ZERO`，表示停下）。
+/// 移动指令：`axis` 是归一化的平面方向（无输入时不发消息）。
 ///
-/// 写：[`crate::input`]（键盘只翻译）；
-/// 消费：[`apply_move_command_system`](super::systems::apply_move_command_system)。
+/// 写：[`crate::input`]（键盘只翻译，按下的那一次）；
+/// 消费：[`declare_move_system`](super::actions::declare_move_system)——走一格。
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MoveCommand {
     pub axis: Vec2,

@@ -21,7 +21,8 @@ pub mod plugin;
 pub mod pointer;
 
 pub use keyboard::{
-    player_commit_input_system, player_move_input_system, player_skill_input_system,
+    commit_mode_toggle_system, player_commit_input_system, player_move_input_system,
+    player_skill_input_system, skill_menu_input_system, skill_use_input_system,
 };
 pub use plugin::InputPlugin;
 pub use pointer::camera_pan_input_system;

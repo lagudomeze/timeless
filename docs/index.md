@@ -4,18 +4,25 @@
 
 ## 项目定位
 
-无回合（`Time<Virtual>` 驱动的行动时间线）+ 戴森球式供应链 + 信息即力量的
-roguelike 策略游戏，代号 Project Timeless，基于 Bevy 0.19 实现。
+**无回合**（所有单位能决策就决策，仅玩家等待输入时冻结虚拟时间）+ 戴森球式供应链 +
+信息即力量的 roguelike 策略游戏，代号 Project Timeless，基于 Bevy 0.19 实现。
+战斗结算用**真实距离**，决策与同格判定按**格子**（见
+[design/timeline-turnless.md](design/timeline-turnless.md)）。
 
 ## 文档地图
 
 | 主题 | 文档 |
 | :--- | :--- |
+| **进度与差异统合（唯一进度真相）** | [status.md](status.md) |
 | 游戏设计总纲 | [design/game-design.md](design/game-design.md) |
-| 时间线系统详细设计 | [design/timeline.md](design/timeline.md) |
+| **无回合时间线详细设计（当前权威）** | [design/timeline-turnless.md](design/timeline-turnless.md) |
+| 时间线系统详细设计（历史，已被取代） | [design/timeline.md](design/timeline.md) |
 | 架构原则与分层 | [design/architecture.md](design/architecture.md) |
 | 根目录 app 原型的领域化模块设计 | [design/app-modules.md](design/app-modules.md) |
 | ECS 战斗组件化设计 | [design/ecs-combat-components.md](design/ecs-combat-components.md) |
+| 旧 app → 根目录迁移记录（历史） | [design/app-migration.md](design/app-migration.md) |
+| 旧内容盘点与重设计（历史） | [design/app-redesign.md](design/app-redesign.md) |
+| 文档与代码差异分析（已被 status.md 取代） | [integration-status.md](integration-status.md) |
 | Bevy 0.19 速查与最佳实践 | [bevy/bevy-019.md](bevy/bevy-019.md) |
 | Action Graph 设计 | [bevy/action-graph.md](bevy/action-graph.md) |
 | 免费素材获取与接入 | [art/assets.md](art/assets.md) |

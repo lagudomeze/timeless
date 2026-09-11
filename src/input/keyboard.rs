@@ -3,24 +3,27 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
-use crate::combat::skills::{FireCommand, MeleeCommand};
+use crate::combat::defense::{ParryCommand, RollCommand};
+use crate::combat::skills::{CycleSkill, FireCommand, MeleeCommand, SelectSkill, UseSelectedSkill};
 use crate::movement::{JumpCommand, MoveCommand};
 use crate::presentation::CameraRig;
-use crate::timeline::ActionsCommitted;
+use crate::timeline::{ActionsCommitted, TimelineConfig};
 
-/// WASD / 方向键 → 世界平面移动方向。
+/// WASD / 方向键 → 世界平面移动方向（**按下的那一次**）。
 ///
 /// 玩家的按键是**屏幕方向**（W 向上 = 远离相机、D 向右 = 相机的右手边），
 /// 所以这里按相机朝向换算到世界 XZ 平面（`MoveCommand.axis` 的约定见
 /// [`crate::movement::ground_direction`]）。没有相机时（单测）退回世界轴：
 /// W → 世界 +Z、D → 世界 +X。
 ///
-/// 每帧都写一条消息（含零方向），消费端据此设置 / 归零速度，
-/// 因此不需要单独处理「松开按键」事件。
+/// 只在**方向发生变化**时发消息（`Local` 记住上一次的方向）：
+/// 无回合模型里「按一次 = 走一格」，若每帧都发，「按住 W」会不停顶掉
+/// 玩家刚声明的技能；同时按下两个方向键时以 Shift 一侧为准。
 pub fn player_move_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     cameras: Query<&Transform, With<CameraRig>>,
     mut commands: MessageWriter<MoveCommand>,
+    mut last_axis: Local<Vec2>,
 ) {
     let mut screen = Vec2::ZERO;
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
@@ -36,6 +39,13 @@ pub fn player_move_input_system(
         screen.x += 1.0;
     }
     let screen = screen.normalize_or_zero();
+    if screen == *last_axis {
+        return; // 方向没变：不再重复声明
+    }
+    *last_axis = screen;
+    if screen == Vec2::ZERO {
+        return; // 松手不发消息：一次决策已经消耗掉了
+    }
 
     let basis = cameras
         .iter()
@@ -80,12 +90,17 @@ impl GroundBasis {
     }
 }
 
-/// Q → 发射箭矢；E → 近战横扫；空格 → 跳跃。
+/// Q → 发射箭矢；E → 近战横扫；空格 → 跳跃；F → 翻滚；V → 招架。
+///
+/// 翻滚 / 招架是**反应性操作**（消耗精力、随时可用），因此不参与
+/// `require_commit` 的草案流程——它们照旧「按下即声明」。
 pub fn player_skill_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut fire_commands: MessageWriter<FireCommand>,
     mut melee_commands: MessageWriter<MeleeCommand>,
     mut jump_commands: MessageWriter<JumpCommand>,
+    mut roll_commands: MessageWriter<RollCommand>,
+    mut parry_commands: MessageWriter<ParryCommand>,
 ) {
     if keys.just_pressed(KeyCode::KeyQ) {
         fire_commands.write(FireCommand);
@@ -96,18 +111,89 @@ pub fn player_skill_input_system(
     if keys.just_pressed(KeyCode::Space) {
         jump_commands.write(JumpCommand);
     }
+    if keys.just_pressed(KeyCode::KeyF) {
+        roll_commands.write(RollCommand);
+    }
+    if keys.just_pressed(KeyCode::KeyV) {
+        parry_commands.write(ParryCommand);
+    }
 }
 
-/// Enter → 提交本轮（`ActionsCommitted`）。
+/// Enter → 提交草案（仅在 `TimelineConfig::require_commit` 开启时有意义）。
 ///
-/// 提交只是「我准备好了」：时间线会把所有单位本轮的声明一起变成 `Pending`，
-/// 再推进一个窗口。规划阶段之外按下不做任何事。
+/// 默认「按下即决定」，所以这条消息平时不会改变任何东西；
+/// 需要「先声明、再确认」的手感时用 `F1` 打开开关。
 pub fn player_commit_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut commits: MessageWriter<ActionsCommitted>,
 ) {
     if keys.just_pressed(KeyCode::Enter) {
         commits.write(ActionsCommitted);
+    }
+}
+
+/// F1 → 切换「是否需要 Enter 提交」。
+///
+/// 输入域只改**配置**（`TimelineConfig`）而不碰游戏状态；
+/// 是否延迟执行由时间线的 `commit_bridge_system` 解释。
+pub fn commit_mode_toggle_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut config: ResMut<TimelineConfig>,
+) {
+    if !keys.just_pressed(KeyCode::F1) {
+        return;
+    }
+    config.require_commit = !config.require_commit;
+    info!(
+        "commit mode: {}",
+        if config.require_commit {
+            "ON (declare with input, Enter to commit)"
+        } else {
+            "OFF (input applies immediately)"
+        }
+    );
+}
+
+/// 技能菜单：`1`~`4` 直选 · `Tab`/`Shift+Tab` 循环（跳过负担不起的）。
+///
+/// 与其它输入一样**只翻译**：选择消息由技能域的选择系统消费，
+/// 输入层不判断消耗、不生成行动。释放是另一个系统（[`skill_use_input_system`]），
+/// 因为「选择」随时可做，「释放」要求玩家当前就绪。
+pub fn skill_menu_input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut selects: MessageWriter<SelectSkill>,
+    mut cycles: MessageWriter<CycleSkill>,
+) {
+    // 直选
+    let direct = [
+        (KeyCode::Digit1, 0usize),
+        (KeyCode::Digit2, 1),
+        (KeyCode::Digit3, 2),
+        (KeyCode::Digit4, 3),
+    ];
+    for (key, index) in direct {
+        if keys.just_pressed(key) {
+            selects.write(SelectSkill(index));
+        }
+    }
+
+    // 循环：Shift + Tab = 反向
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if keys.just_pressed(KeyCode::Tab) {
+        cycles.write(CycleSkill { forward: !shift });
+    }
+}
+
+/// 释放当前选中的技能（`G`）。
+///
+/// 与 ↑ 分开一个系统：释放要求玩家**当前就绪**，而选择随时可以做
+/// （忙的时候也想先把下一个技能选好）。
+pub fn skill_use_input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut uses: MessageWriter<UseSelectedSkill>,
+) {
+    if keys.just_pressed(KeyCode::KeyG) {
+        uses.write(UseSelectedSkill);
     }
 }
 
@@ -124,7 +210,8 @@ mod tests {
 
     #[test]
     fn camera_basis_makes_w_go_away_from_the_camera() {
-        // 真实机位：相机在 focus 的 (+12, +14, +12) 侧，俯视 45°
+        // 真实机位：相机在 focus 的 (+12, +14, +12) 侧并看向 focus。
+        // 该机位下「相机前方」正好等于屏幕上方，因此 W 走相机前方（= 远离相机）。
         let rig = CameraRig::new(Vec3::ZERO);
         let transform = rig.transform();
         let basis = GroundBasis::from_rotation(transform.rotation);
@@ -133,7 +220,7 @@ mod tests {
         let up_world_axis = basis.axis(Vec2::Y);
         assert!(
             up_world_axis.x * forward.x + up_world_axis.y * forward.z > 0.9,
-            "W 应当朝远离相机的方向；实际 {up_world_axis:?}"
+            "W 应当朝相机前方（远离相机）；实际 {up_world_axis:?}"
         );
 
         let right = (transform.rotation * Vec3::X).with_y(0.0).normalize();

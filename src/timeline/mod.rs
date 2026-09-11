@@ -1,13 +1,13 @@
-//! # timeline — We-Go 时间线（同步回合调度）
+//! # timeline — 无回合时间线（能决策就决策）
 //!
-//! 所有单位**同时规划、一起结算**：规划阶段虚拟时间冻结等玩家输入，玩家提交后
-//! 时间推进一个固定窗口，行动实体按各自的 `execute_at` 到点执行，窗口结束回到
-//! 规划阶段。
+//! 没有阶段、没有轮次：**每个单位只要能决策就决策**，节奏由每个动作自带的
+//! 前摇 + 后摇决定（[`timing`]）。唯一会停下世界的情况是「玩家已就绪、
+//! 正等他按键」——那时冻结虚拟时间（[`timeline_gate_system`]）。
 //!
 //! ```text
-//!              Enter（玩家提交）
-//! Planning ─────────────────▶ Resolving ──（窗口结束，广播 RoundEnded）──▶ Planning
-//! 虚拟时间：暂停               流动                                      暂停
+//! [Ready] ──声明──▶ [Pending] ──到点──▶ [Committed] ──执行──▶ [后摇] ──▶ [Ready]
+//!    ▲                                                              │
+//!    └──────────────────── recovery_system ─────────────────────────┘
 //! ```
 //!
 //! 本域只做调度，**不感知载荷**：行动 = 独立实体，实体上只有调度数据
@@ -19,8 +19,11 @@
 //! 因此移动、计时器、生命周期全部自动停表，不需要任何手写阶段门控
 //! （AGENTS.md：暂停用 `Time<Virtual>`，不要手写阶段门控）。
 //!
-//! 操作：`WASD` 声明移动、`Space` 声明射击、`E` 声明近战、`Enter` 提交本轮、
-//! `R` 重置战斗。同一轮里后声明覆盖先声明（一个单位同一时刻至多一个行动）。
+//! 操作：`WASD` 声明移动、`Q` 射击、`E` 近战、`Space` 跳跃、`R` 重置战斗。
+//! 默认**按下即生效**（`TimelineConfig::require_commit = false`）；
+//! 需要「先声明再确认」时把它设为 `true`，`Enter` 才提交。
+//!
+//! 决策按**格子**、命中按**真实距离**，格边长见 [`timing::CELL_SIZE`]。
 
 use bevy::prelude::*;
 
@@ -29,15 +32,17 @@ pub mod events;
 pub mod plugin;
 pub mod resources;
 pub mod systems;
+pub mod timing;
 
-pub use components::{Committed, Declared, Pending, ScheduledAction};
-pub use events::{ActionsCommitted, RoundEnded};
+pub use components::{BusyRecovery, Committed, Declared, Pending, Ready, ScheduledAction};
+pub use events::ActionsCommitted;
 pub use plugin::TimelinePlugin;
-pub use resources::{Phase, RESOLUTION_WINDOW, Timeline};
+pub use resources::{Timeline, TimelineConfig};
 pub use systems::{
-    clear_declared_actions, commit_actions_system, end_round_system, pause_during_planning_system,
-    scheduler_system,
+    begin_action, commit_bridge_system, end_action, recovery_system, scheduler_system,
+    timeline_gate_system,
 };
+pub use timing::{ActionTiming, CELL_SIZE};
 
 /// 时间线在 `Update` 中的系统集（排在输入之后、AI 与执行器之前）。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
