@@ -1,6 +1,9 @@
 # 仓库指南（Repository Guidelines）
 
-Project Timeless 是基于 Bevy 的 roguelike 策略游戏，核心玩法为 We-Go（同步回合）战斗时间线。Cargo workspace 位于 `timeless/`；仓库根目录放置本指南、`TODO.md` 与 `docs/` 文档。
+Project Timeless 是基于 Bevy 的 roguelike 策略游戏，主线玩法是**无回合**的战斗时间线：
+谁能决策由各自的 `Ready` 决定，每个动作自带前摇 + 后摇，只在玩家等输入时冻结世界。
+Cargo workspace 位于 `timeless/`（代码 B）；仓库根目录的 `src/` 是主线原型（代码 A），
+另放本指南、`TODO.md` 与 `docs/` 文档。
 
 ## 项目结构与模块组织
 
@@ -29,14 +32,14 @@ timeless/
 以下命令均在 `timeless/` 目录下执行：
 
 - `cargo run -p timeless-app` — 启动游戏。
-- `cargo test --workspace` — 运行全部单元测试（领域层现有 11 个）。
+- `cargo test --workspace` — 运行全部单元测试（领域层 7 + 应用层 2 = 9 个）。
 - `cargo clippy --workspace` — 静态检查，必须零警告。
 - `cargo fmt` / `cargo fmt --check` — 格式化代码 / 校验格式。
 
 根目录 `src/` 原型（package `app`）在**仓库根目录**执行：
 
 - `cargo run` — 启动原型（体素地形 + 世界空间战斗）。
-- `cargo test --lib` — 原型单元测试（`world` 数据域可脱离渲染环境运行）。
+- `cargo test` — 原型单元测试（97 个：`src/lib.rs` 的整机用例 + 各领域的纯逻辑用例）。
 - `cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` — 同 timeless 的验收标准。
 
 环境注意事项：本机 crates.io 直连不可用，依赖经清华镜像解析。不要使用 `cargo add`（已知兼容性问题）；依赖须手动写入 `Cargo.toml`，并在代码中引入前更新根目录 `TODO.md` 的版本索引表。
@@ -62,19 +65,20 @@ timeless/
 
 ## 输入与通信规范
 
-- **UI 输入只翻译、不执行**：键盘 / egui 面板等输入源不得直接修改游戏状态，只把按键或
-  点击翻译成 Bevy `Message`（如 `SelectSkill` / `MoveInput` / `CommitTurn` /
-  `ReactionSelect`），再由对应领域的单一职责系统消费并落地。禁止在输入系统里同时做
-  「翻译 + 决策 + 改状态」。
-- **消息定义与消费它的系统同属一个领域文件**：如 `MoveInput` 与 `move_input_system`
-  在 `movement.rs`、`TurnCommitted` 与 `phase_advance_system` 在 `timeline.rs`。
+- **UI 输入只翻译、不执行**：键盘 / 鼠标等输入源不得直接修改游戏状态，只把按键
+  翻译成 Bevy `Message`，再由对应领域的单一职责系统消费并落地。禁止在输入系统里
+  同时做「翻译 + 决策 + 改状态」。A 原型现有的输入消息：`MoveCommand` / `JumpCommand` /
+  `FireCommand` / `MeleeCommand` / `RollCommand` / `ParryCommand` / `SelectSkill` /
+  `CycleSkill` / `UseSelectedSkill` / `ActionsCommitted` / `PanCamera`。
+- **消息定义与消费它的系统同属一个领域**：如 `MoveCommand` 与 `declare_move_system`
+  在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/skills/`、
+  `RollCommand` 与 `declare_roll_system` 在 `combat/defense/`、
+  `ActionsCommitted` 与 `commit_bridge_system` 在 `timeline/`。
   其他领域需要发起该操作时只写消息，不重复实现；不要在生产者文件里定义消费方领域的消息。
-- 跨模块 / 跨阶段交互一律走 `MessageWriter` / `MessageReader`；需要立即生效、针对具体
+- 跨模块交互一律走 `MessageWriter` / `MessageReader`；需要立即生效、针对具体
   实体时才用 Event + Observer，两者不可混用。
-- 新增消息必须在 `main.rs` 用 `add_message::<T>()` 注册，并在消息上注明「谁写、谁消费」；
-  输入类消息由对应领域系统消费：`select_skill_system` / `commit_system` /
-  `reaction_execution_system`（menu）、`move_input_system`（movement）、
-  `phase_advance_system`（timeline）。
+- 新增消息在**消费方领域的插件** `build` 里用 `add_message::<T>()` 注册
+  （输入域只写消息，不注册别人的消息），并在消息上注明「谁写、谁消费」。
 
 ## 根目录 app 原型的模块约定
 
@@ -83,21 +87,29 @@ timeless/
   `plugin.rs` 维护（测试复用同一入口，保证跑的是真实流水线顺序）。
 - 领域内部按职责分文件：`components.rs` / `events.rs`（消息）/ `systems.rs` /
   `resources.rs`；`mod.rs` 只做 `pub mod` + `pub use` 门面。
-- 消息注册在**所属领域插件**的 `build` 里（`add_message::<T>()`），并注明谁写谁消费。
 - **角色实体不是模块**：零件归各领域（`Health` → combat、`Velocity` → movement、
   `EnemyBrain` → ai、`ChunkLoader` → world），组装归 `spawn/`（`unit_scene` 给共用
   零件，`player.rs` / `enemy.rs` 追加驱动源）；**没有任何领域依赖 `spawn`**。
-- **行动实体化 + 时间线**：行动是独立实体（载荷组件 + `ScheduledAction` +
+- **行动实体化 + 时间线（无回合）**：行动是独立实体（载荷组件 + `ScheduledAction` +
   `Declared` / `Pending` / `Committed`），由 `timeline/` 调度；调度器不感知载荷，
-  载荷与执行器归各自领域（`movement/actions.rs`、`combat/skills/actions.rs`）。
-  同一单位一轮至多一个行动，后声明覆盖先声明。
-- **暂停等输入**：规划阶段冻结 `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用
-  `Time`，位移 / 计时器自动停表），`Enter` 提交后推进一个 1s 窗口再冻结；
-  禁止手写 `if paused` 阶段门控。键位：`WASD` 移动 · `Q` 射击 · `E` 近战 ·
-  `Space` 跳跃 · `Enter` 提交 · `R` 重置 · 按住鼠标中键拖拽平移相机。
+  载荷与执行器归各自领域（`movement/actions.rs`、`combat/skills/*.rs`）。
+  **没有「轮」也没有规划阶段**：谁能决策由单位自己的 `Ready` 决定，
+  每个动作自带固定前摇 + 后摇（`timeline::timing`），同一单位忙的时候不接受新声明。
+  执行器收尾**必须**走 `timeline::end_action`（摘 `Committed` + 销毁行动实体 + 挂后摇），
+  否则执行器会每帧重复触发同一个动作。
+- **暂停等输入**：唯一的暂停点是 `timeline_gate_system`——玩家就绪且未在空中时冻结
+  `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用 `Time`，位移 / 投射物 / 后摇自动停表）；
+  禁止在其它地方手写 `if paused` 阶段门控。
+  键位：`WASD` 移动 · `Q` 火球 · `E` 近战 · `Space` 跳跃 · `F` 翻滚 · `V` 招架 ·
+  `1`~`4` / `Tab` 选技能 · `G` 释放选中技能 · `Enter` 提交 · `F1` 切换「是否需要 Enter 提交」 ·
+  `R` 重置 · 按住鼠标中键拖拽平移相机。
   移动方向按**屏幕**算（W = 远离相机），由 `input` 的 `GroundBasis` 按相机朝向
-  换算到世界 XZ 平面；平面轴约定见 `movement::ground_direction`。
-- **表现层只读**：HUD（阶段 / 轮次 / 双方状态 / 本轮声明 / 战斗日志）与相机平移都在
+  换算到世界 XZ 平面，再经 `movement::step_from_axis` **吸附成一格的正交步**；
+  平面轴约定见 `movement::ground_direction`。
+- **坐标：决策按格、结算按真实距离**：格（`movement::Cell`，边长 `CELL_SIZE`）只用于
+  决策与同格判定；命中 / 射程 / 爆炸半径一律用世界距离。单位只在停下时更新 `Cell`
+  （`move_entities_system` 吸附到目标格中心），不每帧从 `Transform` 反推。
+- **表现层只读**：HUD（就绪 / 精力 / 技能 / 双方状态 / 敌人意图 / 战斗日志）与相机平移都在
   `presentation/`，只读游戏状态；HUD 文本用英文——Bevy 默认字体不含 CJK，
   中文界面需要自带字体资产。
 - **功能不是领域**：像「战斗重置」这种只把已有系统拼一次的胶水，留在调用方
@@ -111,10 +123,13 @@ timeless/
 
 ## 测试规范
 
-- 单元测试写在源码旁的 `#[cfg(test)] mod tests` 中，主要集中在 `timeless-domain`。
+- 单元测试写在源码旁的 `#[cfg(test)] mod tests` 中：A 原型集中在 `src/lib.rs` 的
+  `mod tests`（97 个）+ 各领域文件内的纯逻辑用例；B 的领域层用例在 `timeless-domain`。
 - 测试名用描述性的 snake_case，例如 `layer1_speed_frame_decides_who_hits_first`。
 - 使用 `assert_eq!`，断言意图不直观时附带简短说明。
-- 提交前必须通过：`cargo test --workspace` 全绿、`cargo clippy --workspace` 零警告、`cargo fmt --check` 通过。
+- **不要用 `#[ignore]` 隐藏失败**：跳过的用例要么修好，要么在 `TODO.md` 写明根因与下一步。
+- 提交前必须通过（A 在仓库根、B 在 `timeless/`，两棵树各自）：
+  `cargo test` 全绿、`cargo clippy --all-targets -- -D warnings` 零警告、`cargo fmt --check` 通过。
 
 ## 提交与 Pull Request 规范
 

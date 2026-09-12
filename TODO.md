@@ -16,7 +16,7 @@
 
 ```bash
 cargo run                    # 启动：体素地形 + 世界空间战斗
-cargo test                   # 49 个单元测试（src/**）
+cargo test                   # 97 个单元测试（src/**，0 跳过）
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 ```
@@ -59,15 +59,16 @@ cargo fmt --check
 ## 代码 A 现状（根 `src/`，package `app`）
 
 `world`（32³ 体素区块 / 噪声地形 / 体素读写，零渲染依赖，`MinimalPlugins` 可单测）+
-`voxel_render`（异步面剔除网格化、材质、面朝向明暗）+ `movement`（`Transform` + `Velocity`
-位移、移动/跳跃行动）+ `combat`（生命 / 护甲减免 / 碰撞与近战扇形 / 攻击实体生命周期 /
-箭矢与横扫技能）+ `timeline`（**We-Go：规划阶段冻结 `Time<Virtual>` 等提交，1s 推进窗口按
-`execute_at` 结算，`RoundEnded` 收尾**）+ `ai`（规划阶段声明移动/射击）+ `input`（只翻译）
-+ `presentation`（相机 / 装饰 / 英文 HUD / 战斗日志）+ `spawn`（组装车间 + `ResetBattle`）。
+`voxel_render`（异步面剔除网格化、材质、面朝向明暗）+ `movement`（`Cell` / `MoveGoal` 格子决策、
+`Transform` + `Velocity` 连续位移、移动/跳跃/翻滚行动、投射物飞行）+ `combat`（生命 / 护甲减免 /
+碰撞与近战扇形 / 攻击实体生命周期 / 箭矢与横扫 / 火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 /
+招架反制 / 两阶段结算 / 技能注册表与菜单）+ `timeline`（**无回合**：`Ready` 决定谁能决策，
+`ActionTiming` 决定每个动作的前摇 + 后摇，仅在玩家等输入时冻结 `Time<Virtual>`）
++ `ai`（意图循环 + 声明行动）+ `input`（只翻译）+ `presentation`（相机 / 装饰 / 英文 HUD / 战斗日志）
++ `spawn`（组装车间 + `ResetBattle`）。
 
-**A 没有**：`Position` / `GridMath` 网格坐标、`Stamina` / 弹药 / 冷却、翻滚 / 招架 / 闪避标记、
-火球 / 爆炸、两阶段结算与 `CombatResult`、技能菜单（`Can*` / `SKILLS`）、egui 调试面板、
-`ActionTemplate` / `PendingHit` / `CombatTimeline`。
+**A 仍然没有**（相对 B）：`Position` / `GridMath` 这类第二套网格坐标（A 直接用 `Cell`）、
+弹药、egui 调试面板、`ActionTemplate` / `PendingHit` / `CombatTimeline`。
 
 详细模块设计见 [docs/design/app-modules.md](docs/design/app-modules.md)（与代码一致）。
 
@@ -95,24 +96,28 @@ cargo fmt --check
 - [x] **M7 技能菜单与 HUD**：`SKILLS` 注册表（单一来源 + 精力可用性过滤）、
       `MenuSelection` + 选择 / 循环 / 派发（`Attack` 按真实距离派发近战或火球）、
       `1`~`4` / `Tab` / `G` 输入、HUD 技能行与精力。
-- [x] **编译 + 测试验证**（本次会话完成）：`cargo test` 93 通过 / 0 失败 / 3 具名跳过；
+- [x] **编译 + 测试验证**：`cargo test` **97 通过 / 0 失败 / 0 跳过**；
       `cargo clippy --all-targets` 零警告；`cargo fmt --check` 通过。
 - [ ] **收口**：`AGENTS.md` 的按键 / 消息名 / 测试数校正；`ecs-combat-components.md` 按 A 的新组件集改写。
 
-### 已知失败（已具名跳过，待修）
+### 三个具名跳过的用例：已全部查清并修复（不再 `#[ignore]`）
 
-三个用例已定位到**现象**但还没查清根因，因此用 `#[ignore = "..."]` 具名跳过；
-`cargo test` 会显示 `3 ignored`。
+根因都不是「火球/翻滚本身有 bug」，而是**测试夹具漏了组件**和**测试写得不稳**：
 
-- [ ] `fireball_flies_to_the_locked_cell_and_explodes`：火球抵达目标格后
-      `ProjectileArrived` 似乎没被 `explosion_system` 观察到，敌人血量停在 50。
-      下一步：在 `projectile_arrival_system` 里逐步确认是否真的抵达、消息是否跨帧送达。
-- [ ] `roll_spends_stamina_and_grants_invulnerability`：无敌帧与位移都正确，
-      但 `roll_executor_system` 里的 `try_spend` 没有让精力从 3 变 2。
-      下一步：确认执行器是否运行了两次（第二次因余额不足而静默失败）。
-- [ ] `move_stays_on_the_ground_and_follows_the_camera`：位移是 `(-1, 0, +1)`，
-      不是单格正交位移，但 `Cell` 确实更新到了相邻格。
-      下一步：核对 `move_entities_system` 的吸附路径（怀疑与移动目标中心不一致）。
+- [x] `fireball_flies_to_the_locked_cell_and_explodes` —— **夹具漏了 `Stamina`**。
+      `declare_fireball_system` 的玩家查询把 `&mut Stamina` 写进了元组，
+      少这个组件就整个匹配不到玩家，火球根本没出膛（不是「爆炸没结算」）。
+      排查过程：给 `projectile_arrival_system` 打点后发现每帧都跑但 `shells` 为空 →
+      用直接 `write_message(FireCommand)` 与 `press(Q)` 对照，确认声明环节失败。
+- [x] `roll_spends_stamina_and_grants_invulnerability` —— **观测时机错了**。
+      `roll_executor_system` 的 `try_spend` 一直是对的（3 → 2），
+      但 `recovery_system` 会在后摇结束时回 1 点精力（`ROLL.recovery = 0.30`），
+      而测试在第 6 帧（0.6s）才读，读到的是「扣了又回了」。
+      改为在 `Dodging` 出现的那一帧读扣费、跑完后摇再读回复。
+- [x] `move_stays_on_the_ground_and_follows_the_camera` —— **断言写错了**。
+      `unit_scene` 的起点是地形采样点（格 (1,1) 的**角**），不是格中心，
+      所以「角 → 相邻格中心」本来就是一条斜线；位移 `(-1, 0, +1)` 是正确的。
+      改为断言真正的不变式：终点 = `step_from_axis(相机前方)` 指出的相邻格中心。
 
 > **Phase 1.5 – 2.2 描述的是代码 B**（那一串条目里的 `GridMath` / `Roll` / `Dodging` /
 > `Fireball` / `Parrying` / 中文 HUD 只存在于 `timeless/`）。A 不在这条链上。
@@ -236,7 +241,7 @@ cargo fmt --check
 
 **代码 A（仓库根）**
 
-- [ ] `cargo test` 全绿（49）
+- [ ] `cargo test` 全绿（97，含 0 个 `#[ignore]`）
 - [ ] `cargo clippy --all-targets -- -D warnings` 零警告
 - [ ] `cargo fmt --check` 通过
 
