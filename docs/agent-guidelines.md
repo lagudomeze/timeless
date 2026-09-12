@@ -26,8 +26,16 @@
 
 ## 仓库约定（沿袭 AGENTS.md / TODO.md）
 
-- 领域层 `timeless-domain` 零 Bevy 依赖；应用层不含伤害公式。
+- **描述对象**：本仓库有**两棵代码树**——主线是仓库根 `src/`（package `app`，下称代码 A），
+  `timeless/` workspace 是已冻结的代码 B。任何文档 / 注释提到实现时都要说清是哪一棵
+  （见 [status.md](status.md) 第七节）。
+- 领域层零 Bevy 依赖：代码 A 是 `src/combat/formula/domain.rs`，代码 B 是
+  `timeless-domain` crate；应用层不含伤害公式。
 - 注释中文、标识符英文；`rustfmt` 默认配置；提交用 Conventional Commits（`feat:` / `fix:` / `docs:` 等）。
-- 提交前必须通过：`cargo test --workspace`、`cargo clippy --workspace`（零警告）、`cargo fmt --check`。
+- 提交前必须通过（**代码 A，在仓库根目录**）：
+  `cargo test` 全绿、`cargo clippy --all-targets -- -D warnings` 零警告、`cargo fmt --check` 通过。
+  注意根 `Cargo.toml` **不是** workspace，`--workspace` 在这里没有意义；
+  代码 B 的 `cargo test --workspace` 要在 `timeless/` 下跑（且 B 已冻结，不作为验收门槛）。
 - 本机 crates.io 直连不可用：不用 `cargo add`，依赖手动写入 `Cargo.toml` 并在根目录 `../TODO.md` 版本索引表登记。
 - 素材入库必须附许可证记录（见 [art/assets.md](art/assets.md)）。
+- **不要用 `#[ignore]` 隐藏失败**：要么修好，要么在 `TODO.md` 写明根因与下一步。

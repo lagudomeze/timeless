@@ -41,7 +41,8 @@
 
 ## 测试
 
-- 逻辑测试用 `App::new()` + `MinimalPlugins` + `AppPlugin`，不启动完整渲染。
+- 逻辑测试用 `App::new()` + `MinimalPlugins`（+ 需要的领域 Plugin），不启动完整渲染。
+  代码 A 的整机夹具是 `crate::test_support::headless_app()`；**没有** `AppPlugin` 这个类型。
 
 ## 禁用 / 迁移清单
 

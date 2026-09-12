@@ -1,9 +1,13 @@
 # Project Timeless（暂定）
 
+> **描述对象：代码 B（`timeless/` workspace）。**
+> ⚠️ **B 已冻结**：能力已迁入仓库根目录的代码 A（`src/`），本检出中 B **跑不起来**——
+> `crates/timeless-app/assets/` 目录不存在，`vendor/parley/` 补丁也不存在。
+> 当前主线与进度见根目录 [../TODO.md](../TODO.md) 与 [../docs/status.md](../docs/status.md)。
+> 下面描述的 We-Go 同步时间线与时间线特权是 **B 早期的设计意图**，
+> 与 B 的实际代码（无回合）以及 A 的现状都不一致，仅作留档。
+
 Roguelike 策略游戏：结合《黑神话》的「见招拆招」与《ToME4》的硬核策略。
-战斗采用**同步时间线（We-Go）**：所有单位同时规划行动，时间连续推进；
-玩家拥有**时间线特权**——攻击前摇窗口内检测到威胁时，可消耗精力执行
-**翻滚取消（Roll Cancel）**中断攻击并闪避。
 
 ## 架构
 
@@ -23,8 +27,8 @@ timeless/                     # cargo workspace
 
 ```bash
 cd timeless
-cargo test --workspace   # 领域层 11 个测试
-cargo run -p timeless-app
+cargo test --workspace   # 领域层 7 + 应用层 2 = 9 个测试（B 冻结前的口径）
+cargo run -p timeless-app   # ⚠️ 会因缺资产报错，见顶部说明
 ```
 
 > 本机 crates.io 直连不可用，依赖经清华镜像解析（见根目录 `../TODO.md`「环境注意事项」）。

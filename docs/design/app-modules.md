@@ -1,8 +1,13 @@
 # 根目录 app 原型的领域化模块设计
 
-> 依据 `req0.MD` 的「数据域 / 表现域分离 + 每域一个 Plugin + 按职责分文件」范式，
-> 对根目录 `app` 原型（Bevy 0.19）做的一次结构重构。配套阅读：
-> [架构原则与分层](architecture.md) · [Bevy 0.19 速查](../bevy/bevy-019.md)。
+> **范围**：仓库根目录 `src/`（package `app`，Bevy 0.19）——**代码 A，当前主线**。
+> 本文与代码同步维护。
+>
+> 配套阅读：[无回合时间线](timeline-turnless.md)（权威设计） ·
+> [ECS 战斗组件](ecs-combat-components.md) · [Bevy 0.19 速查](../bevy/bevy-019.md)。
+>
+> 本文替代 2026-09 之前的同名文档：那一版写的是已删除的 We-Go 版本
+> （`Phase` / `RoundEnded` / `Position`+`GridMath` / `Can*` 能力标记）。
 
 ## 一、领域一览
 
@@ -10,108 +15,122 @@
 （`components` / `events` / `systems` / `resources`），`mod.rs` 只做门面
 （`pub mod` + `pub use`），跨领域只经 Bevy `Message` 或公共组件类型通信。
 
-| 领域 | 职责 | 插件 | 系统集 | 消息（谁写 → 谁消费） |
-| :--- | :--- | :--- | :--- | :--- |
-| `world` | 体素地图**数据**：区块、地形生成、体素读写（零渲染依赖） | `WorldPlugin` | `WorldSet` | `ChunkLoadEvent` / `ChunkUnloadEvent` / `ChunkDirtyEvent`（本域写 → `voxel_render` 消费） |
-| `voxel_render` | 体素**表现**：异步网格化、材质、明暗 | `VoxelRenderPlugin` | `VoxelRenderSet` | 只消费上述三条区块消息 |
-| `movement` | 速度与位移（位置直接用 Bevy `Transform`） | `MovementPlugin` | `MovementSet` | `MoveCommand`（`input` 写 → 本域消费） |
-| `combat` | 生命 / 伤害 / 目标获取 / 攻击实体生命周期 / 技能生成 | `CombatPlugin` | `CombatSet` | `FireCommand`、`MeleeCommand`、`DamageEvent`、`ModifyHealthEvent`、`DeathEvent` |
-| `timeline` | **We-Go 时间线**：规划阶段冻结虚拟时间等玩家提交，推进阶段按 `execute_at` 结算 | `TimelinePlugin` | `TimelineSet` | `ActionsCommitted`（`input` 写 → 本域消费）、`RoundEnded`（本域写 → movement / ai 消费） |
-| `ai` | 敌人决策（规划阶段声明行动，不碰规则） | `AiPlugin` | `AiSet` | 无（读组件 + 生成自己的行动实体） |
-| `input` | 玩家输入源：键盘 → 消息（只翻译） | `InputPlugin` | `InputSet` | `MoveCommand` / `FireCommand` / `MeleeCommand` / `ActionsCommitted` 的生产者 |
-| `presentation` | 表现：相机（中键拖拽平移）/ 装饰 / 战斗日志 / HUD（将来还有动画 / 特效） | `PresentationPlugin` | `PreloadSet`（Startup）、`PresentationSet`（Update） | 消费 `DamageEvent` / `DeathEvent` 写日志；消费 `PanCamera` 平移相机 |
-| `spawn` | **组装车间**：把各域零件拼成角色实体；含开局组装与「重建」功能 | `SpawnPlugin` | `AssemblySet`（Startup）、`SpawnSet`（Update） | `ResetBattle`（本域内闭环：功能自带触发键与消费系统） |
+| 领域 | 职责 | 插件 | 系统集 |
+| :--- | :--- | :--- | :--- |
+| `world` | 体素地图**数据**：区块、地形生成、体素读写（零渲染依赖） | `WorldPlugin` | `WorldSet` |
+| `voxel_render` | 体素**表现**：异步网格化、材质、明暗 | `VoxelRenderPlugin` | `VoxelRenderSet` |
+| `movement` | 格子决策 + 速度位移 + 移动/跳跃/翻滚行动 + 投射物飞行 | `MovementPlugin` | `MovementSet` |
+| `combat` | 生命 / 伤害 / 目标获取 / 攻击生命周期 / 技能 / 精力 / 防御 / 两阶段结算 | `CombatPlugin` | `CombatSet` |
+| `timeline` | **无回合**调度：谁能决策（`Ready`）、行动何时到点、后摇何时结束 | `TimelinePlugin` | `TimelineSet` |
+| `ai` | 敌人决策（选意图 + 声明行动，不碰规则） | `AiPlugin` | `AiSet` |
+| `input` | 玩家输入源：键盘 / 鼠标 → 消息（**只翻译**） | `InputPlugin` | `InputSet` |
+| `presentation` | 表现：相机 / 装饰 / 战斗日志 / HUD（只读） | `PresentationPlugin` | `PreloadSet`(Startup)、`PresentationSet`(Update) |
+| `spawn` | **组装车间**：把各域零件拼成角色实体；含开局组装与「重建」 | `SpawnPlugin` | `AssemblySet`(Startup)、`SpawnSet`(Update) |
 
-执行顺序只在 `GamePlugin` 里声明一次（`configure_pipeline`，测试也复用同一入口），
-领域内部顺序由各自插件维护：
+消息全部「谁写 → 谁消费」成对，清单见
+[ECS 战斗组件 · 第五节](ecs-combat-components.md#五消息清单谁写--谁消费)。
+
+执行顺序只在 `lib.rs::configure_pipeline` 里声明一次（测试复用同一入口，
+因此测试跑的就是真实流水线）：
 
 ```text
 Startup:  PreloadSet ─▶ AssemblySet
 Update:   SpawnSet ─▶ InputSet ─▶ TimelineSet ─▶ AiSet ─▶ MovementSet ─▶ CombatSet
           ─▶ VoxelRenderSet ─▶ PresentationSet
-WorldSet ────────────────────────▶（必须早于 VoxelRenderSet）
+WorldSet ────────────────────────▶（必须早于 VoxelRenderSet：数据先于表现）
 ```
 
-## 二、We-Go 回合循环（暂停等待用户输入）
+## 二、无回合循环（唯一的暂停点是「等玩家决定」）
+
+**没有回合、没有阶段、没有全局状态机。** 节奏由两件事决定：
+
+1. **`Ready`**：单位「现在可以决策」。这是无回合模型里**唯一的「轮到谁」判据**。
+2. **`ActionTiming { windup, recovery }`**：每个动作自带的前摇 + 后摇。
 
 ```text
-              Enter（玩家提交）
-Planning ─────────────────▶ Resolving ──（1s 窗口走完，广播 RoundEnded）──▶ Planning
-虚拟时间：暂停              流动                                            暂停
+       玩家 Ready ⟹ 冻结 Time<Virtual>（世界真的停下来等）
+输入 ─▶ 声明动作（移除 Ready）⟹ 虚拟时间恢复流动
+       ─▶ 前摇到点 → 执行器落地 → 后摇（BusyRecovery）
+       ─▶ 后摇结束 ⟹ 恢复 Ready（+1 精力）⟹ 又轮到它
 ```
 
-- **Planning**：`Time<Virtual>` 冻结，游戏真的停下来等玩家。玩家用 `WASD`
-  声明移动、`Space` 声明射击、`E` 声明近战，`Enter` 提交；敌人也在同一阶段
-  声明自己的行动（[`crate::ai::enemy_declare_system`]）。
-- **Resolving**：提交把本轮所有 `Declared` 草案一并变成 `Pending`，并按
-  「提交时刻 + 前摇」定下 `execute_at`；到点后调度器标记 `Committed`，
-  载荷领域的执行器落地（移动设速度、技能生成攻击实体）。
-- **窗口结束**：没执行完的行动作废，`RoundEnded` 让单位停下、AI 走一格冷却，
-  虚拟时间重新冻结。
+敌人不等玩家：它一有 `Ready` 就自己决策（`ai::decide_intent_system` →
+`enemy_declare_system` 写与玩家**同一条**消息）。玩家与 AI 因此共用同一套
+声明 → 调度 → 执行链，防御与技能都只有一份实现。
 
-行动的三个状态标记（`Declared` / `Pending` / `Committed`）与调度数据
-`ScheduledAction` 全在 `timeline/components.rs`；**调度器不感知载荷**——
-`MoveAction` 在 [`crate::movement::actions`]，`ShootAction` / `MeleeAction` 在
-[`crate::combat::skills::actions`]，新增动作（冲刺、翻滚、火球…）只加载荷与执行器。
+冻结的判据（`timeline_gate_system`，整个游戏唯一写 `Time<Virtual>` 暂停的地方）：
 
-暂停只用 `Time<Virtual>` 实现：Bevy 每帧把虚拟时间拷进通用 `Time`，因此位移、
-计时器、攻击存活期全部自动停表，没有任何 `if paused` 分支（AGENTS.md：暂停用
-`Time<Virtual>`，不要手写阶段门控）。
+```text
+冻结 ⟺ 场上存在玩家 且 玩家 Ready 且 没有单位在空中
+```
 
-按键：`WASD`/方向键 移动 · `Q` 射击 · `E` 近战 · `Space` 跳跃 · `Enter` 提交 ·
-`R` 重置 · 按住鼠标中键拖拽平移相机。移动方向按屏幕算（W = 远离相机），
-由 `input` 的 `GroundBasis` 按相机朝向换算到世界 XZ 平面。
+- **为什么「空中不冻结」**：跳跃是不可中断的弹道。若玩家落地前恢复 `Ready`
+  就停表，单位会僵在半空。
+- **为什么各领域没有 `if paused`**：Bevy 每帧把虚拟时间拷进通用 `Time`，
+  所以位移、投射物、`Lifetime`、后摇计时**自动**停表（AGENTS.md：
+  暂停用 `Time<Virtual>`，不要手写阶段门控）。
+- **`require_commit`**（`F1` 切换，默认关闭）：`true` 时输入只产生 `Declared`
+  草案，按 `Enter` 才升为 `Pending`——「先看后确认」的手感。
 
-跳跃（`Space`）也是移动领域的行动载荷（`JumpAction` + `Jumping` 弹道）：到点后给
-行动者一个向上的初速度，落回起跳高度即结束；虚拟时间冻结时弹道一起冻住。
-玩家的区块加载半径是 3×3 个区块（96×96 格）——相机是固定机位，只加载脚下那一块
-会在走动时把地面「抽走」。
+按键：`WASD`/方向键 移动 · `Q` 火球 · `E` 近战 · `Space` 跳跃 · `F` 翻滚 ·
+`V` 招架 · `1`~`4` 直选技能 · `Tab`/`Shift+Tab` 循环 · `G` 释放选中技能 ·
+`Enter` 提交 · `F1` 切换提交模式 · `R` 重置 · 按住鼠标中键拖拽平移相机。
 
-HUD（`presentation/hud.rs`）显示：阶段与剩余窗口时间、轮次、双方血量 / 坐标 /
-本轮声明 / 距离 / 敌人冷却、按键提示与战斗日志尾部。HUD 文本一律 ASCII——
-Bevy 默认字体不含 CJK，中文界面需要自带字体资产（见 TODO 的表现层待办）。
-相机平移同样遵守「输入只翻译」：`input/pointer.rs` 把中键拖拽翻译成 `PanCamera`
-消息，`presentation/camera.rs` 的 `CameraRig` 消费它（注视点限制在场地范围内）。
+移动方向按**屏幕**算（W = 远离相机），由 `input` 的 `GroundBasis` 按相机朝向
+换算到世界 XZ 平面，再经 `movement::step_from_axis` **吸附成一格的正交步**。
+**决策按格、结算按真实距离**的分工见
+[ECS 战斗组件 · 第二节](ecs-combat-components.md#二坐标两套坐标各管一段)。
+
+跳跃（`Space`）也是移动领域的行动载荷（`JumpAction` + `Jumping` 弹道）：
+到点后给行动者一个向上初速度，落回起跳高度即结束；虚拟时间冻结时弹道一起冻住。
+
+HUD（`presentation/hud.rs`）显示：是否等你决策 / 精力 / 技能行 / 双方血量与坐标 /
+敌人意图 / 按键提示 / 战斗日志尾部。**HUD 文本一律 ASCII**——Bevy 默认字体不含
+CJK，中文界面需要自带字体资产。相机平移同样遵守「输入只翻译」：
+`input/pointer.rs` 把中键拖拽翻译成 `PanCamera` 消息，
+`presentation/camera.rs` 的 `CameraRig` 消费它（注视点限制在场地范围内）。
 
 ## 三、角色实体 = 组件的组合体（最重要的约定）
 
-**没有任何模块叫「玩家」或「怪物」。** 一个敌人实体只是多个领域提供的组件
+**没有任何模块叫「玩家」或「怪物」。** 一个实体只是多个领域提供的组件
 在同一实体上的组合：
 
 | 组件 | 提供方 |
 | :--- | :--- |
 | `Health` | `combat::health` |
-| `PhysicalDamage` / `Armor` / `HitRadius` | `combat::attributes` |
-| `Faction` / `Collidable` | `combat`（目标过滤的公共词汇） |
-| `Velocity` / `MoveSpeed` | `movement` |
-| `EnemyBrain` / `AttackCooldown` | `ai` |
+| `Faction` / `Collidable` / `HitRadius` / `AttackRange` | `combat`（目标过滤与武器属性的公共词汇） |
+| `PhysicalDamage` / `Armor` / `AttackFrame` / `Impact` | `combat::attributes` |
+| `Stamina` | `combat::defense` |
+| `Cell` / `Velocity` / `MoveSpeed` | `movement` |
+| `Ready` | `timeline` |
+| `EnemyBrain` / `Intent` | `ai` |
 | `ChunkLoader`（仅玩家） | `world` |
 | 模型（`WorldAssetRoot`）/ 相机 / 装饰 / 日志 | `presentation` |
 
-玩家和敌人的差别只有两点：**驱动源**（`input` 写 `MoveCommand` vs `ai` 直接写
-`Velocity`）与**特质零件**（区块加载器 / 攻击冷却）；两者共用同一套 `movement` /
-`combat` 系统。
+玩家和敌人的差别只有两点：**驱动源**（`input` 写消息 vs `ai` 自己选意图）
+与**特质零件**（区块加载器）；两者共用同一套 `movement` / `combat` / `timeline` 系统。
 
 组装代码集中在一个 **`spawn` 组装车间**（`unit.rs` / `player.rs` / `enemy.rs`），
 它依赖所有领域，但**没有任何领域依赖它**：
 
 ```text
-spawn ──▶ combat / movement / ai / world / presentation
-input ──▶ movement / combat / timeline（只写它们的消息）
-ai    ──▶ movement / combat（只声明行动实体）
+spawn ──▶ combat / movement / timeline / ai / world / presentation
+input ──▶ movement / combat / timeline / presentation（只写它们的消息）
+ai    ──▶ movement / combat / defense（只声明行动实体）
 ```
 
 所以「加一种怪物」「换一套角色零件」永远不会波及战斗、移动、渲染的规则。
 
 > Bevy 0.19 没有 `Bundle`，组装用 BSN 场景工厂表达（`bsn!` + `spawn_scene`）：
 > `spawn/unit.rs` 给出共用零件，`player.rs` / `enemy.rs` 追加各自零件。
-> 位置一律用 Bevy 的 `Transform`，不另造 `Position` 组件（避免两份坐标真相）。
+> 位置一律用 Bevy 的 `Transform`，不另造 `Position` 组件（避免两份坐标真相）；
+> 决策层坐标是独立的 `Cell`，由 `move_entities_system` 在**停下**时维护。
 
 ## 四、功能不是领域（`restart` 的落点）
 
 「战斗重置」没有自己的数据模型，它只是**一段功能胶水**：清掉单位与攻击实体，
 再用同一套工厂组装一次。因此它既不属于 ECS 数据域、也不属于表现域，而是作为
-功能留在组装车间里（`spawn/restart.rs`：消息 `ResetBattle` + R 键翻译 +
+功能留在组装车间里（`spawn/restart.rs`：消息 `ResetBattle` + `R` 键翻译 +
 消费系统同文件）。
 
 判断标准（新增同类功能时照此办理）：
@@ -121,10 +140,10 @@ ai    ──▶ movement / combat（只声明行动实体）
 
 ## 五、目录结构
 
-```
+```text
 src/
 ├── main.rs                     # 只加引擎插件 + GamePlugin
-├── lib.rs                      # GamePlugin / configure_pipeline
+├── lib.rs                      # GamePlugin / configure_pipeline / 整机集成测试
 ├── world/                      # 体素地图数据（纯数据，零渲染依赖）
 │   ├── plugin.rs               #   WorldPlugin
 │   ├── voxel/{components,types}.rs
@@ -136,30 +155,37 @@ src/
 │   ├── meshing/{components,resources,systems,utils}.rs
 │   ├── materials/{assets,resources}.rs
 │   └── lighting/systems.rs
-├── movement/{components,events,systems,plugin}.rs
-│   └── actions.rs              #   MoveAction 载荷 + 工厂 + 声明 / 执行器
+├── movement/
+│   ├── cell.rs                 #   Cell / MoveGoal（决策层坐标）
+│   ├── components.rs           #   Velocity / MoveSpeed
+│   ├── events.rs               #   MoveCommand / JumpCommand
+│   ├── actions.rs              #   MoveAction / JumpAction / RollAction + 工厂 + 声明/执行器
+│   ├── systems.rs              #   move_entities_system + DodgingOnArrival
+│   └── plugin.rs
 ├── combat/
-│   ├── plugin.rs               #   CombatPlugin（战斗流水线）
 │   ├── components.rs           #   Faction / Collidable
-│   ├── attributes/components.rs#   PhysicalDamage / Armor / HitRadius
+│   ├── attributes/components.rs#   PhysicalDamage / Armor / HitRadius / AttackRange / AttackFrame / Impact
 │   ├── health/{components,events,systems}.rs
-│   ├── formula/{types,events,systems}.rs
 │   ├── targeting/{components,detection,melee}.rs
 │   ├── lifecycle/{components,systems}.rs
-│   └── skills/{events,arrow,melee}.rs + skills/actions.rs
-│                               #   ShootAction / MeleeAction 载荷 + 工厂 + 声明 / 执行器
-├── timeline/                   # We-Go 时间线（规划 / 推进）
-│   ├── resources.rs            #   Timeline / Phase / 窗口时长
-│   ├── components.rs           #   ScheduledAction + Declared / Pending / Committed
-│   ├── events.rs               #   ActionsCommitted（提交）、RoundEnded（收尾）
-│   └── systems.rs              #   暂停门控 / 提交 / 调度 / 窗口收尾
+│   ├── formula/                #   domain(零 Bevy 裁决) / events / resolution(两阶段 + Arbitration)
+│   ├── defense/                #   stamina / components / actions / systems / events
+│   ├── skills/                 #   registry / menu / melee / arrow / fireball / explosion / actions / events
+│   └── plugin.rs               #   CombatPlugin（战斗流水线）
+├── timeline/
+│   ├── timing.rs               #   ActionTiming + 常量表 + CELL_SIZE
+│   ├── components.rs           #   ScheduledAction + Declared / Pending / Committed / Ready / BusyRecovery
+│   ├── resources.rs            #   Timeline / TimelineConfig
+│   ├── events.rs               #   ActionsCommitted
+│   ├── systems.rs              #   门控 / 提交桥 / 调度 / 后摇 + begin_action / end_action
+│   └── plugin.rs
 ├── ai/{components,systems,plugin}.rs
-├── input/{keyboard,plugin}.rs   # 键盘 → 消息（只翻译）
-├── presentation/{components,camera,decoration,log,preload,plugin}.rs
+├── input/{keyboard,pointer,plugin}.rs   # 键盘 / 鼠标 → 消息（只翻译）
+├── presentation/{components,camera,decoration,hud,log,preload,plugin}.rs
 └── spawn/                       # 组装车间
     ├── unit.rs                  #   玩家 / 敌人共用的单位零件
     ├── player.rs                #   单位零件 + 输入驱动 + ChunkLoader
-    ├── enemy.rs                 #   单位零件 + AI 驱动 + 攻击冷却
+    ├── enemy.rs                 #   单位零件 + AI 驱动
     ├── assembly.rs              #   开局组装（灯光 / 相机 / 单位 / 装饰）
     ├── restart.rs               #   功能：战斗重置（消息 + 触发键 + 系统）
     └── plugin.rs                #   SpawnPlugin
@@ -170,9 +196,9 @@ src/
 ### 1. 数据与表现分离（`world` / `voxel_render`）
 
 - `world` 只回答「数据是什么」：区块（`Chunk` 持有 `Box<[VoxelType; 32³]>`）、
-  地形生成（噪声纯函数）、体素读写 API。**不引用任何渲染类型**，因此可以脱离渲染
-  环境单测（`world/plugin.rs` 的测试就是这条约束的可执行证明：`MinimalPlugins` +
-  `WorldPlugin` 直接跑通「加载 → 生成 → 卸载」）。
+  地形生成（噪声纯函数）、体素读写 API。**不引用任何渲染类型**，因此可以脱离
+  渲染环境单测（`world/plugin.rs` 的测试就是这条约束的可执行证明：
+  `MinimalPlugins` + `WorldPlugin` 直接跑通「加载 → 生成 → 卸载」）。
 - `voxel_render` 只回答「怎么画」：脏区块 → 面剔除网格 → 按方块类型分组的网格实体。
   它**只读**世界数据，从不回写规则。
 - 两个领域之间只有三条 Message（`ChunkLoad` / `ChunkUnload` / `ChunkDirty`），
@@ -184,6 +210,7 @@ src/
 汇总所有加载器覆盖的区块（切比雪夫范围，多加载器取并集），加载缺失区块并发
 `ChunkLoadEvent`，卸载离开范围的区块并发 `ChunkUnloadEvent`；地形由
 `generate_terrain_system` 在收到加载消息后填充，并标记 `ChunkDirtyEvent`。
+玩家半径是 3×3 个区块——相机是固定机位，只加载脚下那一块会在走动时把地面「抽走」。
 
 已修改区块可挂 `ChunkPinned` 免于自动卸载（供后续「玩家建造 / 战斗破坏地形」使用）。
 
@@ -200,27 +227,34 @@ v0.1 只做**面剔除**（`MeshingConfig::cull_hidden_faces`，被实心邻居�
 
 ### 4. 输入只翻译、不执行
 
-`input/` 是唯一的输入翻译层：键盘只把按键翻译成消息（`MoveCommand` /
-`FireCommand` / `MeleeCommand`），由对应领域的单一职责系统消费落地；消息定义与
-消费系统同属一个领域目录，注册在各领域插件的 `build` 里（`add_message::<T>()`），
-生产者只引用消息类型、不引用消费系统。功能自带的触发键（R 重置）跟着功能走，
+`input/` 是唯一的输入翻译层：键盘只把按键翻译成消息，鼠标只把拖拽翻译成
+`PanCamera`，由对应领域的单一职责系统消费落地。消息定义与消费系统同属一个领域
+目录，注册在各消费方领域插件的 `build` 里（`add_message::<T>()`），
+生产者只引用消息类型、不引用消费系统。
+
+**技能菜单也遵守这条**：`SelectSkill` / `CycleSkill` 只改 `MenuSelection`
+（一个资源），`UseSelectedSkill` 由派发系统按当前选择再写
+`MeleeCommand` / `FireCommand` / `RollCommand`——菜单**不生成行动实体、不扣精力**，
+扣费只在各领域的声明系统里发生。功能自带的触发键（`R` 重置）跟着功能走，
 见 `spawn/restart.rs`。
 
 ### 5. 战斗流水线（`CombatSet` 内部链）
 
 ```text
-skills（规划阶段：消费技能指令 → 声明技能行动）
-  ─▶ skills 执行器（到点：从行动者位置生成箭矢 / 横扫，销毁行动实体）
+防御标记过期（本帧到期的无敌帧不该再生效）
+  ─▶ 技能菜单（选择 / 循环 / 按选择派发）
+  ─▶ 声明（火球 / 近战 / 翻滚 / 招架：检查 Ready 与精力，生成行动实体）
+  ─▶ 执行器（到点：设速度、挂防御标记、生成攻击实体，收尾走 end_action）
+  ─▶ 投射物到达 + 爆炸（本帧到达本帧结算，按真实距离取半径内敌对单位）
   ─▶ targeting（挂 CollisionTarget：射弹碰撞 / 近战扇形）
-  ─▶ formula（算伤害 → DamageEvent）
-  ─▶ lifecycle（命中计数、结束时归零速度）
+  ─▶ 两阶段结算（阶段 1 只读裁决 → 阶段 2 统一落地，经 Arbitration 资源交接）
   ─▶ health（DamageEvent → ModifyHealthEvent → 扣血 → DeathEvent → 销毁实体）
   ─▶ lifecycle（清理结束的射弹、到期销毁一次性攻击）
 ```
 
 同一套骨架也是移动领域的写法：
-`declare_move_system`（规划阶段声明）→ `move_action_executor_system`（到点设速度）
-→ `move_entities_system`（按速度位移）→ `stop_on_round_end_system`（本轮结束停下）。
+`declare_move_system`（声明）→ `move_action_executor_system`（到点设速度 + 挂
+`MoveGoal`）→ `move_entities_system`（位移 + 到格中心吸附 + 写 `Cell`）。
 
 「打到了谁」（targeting）与「打多少血」（formula）靠临时标记 `CollisionTarget`
 解耦；生命值只认自己的 `ModifyHealthEvent` 入口，治疗 / 中毒 / 再生都能复用同一条路。
@@ -234,27 +268,29 @@ skills（规划阶段：消费技能指令 → 声明技能行动）
 | `combat/damage/*` | `combat/formula/*` |
 | `combat/components.rs`（混合） | `combat/components.rs` + `attributes/` + `targeting/` + `lifecycle/` |
 | `attacks/*`（箭矢 / 近战 / 输入） | `combat/skills/*`（输入另见下行） |
-| `control/*`、`movement/input.rs`、`combat/skills/input.rs` | `input/keyboard.rs` + `movement/events.rs` |
+| `control/*`、`movement/input.rs` | `input/keyboard.rs` + `movement/events.rs` |
 | `combat/movement.rs`（速度位移） | `movement/systems.rs::move_entities_system` |
 | `despawn/*` | `combat/health/systems.rs::despawn_dead_system`（消息与消费同域） |
 | `battlelog/*` | `presentation/log.rs` |
 | `camera.rs` / `decoration.rs` | `presentation/{camera,decoration}.rs` |
 | `character.rs` / `scene/unit.rs`（角色工厂） | `spawn/{unit,player,enemy}.rs`（组装车间） |
 | `restart/*`（曾是一个领域） | `spawn/restart.rs`（功能，不是领域） |
-| —（新增） | `timeline/`：规划 / 推进两阶段 + 行动实体调度（We-Go 的「暂停等输入」） |
-| `movement` / `combat` 里即时生效的系统 | 改为「声明行动 → 到点执行」：`movement/actions.rs`、`combat/skills/actions.rs` |
+| `timeline/`：规划 + 推进两阶段（We-Go） | `timeline/`：**无回合**调度（`Ready` + 每动作前后摇） |
+| `movement` / `combat` 里即时生效的系统 | 「声明行动 → 到点执行」：`movement/actions.rs`、`combat/skills/` |
 | `lib.rs` 的 `preload` / `setup` / `add_combat` | `presentation/preload.rs`、`spawn/assembly.rs` 与各领域 `plugin.rs` |
 | `map.rs`（地面 / 网格平面） | 由 `world` + `voxel_render` 的体素地形取代 |
 
 ## 八、后续项（按优先级）
 
 1. **单位贴地与体素碰撞**：`movement` 查询 `world` 的体素判断目标格是否可走
-   （当前单位只在生成时贴地，不跟随地形爬坡）。
-2. **反应窗口**：推进阶段的前摇窗口内允许翻滚取消 / 招架（timeline 已按
-   `execute_at` 调度，插入反应只需再加一条载荷与执行器）。
-3. **贪婪网格化**：把同材质共面合并成矩形，替代逐面四边形。
-4. **纹理图集**：`materials/assets.rs` 换成图集 + UV，网格化代码不动。
-5. **AO**：`lighting/systems.rs` 目前只做面朝向明暗，可替换为按顶点的邻域遮挡。
-6. **区块持久化与钉住**：`ChunkPinned` + 存档，只保存被修改过的区块。
-7. **方块交互**：放置 / 破坏走 `world::storage::set_voxel`，自动触发重建网格。
-8. **表现层补零件**：血条 / 动画 / 特效（新零件进 `presentation`，组装语句进 `spawn`）。
+   （当前单位只在生成时贴地，不跟随地形爬坡；起点因此在格角上）。
+2. **动作数值外置**：`timeline::timing` 与 `SKILLS` 的数值改成 `.ron`
+   （见 [timeline-turnless](timeline-turnless.md) 6.6）。
+3. **箭矢接回输入**：`ShootAction` / `arrow_scene` 已实现但未注册
+   （避免与火球抢同一条 `FireCommand`），计划作为「单体狙击」技能。
+4. **贪婪网格化**：把同材质共面合并成矩形，替代逐面四边形。
+5. **纹理图集**：`materials/assets.rs` 换成图集 + UV，网格化代码不动。
+6. **AO**：`lighting/systems.rs` 目前只做面朝向明暗，可替换为按顶点的邻域遮挡。
+7. **区块持久化与钉住**：`ChunkPinned` + 存档，只保存被修改过的区块。
+8. **方块交互**：放置 / 破坏走 `world::storage::set_voxel`，自动触发重建网格。
+9. **表现层补零件**：血条 / 动画 / 特效（新零件进 `presentation`，组装语句进 `spawn`）。

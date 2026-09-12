@@ -16,7 +16,7 @@ pub struct ModifyHealthEvent {
 ///
 /// 写：[`apply_damage`](super::systems::apply_damage)；
 /// 消费：[`despawn_dead_system`](super::systems::despawn_dead_system)（销毁实体）、
-/// 战斗日志（[`crate::scene::BattleLog`]）。
+/// 战斗日志（[`crate::presentation::BattleLog`]）。
 #[derive(Message, Debug, Clone, Copy)]
 pub struct DeathEvent {
     pub entity: Entity,

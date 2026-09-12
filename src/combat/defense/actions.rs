@@ -125,7 +125,7 @@ pub fn roll_executor_system(
 /// 声明招架：`ParryCommand` → 挡下当前正在前摇的那次攻击。
 ///
 /// 找不到威胁（敌人没有待执行的攻击）就不消耗精力、不占用这次决策——
-/// 招架是反应，不该因为「空气招架」而白白失去一回合。
+/// 招架是反应，不该因为「空气招架」而白白失去一次行动机会。
 pub fn declare_parry_system(
     mut commands: Commands,
     now: Res<Time<Virtual>>,

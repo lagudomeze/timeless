@@ -317,7 +317,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyQ);
-        app.update(); // 声明射击 → 进入待执行
+        app.update(); // 声明火球 → 进入待执行
         app.update(); // 刷新文本
 
         let text = text_of(&mut app);

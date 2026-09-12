@@ -9,7 +9,8 @@
 //! phase2_apply_system      落地：DamageEvent / 反制 / 命中计数 / 清标记
 //! ```
 //!
-//! 隔离缓冲用 `Local<Vec<CombatResult>>` 而不是消息：裁决与落地是**同帧强顺序**的一对，
+//! 隔离缓冲用 [`Arbitration`]（`Resource`）而不是 `Local` 或消息：
+//! `Local<T>` 是**每系统独享**的，两个阶段各自初始化会拿到两份缓冲、谁也读不到谁；
 //! 而 `Event` + `Observer` 按项目约定只用于「即时、定向实体」的响应，这里不合适。
 
 use bevy::prelude::*;

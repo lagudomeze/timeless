@@ -1,9 +1,17 @@
-# 旧项目 → `crates/app` 增量迁移路线图
+# 旧项目 → 根目录 `app` 增量迁移路线图
 
-> ⚠️ 2026-09-10 更新：`crates/app` 已移到**仓库根目录**（package `app`，`src/`），并按
-> `req0.MD` 的领域化模块范式重构（`world` / `voxel_render` / `movement` / `combat` /
-> `ai` / `restart` / `scene`）。本文下面的路径与列表现已过期，**当前结构以
-> [app-modules.md](app-modules.md) 为准**；本文保留作迁移过程记录。
+> **描述对象：代码 A 的前身（历史留档）。**
+> 本文记录的是**迁移过程**，路径与列表现已过期（提到 `crates/app`、
+> `restart` / `scene` 领域等已不存在的落点）。
+>
+> ⚠️ 2026-09-10 更新：`crates/app` 已移到**仓库根目录**（package `app`，`src/`），
+> 并按 `req0.MD` 的领域化模块范式重构（`world` / `voxel_render` / `movement` /
+> `combat` / `timeline` / `ai` / `input` / `presentation` / `spawn`）。
+> **当前结构以 [app-modules.md](app-modules.md) 为准，当前进度以
+> [../status.md](../status.md) 为准。**
+>
+> 2026-09-12 后续：时间线从 We-Go 阶段机改为**无回合**模型，B 的能力
+> （翻滚 / 招架 / 火球 / 精力 / 技能菜单 / 两阶段结算 + 三层裁决）已全部迁入。
 
 > 目标：把旧 `timeless-app` + `timeless-domain` 的内容一点点迁移进新
 > `crates/app`（Bevy 0.19 + BSN 场景体系），迁移过程中每个里程碑保持
@@ -27,9 +35,13 @@
    组件多用 `#[derive(Component, Default, Clone)]`（供 `bsn!`），含 `Entity`
    字段的派生 `FromTemplate`，实体骨架用场景函数 + `bsn!` 表达。
 3. **不设「属性包」**：伤害 / 射程 / 破势 / 帧速是四种独立机制，各自拥有
-   独立组件（`Damage` / `AttackRange` / `Impact` / `AttackFrame`）与专属系统，
-   纯逻辑层也只提供按机制划分的纯函数——不再出现 `AttackStats` 这类聚合结构，
-   也不用 OO 的「对象职责」思想，而是 ECS 的「数据组件 + 系统按需查询」。
+   独立组件（`PhysicalDamage` / `AttackRange` / `Impact` / `AttackFrame`）与专属系统，
+   纯逻辑层也只提供按机制划分的纯函数，也不用 OO 的「对象职责」思想，
+   而是 ECS 的「数据组件 + 系统按需查询」。
+   > **更正**：`AttackStats` 并没有被删掉——它现在是 `combat/formula/domain.rs` 里
+   > **零 Bevy 依赖的纯函数入参结构**（`{ frame, range, impact, damage }`），
+   > 由 `resolution.rs` 从各组件装配后传进 `resolve_combat` / `resolve_attack`。
+   > 「聚合结构」被禁的是**作为 ECS 组件**存在，不是作为领域层的数据载体。
 4. **表现层不照搬**：纸片单位 / 悬停读数 / egui 面板等旧 hack 是否保留另行
    拍板；新场景、模型加载走 glTF `WorldAssetRoot`（见 `bevy/bsn` 参考）。
 

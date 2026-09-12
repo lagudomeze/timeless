@@ -1,8 +1,16 @@
-# crates/app 未迁移内容盘点与按新范式重设计
+# 未迁移内容盘点与按新范式重设计
 
+> **描述对象：设计稿 + 历史盘点。**
+> 本文盘点的是「B 里还有什么没进 A」，其中的**设计方案**（动作图、架势槽、弹药分线、
+> `PendingHit`）至今**未落地**；「新 app 状态」列停留在重构前。
+>
 > ⚠️ 2026-09-10 更新：`crates/app` 已移到仓库根目录（package `app`，`src/`）并完成领域化
-> 重构，**当前结构见 [app-modules.md](app-modules.md)**；本文的「新 app 状态」列停留在
-> 重构前，保留作盘点记录。
+> 重构，**当前结构见 [app-modules.md](app-modules.md)**，**当前进度与 backlog 见
+> [../status.md](../status.md)**。
+>
+> 2026-09-12 补充：B 的核心能力（翻滚 i 帧 / 招架反制 / 火球 / 精力 / 技能菜单 /
+> 两阶段结算 + 三层裁决）**已经迁入 A**；仍未迁移的只剩 `bevy_egui` 调试面板、
+> 中文 HUD（缺字体资产）与资源分线（`AmmoPouch` / `Cooldowns` / `Poise`）。
 
 > 目标：列出旧 `timeless-app` / `timeless-domain` 尚未进入 `crates/app` 的内容，
 > 并按 app 的既定范式（Bevy 0.19 + BSN 场景、小组件 + 专属系统、`Message`
@@ -12,7 +20,7 @@
 
 | 旧模块 / 能力 | 旧载体 | 新 app 状态 | 处理 |
 | :--- | :--- | :--- | :--- |
-| 纯裁决逻辑 | `timeless-domain::combat` | 已随远端起删除 | 网格仲裁方向废弃，由新流水线取代 |
+| 纯裁决逻辑 | `timeless-domain::combat` | **未删除**：B 冻结后仍在 `timeless/crates/timeless-domain/src/combat.rs`；能力已以 `combat/formula/domain.rs` 的形式迁入 A | 网格仲裁方向废弃，由真实距离裁决取代 |
 | 世界空间流水线 | — | `events.rs` + `health/` + `combat/` + `despawn/` | ✅ 已落地（箭矢→扣血→死亡） |
 | 地面 / 网格 / 相机 | `display/map` 等 | `map.rs` Ground/GroundGrid、`camera.rs` | ✅ 已落地（场景化） |
 | `Health` | app `combat.rs` | `health/components.rs` | ✅（f32 化） |

@@ -11,23 +11,27 @@
 
 ## 文档地图
 
-| 主题 | 文档 |
-| :--- | :--- |
-| **进度与差异统合（唯一进度真相）** | [status.md](status.md) |
-| 游戏设计总纲 | [design/game-design.md](design/game-design.md) |
-| **无回合时间线详细设计（当前权威）** | [design/timeline-turnless.md](design/timeline-turnless.md) |
-| 时间线系统详细设计（历史，已被取代） | [design/timeline.md](design/timeline.md) |
-| 架构原则与分层 | [design/architecture.md](design/architecture.md) |
-| 根目录 app 原型的领域化模块设计 | [design/app-modules.md](design/app-modules.md) |
-| ECS 战斗组件化设计 | [design/ecs-combat-components.md](design/ecs-combat-components.md) |
-| 旧 app → 根目录迁移记录（历史） | [design/app-migration.md](design/app-migration.md) |
-| 旧内容盘点与重设计（历史） | [design/app-redesign.md](design/app-redesign.md) |
-| 文档与代码差异分析（已被 status.md 取代） | [integration-status.md](integration-status.md) |
-| Bevy 0.19 速查与最佳实践 | [bevy/bevy-019.md](bevy/bevy-019.md) |
-| Action Graph 设计 | [bevy/action-graph.md](bevy/action-graph.md) |
-| 免费素材获取与接入 | [art/assets.md](art/assets.md) |
-| Agent 协作规范 | [agent-guidelines.md](agent-guidelines.md) |
-| 时间线核心 v0.1（接口签名，历史） | [design/timeline-core-design.md](design/timeline-core-design.md) |
+| 主题 | 文档 | 描述对象 |
+| :--- | :--- | :--- |
+| **进度与决策记录（唯一进度真相）** | [status.md](status.md) | 全部 |
+| 游戏设计总纲 | [design/game-design.md](design/game-design.md) | 设计稿 |
+| **无回合时间线详细设计（当前权威）** | [design/timeline-turnless.md](design/timeline-turnless.md) | 代码 A |
+| 根目录 app 原型的领域化模块设计 | [design/app-modules.md](design/app-modules.md) | 代码 A |
+| ECS 战斗组件化设计 | [design/ecs-combat-components.md](design/ecs-combat-components.md) | 代码 A |
+| 架构原则与分层 | [design/architecture.md](design/architecture.md) | 设计稿 |
+| 时间线系统详细设计（历史，已被取代） | [design/timeline.md](design/timeline.md) | 代码 B（冻结） |
+| 时间线核心 v0.1 接口签名（历史） | [design/timeline-core-design.md](design/timeline-core-design.md) | 设计稿 |
+| 旧 app → 根目录迁移记录（历史） | [design/app-migration.md](design/app-migration.md) | 代码 A 的前身 |
+| 旧内容盘点与重设计（历史） | [design/app-redesign.md](design/app-redesign.md) | 设计稿 |
+| Action Graph 设计（未落地） | [bevy/action-graph.md](bevy/action-graph.md) | 未来设计稿 |
+| Bevy 0.19 速查与最佳实践 | [bevy/bevy-019.md](bevy/bevy-019.md) | 通用 |
+| 免费素材获取与接入 | [art/assets.md](art/assets.md) | 通用 |
+| Agent 协作规范 | [agent-guidelines.md](agent-guidelines.md) | 流程 |
+
+> 「描述对象」是 [`status.md`](status.md) 第七节第 1 条强制的口径：
+> 每篇文档必须说清自己描述的是**代码 A**（`src/`，主线）、**代码 B**（`timeless/`，冻结）
+> 还是**未来设计稿**。`design/app-modules.md` 的旧版曾描述已删除的 We-Go 版本，
+> 现已按代码 A 重写。
 
 仓库入口指南见 [../AGENTS.md](../AGENTS.md)（不随本套文档自动同步，如需更新请手动维护）。
 

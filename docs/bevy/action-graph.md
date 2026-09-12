@@ -1,5 +1,15 @@
 # Action Graph 设计
 
+> **描述对象：未来设计稿（未落地）。**
+> 本文描述的是**目标形态**，代码里**不存在** `ActionTemplate` / `TransitionCondition` /
+> `PendingHit` / `CancelPrivilege` 这些类型（用 grep 核对过）。
+>
+> 当前已落地的最小形态是代码 A 的
+> [`ActionTiming { windup, recovery }`](../design/timeline-turnless.md) +
+> 行动实体（载荷组件 + `ScheduledAction` + `Declared`/`Pending`/`Committed`）：
+> 「一个动作的静态定义」已经有了，「按边条件在图上转移」还没有。
+> 落地进度见 [status.md](../status.md) 第四节。
+
 ## 动机
 
 用一张统一的图描述所有实体（玩家、NPC、怪物）的行为：**一个行为 = 一张有向图**，输入、时机、状态与资源检查都表达为边上的条件，而不是散落的 if/else。

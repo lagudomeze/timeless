@@ -3,8 +3,10 @@
 > ⚠️ **2026-09 重写**：本文件此前把**两棵并存的代码树**混在一条 Phase 链里，并给未验证的
 > 条目打了 `[x]`。现已按实际代码校正：
 >
-> - **代码 A** = 仓库根 `src/`（package `app`，体素世界空间纵切，**We-Go 规划/推进阶段机**）
-> - **代码 B** = `timeless/` workspace（`timeless-app` / `timeless-domain`，网格伪 3D，**无回合**）
+> - **代码 A** = 仓库根 `src/`（package `app`，体素世界空间纵切，**无回合**：`Ready` +
+>   每动作前摇/后摇；决策按格、结算按真实距离）
+> - **代码 B** = `timeless/` workspace（`timeless-app` / `timeless-domain`，网格伪 3D，
+>   **无回合**，已冻结：本检出跑不起来）
 >
 > 下面每条都标注适用树。**完整差异分析、冲突清单与统合后的 backlog 见
 > [docs/status.md](docs/status.md)**；本文件只保留勾选状态、命令与依赖索引。
@@ -150,7 +152,8 @@ cargo fmt --check
 - **Phase 1.13 无回合化重构**（**仅 B**）：删除 `TurnPhase` / `TimeLineState` / `TurnCommitted` /
   `CommitTurn` / 开局暂停；`Time<Virtual>` 默认持续流动，动作实体按 `execute_at` 调度；
   反应改为实时前摇窗口（Q 翻滚取消 / E 招架，不暂停）；`Dodging` 带过期时间。
-  ⚠️ **A 仍然是规划/推进阶段机**，这条不适用于 A。
+  ⚠️ **A 当时仍是规划/推进阶段机**，这条不适用于当时的 A；A 在 2026-09 的无回合重构
+  （见上面的 M1–M7）之后也变成无回合了。
 
 ### Phase 2.0 — 技能与反馈（**仅 B 适用；A 全部未实现**）
 

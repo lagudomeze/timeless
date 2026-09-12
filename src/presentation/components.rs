@@ -48,7 +48,7 @@ impl CameraRig {
     }
 }
 
-/// HUD 状态文本标记（阶段 / 轮次 / 双方信息）。
+/// HUD 状态文本标记（是否在等你决策 / 精力 / 技能 / 双方信息）。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct HudStatus;
 

@@ -8,10 +8,10 @@
 //! | :--- | :--- |
 //! | [`world`] | 体素地图**数据**：区块、地形生成、体素存取（零渲染依赖，可脱离渲染单测） |
 //! | [`voxel_render`] | 体素**表现**：异步网格化、材质、明暗 |
-//! | [`movement`] | 速度与位移（位置用 Bevy `Transform`） |
-//! | [`combat`] | 生命 / 伤害 / 目标获取 / 攻击实体生命周期 / 技能生成 |
-//! | [`ai`] | 敌人决策（只写 `Velocity`） |
-//! | [`timeline`] | We-Go 时间线：规划阶段冻结虚拟时间等玩家提交，推进阶段结算行动 |
+//! | [`movement`] | 格子决策（`Cell` / `MoveGoal`）+ 速度位移 + 移动 / 跳跃 / 翻滚行动 |
+//! | [`combat`] | 生命 / 伤害 / 目标获取 / 攻击实体生命周期 / 技能 / 精力 / 防御 / 两阶段结算 |
+//! | [`ai`] | 敌人决策（选意图 → 声明行动，同样不改状态） |
+//! | [`timeline`] | 无回合调度：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 |
 //! | [`input`] | 玩家输入源（键盘 → 消息，只翻译） |
 //! | [`presentation`] | 表现：相机 / 装饰 / 日志（将来还有 UI / 动画 / 特效） |
 //! | [`spawn`] | **组装车间**：把各域零件拼成「玩家 / 敌人」实体，含开局组装与重建功能 |
@@ -565,7 +565,7 @@ mod tests {
         let mut app = test_app();
         let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
 
-        press(&mut app, KeyCode::KeyQ); // 射击：前摇 0.30 + 后摇 0.50
+        press(&mut app, KeyCode::KeyQ); // 火球：前摇 0.30 + 后摇 0.50
         for _ in 0..12 {
             app.update();
         }

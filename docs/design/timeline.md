@@ -3,15 +3,22 @@
 > 状态：设计定稿 v0.2。本文取代 [timeline-core-design.md](timeline-core-design.md)（v0.1）中与本文冲突的约定（如 `ActionId(&'static str)`、旧 `Event` 用法、DecisionPause 冻结模式）。
 > 关联：[game-design.md](game-design.md)（动机）、[architecture.md](architecture.md)（分层与通信）、[../bevy/action-graph.md](../bevy/action-graph.md)（行为描述）、[../bevy/bevy-019.md](../bevy/bevy-019.md)（Bevy 0.19 速查）。
 
-> ⛔ **已被取代**（2026-09 决策）：A（根原型 `src/`）的时间线改为
+> ⛔ **已被取代**（2026-09 决策）：**代码 A（`src/`，主线）** 的时间线最终采用
 > [timeline-turnless.md](timeline-turnless.md) 描述的**无回合模型**——
-> 能决策就决策、每个动作自带前摇+后摇、仅玩家等待输入时冻结。
-> 本文的逻辑刻度 / We-Go 阶段机**不会落地**，仅作设计过程留档。
-
-> ⚠️ 已过时：自 Phase 1.13 起，代码实现改为**无回合**模型——`Time<Virtual>`
-> 持续流动驱动动作调度，不再有 Planning / Resolving 阶段状态机与逻辑刻度跳跃。
-> 本文的 We-Go 阶段机、`CombatTimeline` 逻辑刻度等约定待重写；动作实体 +
-> `Declared → Pending → Committed` + 两阶段结算与三层裁决仍有效。
+> 能决策就决策、每个动作自带前摇 + 后摇、仅玩家等待输入时冻结。
+>
+> **本文描述的 We-Go 阶段机从未在 A 上落地过**：它对应的是代码 B
+> （`timeless/`，已冻结）的设计意图，而 B 最终也走的是无回合。
+> 因此本文的绝大部分内容是**设计过程留档，不要照着实现**。
+>
+> - 仍然有效的**动机**：动作实体（载荷 + `Declared → Pending → Committed`）、
+>   两阶段结算与三层裁决、时间线特权（翻滚取消 / 招架）——这些已迁入 A 并落地；
+> - 已经作废的**机制**：We-Go 阶段机、逻辑刻度跳跃、`CombatTimeline`、
+>   `PendingHit`、`ActionTemplate` / `CancelRule` / `CancelPrivilege`、
+>   `DecisionPause`——这些在两棵树里都不存在（grep 核对过）。
+>
+> 当前实现见 [ecs-combat-components.md](ecs-combat-components.md) 与
+> [timeline-turnless.md](timeline-turnless.md)。
 
 ## 1. 目标与范围
 

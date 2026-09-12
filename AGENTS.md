@@ -20,16 +20,19 @@ timeless/
 └── vendor/parley/            # 本地补丁：CJK 分词（见 README.patch.md）
 ```
 
-领域类型（`AttackStats`）定义在 `timeless-domain`；网格坐标直接使用 Bevy 的 `IVec2`
-（应用层 `Position` / `Roll` / `Destination` 包装 `IVec2`，网格数学以扩展 trait 落在应用层）。
+**代码 B（`timeless/`，已冻结）**：领域类型（`AttackStats`）定义在 `timeless-domain`；
+网格坐标用 `IVec2`（`Position` / `Roll` / `Destination` 包装它，网格数学以扩展 trait
+落在应用层）。**本检出跑不起来**（`timeless-app/assets/` 目录不存在、
+`vendor/parley` 补丁不存在），因此不要把 B 的命令当作验收门槛。
 
-根目录 `src/` 是独立于 `timeless/` 的原型 crate（package `app`），
-按「一个领域 = 一个目录 = 一个 Plugin」组织，详见
+**代码 A（`src/`，主线）**：决策层坐标是 `movement::Cell { x, z }`（不是 `IVec2`），
+结算用真实世界距离；领域层纯逻辑在 `combat/formula/domain.rs`（`AttackStats` 是
+纯函数入参，不是 ECS 组件）。按「一个领域 = 一个目录 = 一个 Plugin」组织，详见
 [docs/design/app-modules.md](docs/design/app-modules.md)。
 
 ## 构建、测试与开发命令
 
-以下命令均在 `timeless/` 目录下执行：
+以下命令均在 `timeless/` 目录下执行（**B 已冻结，仅供参考**）：
 
 - `cargo run -p timeless-app` — 启动游戏。
 - `cargo test --workspace` — 运行全部单元测试（领域层 7 + 应用层 2 = 9 个）。
@@ -49,7 +52,8 @@ timeless/
 - 遵循 `rustfmt` 默认配置（4 空格缩进，edition 2024）。
 - Rust 标准命名：函数、变量、测试用 `snake_case`；类型与枚举变体用 `CamelCase`。
 - 注释与文档注释（模块级 `//!`、条目级 `///`）使用中文；标识符与提交信息使用英文。
-- 严格分层：`timeless-domain` 绝不引入 Bevy；`timeless-app` 不包含伤害公式；模块间仅通过 Bevy `Message` 类型通信。
+- 严格分层：领域层（A 的 `combat/formula/domain.rs` / B 的 `timeless-domain`）
+  绝不引入 Bevy，可脱离渲染单测；应用层不包含伤害公式；模块间仅通过 Bevy `Message` 通信。
 - 高内聚低耦合：每个领域文件只装自己的组件 / 消息 / 系统，组件只表达自己的职责，
   不给无关系统夹带状态。例如移动领域（`movement.rs`）只含网格坐标、位移行动与投射物飞行；
   火球 / 爆炸等战斗内容归 `combat.rs`，通过 `ProjectileArrived` 消息衔接。
