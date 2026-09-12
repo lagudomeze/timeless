@@ -12,8 +12,8 @@ use crate::timeline::CELL_SIZE;
 
 /// 单位当前所在格。
 ///
-/// 只在单位**停下**时由 [`snap_to_cell`](super::systems::snap_to_cell) 更新，
-/// 不每帧从 `Transform` 反推——避免浮点抖动让格子跳变。
+/// 只在单位**停下**时由 [`move_entities_system`](super::systems::move_entities_system)
+/// 更新，不每帧从 `Transform` 反推——避免浮点抖动让格子跳变。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Cell {
     pub x: i32,
