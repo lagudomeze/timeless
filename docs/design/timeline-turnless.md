@@ -447,7 +447,7 @@ enemy_declare_system（把 Intent 翻成行动实体，防御意图翻成 RollCo
 ## 8. 迁移路线图
 
 > **状态：M1–M7 全部完成，M8（文档收口）进行中。**
-> `cargo test` = 99 通过（`src/` 下 97 + `tests/assets.rs` 2）/ 0 失败 / 0 跳过；`cargo clippy --all-targets -- -D warnings` 零警告。
+> `cargo test` = 100 通过（`src/` 下 98 + `tests/assets.rs` 2）/ 0 失败 / 0 跳过；`cargo clippy --all-targets -- -D warnings` 零警告。
 >
 > 下面的勾选框保留为**当时的实施清单**（验收证据是测试名），
 > 与代码有细节偏差的地方已就地标注。进度总览见 [../status.md](../status.md)。
@@ -543,7 +543,7 @@ enemy_declare_system（把 Intent 翻成行动实体，防御意图翻成 RollCo
 - [x] `docs/design/ecs-combat-components.md`：改为描述 A 的新组件集（含消息清单、两阶段、迁移对照）。
 - [x] `docs/design/timeline.md` / `timeline-core-design.md`：顶部标注「已被 timeline-turnless.md 取代」，
       并说明 We-Go 阶段机**从未在 A 上落地**。
-- [x] `docs/index.md` / `AGENTS.md` / `TODO.md`：补入口与描述对象列、修测试数（A = 97）、修按键与消息名。
+- [x] `docs/index.md` / `AGENTS.md` / `TODO.md`：补入口与描述对象列、修测试数（A = 100）、修按键与消息名。
 - [x] `docs/integration-status.md`：**该文件不存在**（索引里的链接已删除）。
 - [ ] 本文件自身的增量维护：每次代码改动后同步第 1 / 4 / 6 节与本节勾选。
 

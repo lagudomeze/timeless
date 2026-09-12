@@ -344,4 +344,31 @@ mod tests {
         );
         assert!(text.contains("Tab cycle"), "应当提示 Tab 循环技能：{text}");
     }
+
+    /// HUD 的每一段文本都必须显式指定 CJK 字体。
+    ///
+    /// 这条和 `tests/assets.rs` 是**互补**的，两者都不可少：
+    /// 那个测试证明「字体文件覆盖日志要用的字」，这个测试证明「HUD 真的在用它」。
+    /// 只做前者的话，某天把 `TextFont` 改回 `default()` 也不会有任何测试变红——
+    /// 屏幕上的表现却是退回一堆豆腐块。
+    #[test]
+    fn hud_text_uses_the_cjk_font() {
+        let mut app = headless_app();
+        app.update(); // Startup：组装单位 + 建 HUD
+
+        let expected = app.world().resource::<AssetServer>().load(HUD_FONT);
+        let mut query = app.world_mut().query::<&TextFont>();
+        let fonts: Vec<_> = query
+            .iter(app.world())
+            .map(|font| font.font.clone())
+            .collect();
+        assert!(!fonts.is_empty(), "HUD 应当有文本节点");
+        for font in fonts {
+            assert_eq!(
+                font,
+                bevy::text::FontSource::Handle(expected.clone()),
+                "HUD 文本必须用 HUD_FONT（{HUD_FONT}），否则中文会变成豆腐块"
+            );
+        }
+    }
 }

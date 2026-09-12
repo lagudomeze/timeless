@@ -15,7 +15,7 @@
 
 | 代号 | 位置 | 包名 | 状态 | 测试 |
 | :--- | :--- | :--- | :--- | ---: |
-| **A（主线）** | `src/`（仓库根） | `app` | **无回合**：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 | **99 通过 / 0 失败 / 0 跳过** |
+| **A（主线）** | `src/`（仓库根） | `app` | **无回合**：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 | **100 通过 / 0 失败 / 0 跳过** |
 | **B（冻结）** | `timeless/` | `timeless-app` / `timeless-domain` | 能力已迁入 A；**本检出跑不起来**（`timeless/crates/timeless-app/assets/` 目录不存在、`vendor/parley` 补丁不存在） | 9 |
 
 **D1 已拍板：保留 A，B 的能力迁进来。** 迁移清单与逐项勾选见
@@ -105,7 +105,7 @@ D2/D3/D4/D5 已全部落地并通过测试；权威设计文档见
 代码 A（**仓库根**，package `app`）：
 
 ```bash
-cargo test                              # 99 通过（97 单元 + 2 资产验收）/ 0 跳过
+cargo test                              # 100 通过（98 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check
 cargo run                               # 体素世界空间纵切

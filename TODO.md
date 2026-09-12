@@ -18,7 +18,7 @@
 
 ```bash
 cargo run                    # 启动：体素地形 + 世界空间战斗
-cargo test                   # 99 个测试（src/ 下 97 + tests/assets.rs 2），0 跳过
+cargo test                   # 100 个测试（src/ 下 98 + tests/assets.rs 2），0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 ```
@@ -98,7 +98,7 @@ cargo fmt --check
 - [x] **M7 技能菜单与 HUD**：`SKILLS` 注册表（单一来源 + 精力可用性过滤）、
       `MenuSelection` + 选择 / 循环 / 派发（`Attack` 按真实距离派发近战或火球）、
       `1`~`4` / `Tab` / `G` 输入、HUD 技能行与精力。
-- [x] **编译 + 测试验证**：`cargo test` **99 通过（97 单元 + 2 资产验收）/ 0 失败 / 0 跳过**；
+- [x] **编译 + 测试验证**：`cargo test` **100 通过（98 单元 + 2 资产验收）/ 0 失败 / 0 跳过**；
       `cargo clippy --all-targets` 零警告；`cargo fmt --check` 通过。
 - [ ] **收口**：`AGENTS.md` 的按键 / 消息名 / 测试数校正；`ecs-combat-components.md` 按 A 的新组件集改写。
 
@@ -248,7 +248,7 @@ cargo fmt --check
 
 **代码 A（仓库根）**
 
-- [ ] `cargo test` 全绿（99 = 97 单元 + 2 资产验收，含 0 个 `#[ignore]`）
+- [ ] `cargo test` 全绿（100 = 98 单元 + 2 资产验收，含 0 个 `#[ignore]`）
 - [ ] `cargo clippy --all-targets -- -D warnings` 零警告
 - [ ] `cargo fmt --check` 通过
 

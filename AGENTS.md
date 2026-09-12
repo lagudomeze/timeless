@@ -42,7 +42,7 @@ timeless/
 根目录 `src/` 原型（package `app`）在**仓库根目录**执行：
 
 - `cargo run` — 启动原型（体素地形 + 世界空间战斗）。
-- `cargo test` — 原型测试：`src/` 下 97 个单元测试 + `tests/assets.rs` 2 个资产验收用例（字体覆盖）。
+- `cargo test` — 原型测试：`src/` 下 98 个单元测试 + `tests/assets.rs` 2 个资产验收用例（字体覆盖）。
 - `cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` — 同 timeless 的验收标准。
 
 环境注意事项：本机 crates.io 直连不可用，依赖经清华镜像解析。不要使用 `cargo add`（已知兼容性问题）；依赖须手动写入 `Cargo.toml`，并在代码中引入前更新根目录 `TODO.md` 的版本索引表。
@@ -133,7 +133,7 @@ timeless/
 ## 测试规范
 
 - 单元测试写在源码旁的 `#[cfg(test)] mod tests` 中：A 原型集中在 `src/lib.rs` 的
-  `mod tests`（97 个）+ 各领域文件内的纯逻辑用例；资产验收用例在 `tests/assets.rs`（2 个）；B 的领域层用例在 `timeless-domain`。
+  `mod tests`（98 个）+ 各领域文件内的纯逻辑用例；资产验收用例在 `tests/assets.rs`（2 个）；B 的领域层用例在 `timeless-domain`。
 - 测试名用描述性的 snake_case，例如 `layer1_speed_frame_decides_who_hits_first`。
 - 使用 `assert_eq!`，断言意图不直观时附带简短说明。
 - **不要用 `#[ignore]` 隐藏失败**：跳过的用例要么修好，要么在 `TODO.md` 写明根因与下一步。
