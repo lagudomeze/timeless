@@ -42,7 +42,7 @@ timeless/
 根目录 `src/` 原型（package `app`）在**仓库根目录**执行：
 
 - `cargo run` — 启动原型（体素地形 + 世界空间战斗）。
-- `cargo test` — 原型单元测试（97 个：`src/lib.rs` 的整机用例 + 各领域的纯逻辑用例）。
+- `cargo test` — 原型测试：`src/` 下 97 个单元测试 + `tests/assets.rs` 2 个资产验收用例（字体覆盖）。
 - `cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` — 同 timeless 的验收标准。
 
 环境注意事项：本机 crates.io 直连不可用，依赖经清华镜像解析。不要使用 `cargo add`（已知兼容性问题）；依赖须手动写入 `Cargo.toml`，并在代码中引入前更新根目录 `TODO.md` 的版本索引表。
@@ -114,8 +114,13 @@ timeless/
   决策与同格判定；命中 / 射程 / 爆炸半径一律用世界距离。单位只在停下时更新 `Cell`
   （`move_entities_system` 吸附到目标格中心），不每帧从 `Transform` 反推。
 - **表现层只读**：HUD（就绪 / 精力 / 技能 / 双方状态 / 敌人意图 / 战斗日志）与相机平移都在
-  `presentation/`，只读游戏状态；HUD 文本用英文——Bevy 默认字体不含 CJK，
-  中文界面需要自带字体资产。
+  `presentation/`，只读游戏状态。
+  **文本语言与字体**：HUD 自己的文案用英文；**战斗日志正文是中文**
+  （`presentation/log.rs`），因此 HUD 显式指定 `hud::HUD_FONT`
+  （`assets/fonts/NotoSansSC-Regular.otf`，OFL-1.1）而不是 Bevy 默认字体
+  （默认字体不含 CJK，会显示成豆腐块）。改日志文案时**必须**跑 `tests/assets.rs`——
+  它读真实字体查 `cmap`，缺字会直接让它失败（运行时只会静默变方块）。
+  许可与体积取舍见 `assets/LICENSES.md`。
 - **功能不是领域**：像「战斗重置」这种只把已有系统拼一次的胶水，留在调用方
   （`spawn/restart.rs`），有数据模型 / 规则才进领域。
 - 玩家输入只在 `input/` 翻译成消息（键盘 → `MoveCommand` / `FireCommand` /
@@ -128,7 +133,7 @@ timeless/
 ## 测试规范
 
 - 单元测试写在源码旁的 `#[cfg(test)] mod tests` 中：A 原型集中在 `src/lib.rs` 的
-  `mod tests`（97 个）+ 各领域文件内的纯逻辑用例；B 的领域层用例在 `timeless-domain`。
+  `mod tests`（97 个）+ 各领域文件内的纯逻辑用例；资产验收用例在 `tests/assets.rs`（2 个）；B 的领域层用例在 `timeless-domain`。
 - 测试名用描述性的 snake_case，例如 `layer1_speed_frame_decides_who_hits_first`。
 - 使用 `assert_eq!`，断言意图不直观时附带简短说明。
 - **不要用 `#[ignore]` 隐藏失败**：跳过的用例要么修好，要么在 `TODO.md` 写明根因与下一步。

@@ -18,7 +18,7 @@
 
 ```bash
 cargo run                    # 启动：体素地形 + 世界空间战斗
-cargo test                   # 97 个单元测试（src/**，0 跳过）
+cargo test                   # 99 个测试（src/ 下 97 + tests/assets.rs 2），0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 ```
@@ -98,7 +98,7 @@ cargo fmt --check
 - [x] **M7 技能菜单与 HUD**：`SKILLS` 注册表（单一来源 + 精力可用性过滤）、
       `MenuSelection` + 选择 / 循环 / 派发（`Attack` 按真实距离派发近战或火球）、
       `1`~`4` / `Tab` / `G` 输入、HUD 技能行与精力。
-- [x] **编译 + 测试验证**：`cargo test` **97 通过 / 0 失败 / 0 跳过**；
+- [x] **编译 + 测试验证**：`cargo test` **99 通过（97 单元 + 2 资产验收）/ 0 失败 / 0 跳过**；
       `cargo clippy --all-targets` 零警告；`cargo fmt --check` 通过。
 - [ ] **收口**：`AGENTS.md` 的按键 / 消息名 / 测试数校正；`ecs-combat-components.md` 按 A 的新组件集改写。
 
@@ -207,8 +207,11 @@ cargo fmt --check
 - [ ] 贪婪网格化 / 纹理图集 / AO（`voxel_render`）。
 - [ ] 区块持久化（只存被改动的区块）+ 方块交互（`set_voxel`）。
 - [ ] 接入 `textures/ground/grass.png`（当前无代码引用）。
-- [ ] 清理 `assets/LICENSES.md` 中不存在的字体条目。
-- [ ] 中文 HUD 取舍（A 现为英文 HUD；要 CJK 需自带字体 + `icu_segmenter` 方案）。
+- [x] 接入 CJK 字体：`assets/fonts/NotoSansSC-Regular.otf`（OFL-1.1），HUD 显式指定它，
+      战斗日志的中文不再显示成豆腐块；覆盖由 `tests/assets.rs` 守着。
+- [ ] 中文 HUD 文案：字体已就位，但把 HUD 文案翻成中文还需要中文排版
+      （断行 / 标点挤压），即 B 用 `vendor/parley` + `icu_segmenter` 解决的那部分。
+- [ ] 字体体积：现为 8.3 MB 全覆盖；可子集化成几十 KB（测试不关心体积，只关心覆盖）。
 - [ ] 火球 / 命中特效（Gizmos 或粒子）；开发热重载（`file_watcher`）。
 
 ## 开发规范（沿袭 AGENTS.md / docs/design/architecture.md）
@@ -235,6 +238,7 @@ cargo fmt --check
 | bevy_egui | 0.40.1 | https://crates.io/crates/bevy_egui | https://docs.rs/bevy_egui/0.40.1 | 调试面板运行时（仅 B） |
 | bevy-inspector-egui | 0.37.0 | https://crates.io/crates/bevy-inspector-egui | https://docs.rs/bevy-inspector-egui/0.37.0 | egui 依赖（仅 B） |
 | icu_segmenter | 2.3.0（features=auto） | https://crates.io/crates/icu_segmenter | https://docs.rs/icu_segmenter/2.3.0 | CJK 分词（仅 B，配 vendor/parley 补丁） |
+| skrifa | 0.40（**dev-dependency**） | https://crates.io/crates/skrifa | https://docs.rs/skrifa/0.40.0 | 读字体 `cmap` 做字形覆盖验收（`tests/assets.rs`）；版本与 Bevy 依赖树里的 parley 对齐 |
 | serde | 1.0.x | https://crates.io/crates/serde | https://docs.rs/serde/latest | 配置序列化（Phase 2.1，**未引入**） |
 | ron | 0.12.x | https://crates.io/crates/ron | https://docs.rs/ron/latest | .ron 配置格式（Phase 2.1，**未引入**） |
 
@@ -244,7 +248,7 @@ cargo fmt --check
 
 **代码 A（仓库根）**
 
-- [ ] `cargo test` 全绿（97，含 0 个 `#[ignore]`）
+- [ ] `cargo test` 全绿（99 = 97 单元 + 2 资产验收，含 0 个 `#[ignore]`）
 - [ ] `cargo clippy --all-targets -- -D warnings` 零警告
 - [ ] `cargo fmt --check` 通过
 

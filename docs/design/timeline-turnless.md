@@ -447,7 +447,7 @@ enemy_declare_system（把 Intent 翻成行动实体，防御意图翻成 RollCo
 ## 8. 迁移路线图
 
 > **状态：M1–M7 全部完成，M8（文档收口）进行中。**
-> `cargo test` = 97 通过 / 0 失败 / 0 跳过；`cargo clippy --all-targets -- -D warnings` 零警告。
+> `cargo test` = 99 通过（`src/` 下 97 + `tests/assets.rs` 2）/ 0 失败 / 0 跳过；`cargo clippy --all-targets -- -D warnings` 零警告。
 >
 > 下面的勾选框保留为**当时的实施清单**（验收证据是测试名），
 > 与代码有细节偏差的地方已就地标注。进度总览见 [../status.md](../status.md)。

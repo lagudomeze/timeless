@@ -15,7 +15,7 @@
 
 | 代号 | 位置 | 包名 | 状态 | 测试 |
 | :--- | :--- | :--- | :--- | ---: |
-| **A（主线）** | `src/`（仓库根） | `app` | **无回合**：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 | **97 通过 / 0 失败 / 0 跳过** |
+| **A（主线）** | `src/`（仓库根） | `app` | **无回合**：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 | **99 通过 / 0 失败 / 0 跳过** |
 | **B（冻结）** | `timeless/` | `timeless-app` / `timeless-domain` | 能力已迁入 A；**本检出跑不起来**（`timeless/crates/timeless-app/assets/` 目录不存在、`vendor/parley` 补丁不存在） | 9 |
 
 **D1 已拍板：保留 A，B 的能力迁进来。** 迁移清单与逐项勾选见
@@ -38,7 +38,7 @@ backlog 里（中文 HUD 的前提是补字体资产）。
 | `timeline` | `ActionTiming`（前摇 + 后摇）/ `ScheduledAction` / `Declared`–`Pending`–`Committed` / `Ready` / `BusyRecovery`；门控 → 提交桥 → 调度 → 后摇恢复 |
 | `ai` | `EnemyBrain` + `Intent`；`decide_intent_system`（含威胁预读 → `Dodge`）与 `enemy_declare_system` 拆成两个系统 |
 | `input` | 只翻译：键盘 → `MoveCommand` / `JumpCommand` / `FireCommand` / `MeleeCommand` / `RollCommand` / `ParryCommand` / 技能菜单消息 / `ActionsCommitted`；中键 → `PanCamera` |
-| `presentation` | 相机（`CameraRig` + `PanCamera`）、装饰（18 种 Kenney glTF 随机摆放）、`BattleLog`、HUD（英文，只读） |
+| `presentation` | 相机（`CameraRig` + `PanCamera`）、装饰（18 种 Kenney glTF 随机摆放）、`BattleLog`（中文正文，见下）、HUD（英文文案 + Noto Sans SC 字体，只读） |
 | `spawn` | 组装车间：`unit_scene` + `player.rs` + `enemy.rs` + `assembly.rs` + `restart.rs`（`ResetBattle` 功能胶水） |
 
 按键：`WASD` 移动 · `Q` 火球 · `E` 近战 · `Space` 跳跃 · `F` 翻滚 · `V` 招架 ·
@@ -71,9 +71,10 @@ D2/D3/D4/D5 已全部落地并通过测试；权威设计文档见
 
 ### 工程债
 
-- [ ] **`assets/LICENSES.md` 登记了不存在的字体**：`fonts/NotoSansSC-Regular.otf`
-      在 `assets/fonts/`（空目录）下不存在；而 A 的 HUD 已是纯英文，这条属于 B 的遗留。
-      要么删条目，要么补资产（补资产 = 顺带解锁中文 HUD）。
+- [x] **`assets/LICENSES.md` 的字体条目现在是真的**：已补 `assets/fonts/NotoSansSC-Regular.otf`
+      （OFL-1.1，8.3 MB），HUD 显式指定它，战斗日志的中文不再显示成豆腐块。
+      覆盖由 `tests/assets.rs` 守着（读真实字体查 `cmap`）。体积取舍与子集化出路见
+      `assets/LICENSES.md`。
 - [ ] **动作数值硬编码**：`timeline::timing` 与 `SKILLS` 的数值应外置成 `.ron`
       （见 [timeline-turnless](design/timeline-turnless.md) 6.6）。
 - [ ] **箭矢未接输入**：`ShootAction` / `arrow_scene` 已实现且被测试覆盖，但
@@ -89,14 +90,10 @@ D2/D3/D4/D5 已全部落地并通过测试；权威设计文档见
 ### 将来（B 的能力，或设计稿）
 
 - [ ] **egui 调试面板**：B 已有（`bevy_egui` 0.40 + `bevy-inspector-egui` 0.37），A 未接入。
-- [ ] **中文 HUD**：需要自带字体资产 + `icu_segmenter` / `vendor/parley` CJK 方案（B 有）。
-      **这不只是「将来项」**：`BattleLog` 的正文现在就是中文
-      （`presentation/log.rs` 生成 `"{who} 受到 {n} 点{type}伤害"` / `"{who} 阵亡"`，
-      阵营标签 `玩家` / `敌人`），而 HUD 用的是 Bevy 默认字体、**不含 CJK**，
-      所以战斗日志目前会显示成缺字方块。三条出路：
-      ① 把 `log.rs` 的正文也改成英文（最小改动，与「HUD 文本用英文」的约定一致）；
-      ② 补一个 CJK 字体资产并让 HUD / 日志都改用 `TextFont` 指定它（顺带解锁中文 HUD）；
-      ③ 把日志正文与摘要分开，日志只留英文摘要。
+- [ ] **中文 HUD**：**字体这一半已经做了**（`assets/fonts/NotoSansSC-Regular.otf` +
+      HUD 显式 `TextFont`），现在中文能正常渲染，战斗日志不再显示成方块。
+      仍未做的是**把 HUD 文案本身翻成中文**——这需要中文排版（断行、标点挤压），
+      也就是 B 用 `vendor/parley` + `icu_segmenter` 解决的那部分。当前 HUD 文案仍是英文。
 - [ ] **`PendingHit` 实体化 / `CombatTimeline` 未来事件堆**：设计稿，未落地。
 - [ ] **`ActionTemplate` 资产图**（[bevy/action-graph.md](bevy/action-graph.md)）：
       设计稿；`ActionTiming` 是它的最小落地形态，图遍历与边条件仍未实现。
@@ -108,7 +105,7 @@ D2/D3/D4/D5 已全部落地并通过测试；权威设计文档见
 代码 A（**仓库根**，package `app`）：
 
 ```bash
-cargo test                              # 97 通过 / 0 失败 / 0 跳过
+cargo test                              # 99 通过（97 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check
 cargo run                               # 体素世界空间纵切

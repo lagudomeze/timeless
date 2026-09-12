@@ -68,7 +68,11 @@ pub fn battle_log_system(
     }
 }
 
-fn faction_label(faction: &Faction) -> &'static str {
+/// 阵营标签（HUD 日志用中文）。
+///
+/// `pub` 是为了让字体覆盖测试能直接问「日志到底会输出哪些字」，
+/// 而不是在测试里抄一份字表——抄的那份迟早会和这里脱节。
+pub fn faction_label(faction: &Faction) -> &'static str {
     match faction {
         Faction::Player => "玩家",
         Faction::Enemy => "敌人",

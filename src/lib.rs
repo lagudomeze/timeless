@@ -122,6 +122,9 @@ pub(crate) mod test_support {
             .add_plugins(bevy::input::InputPlugin)
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            // `setup_hud` 会 `AssetServer::load` 一份字体句柄；不注册 `Font` 资产类型
+            // 会在 `load` 那一刻 panic（而且是在并行计算线程里，错误信息很难指向 HUD）
+            .init_asset::<Font>()
             .insert_resource(ButtonInput::<bevy::input::keyboard::KeyCode>::default())
             .insert_resource(ButtonInput::<bevy::input::mouse::MouseButton>::default())
             .insert_resource(bevy::input::mouse::AccumulatedMouseMotion::default())
@@ -175,6 +178,8 @@ mod tests {
             .add_plugins(bevy::input::InputPlugin)
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            // HUD 会加载字体句柄，因此测试 App 也要注册 `Font` 资产类型
+            .init_asset::<Font>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 100,
             )))

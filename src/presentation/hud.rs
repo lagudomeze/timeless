@@ -2,10 +2,10 @@
 //!
 //! 纯表现：只**读**游戏状态（时间线、单位、日志），不写任何规则数据。
 //!
-//! 文字一律用英文——Bevy 默认字体不含 CJK，中文界面需要自带字体资产
-//! （见 TODO.md 的表现层待办）。注意：战斗日志正文目前是中文
-//! （[`crate::presentation::battle_log_system`]），在 HUD 上会显示成缺字方块，
-//! 见 [docs/status.md](../../../docs/status.md) 的 C11。
+//! **字体**：战斗中会出现的 CJK 文本（战斗日志正文、`单位` 兜底标签）必须能渲染，
+//! 而 Bevy 默认字体不含 CJK，因此 HUD 显式指定 [`HUD_FONT`]。
+//! HUD 自己的文案仍然是英文（AGENTS.md 的约定）；中文只出现在战斗日志里。
+//! 字体覆盖由 `assets::font_covers_every_glyph_the_battle_log_can_emit` 这个测试守着。
 
 use bevy::prelude::*;
 
@@ -21,6 +21,12 @@ use super::components::{HudLog, HudStatus};
 
 /// 战斗日志在 HUD 上显示的行数。
 const LOG_LINES: usize = 7;
+
+/// HUD 用的字体资产路径。
+///
+/// 选 Noto Sans SC：OFL-1.1、简体覆盖全，且能同时渲染英文与 CJK
+/// （因此不需要字体回退链）。资产与许可见 `assets/LICENSES.md`。
+pub const HUD_FONT: &str = "fonts/NotoSansSC-Regular.otf";
 
 /// HUD 里一行单位信息（从查询结果里摘出来的快照）。
 struct UnitRow {
@@ -38,7 +44,11 @@ struct UnitRow {
 }
 
 /// 建立 HUD 节点（Startup 一次）。
-pub fn setup_hud(mut commands: Commands) {
+///
+/// 两段文本共用同一份字体句柄：Bevy 会为「字体句柄 + 字号」的组合各建一张字形图集，
+/// 因此两种字号本来就是两张图集，句柄复用不会额外增加开销。
+pub fn setup_hud(mut commands: Commands, assets: Res<AssetServer>) {
+    let font: Handle<Font> = assets.load(HUD_FONT);
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -54,19 +64,13 @@ pub fn setup_hud(mut commands: Commands) {
         children![
             (
                 Text::new(""),
-                TextFont {
-                    font_size: 14.0.into(),
-                    ..default()
-                },
+                TextFont::from_font_size(14.0).with_font(font.clone()),
                 TextColor(Color::srgb(0.65, 0.78, 0.95)),
                 HudStatus,
             ),
             (
                 Text::new(""),
-                TextFont {
-                    font_size: 12.0.into(),
-                    ..default()
-                },
+                TextFont::from_font_size(12.0).with_font(font),
                 TextColor(Color::srgb(0.78, 0.82, 0.88)),
                 HudLog,
             ),
