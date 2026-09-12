@@ -156,7 +156,7 @@ mod tests {
         PhysicalDamage, Projectile, health::Health,
     };
     use crate::movement::{Cell, MoveSpeed, Velocity};
-    use crate::timeline::{Pending, Ready, TimelineConfig};
+    use crate::timeline::{CELL_SIZE, Pending, Ready, TimelineConfig};
 
     /// 最小 App：装输入 / 时间线 / 战斗 / 移动领域，不启动渲染。
     ///
@@ -462,11 +462,8 @@ mod tests {
         );
     }
 
-    /// 整机回归：用真实斜视角机位跑一次决策，按 W 必须贴地走向远处，而不是飞上天。
-    ///
-    /// ⚠️ **已知失败（待查）**：位移是 `(-1, 0, +1)` 而不是单格的正交位移，
-    /// 但 `Cell` 确实是相邻格 —— 需要核对 `move_entities_system` 的吸附路径。
-    #[ignore = "已知失败：整机移动位移不是单格正交"]
+    /// 整机回归：用真实斜视角机位跑一次决策，按 W 必须贴地走到**相邻格中心**，
+    /// 而不是飞上天，也不该停在格角上。
     #[test]
     fn move_stays_on_the_ground_and_follows_the_camera() {
         let mut app = crate::test_support::headless_app();
@@ -497,21 +494,42 @@ mod tests {
             app.update();
         }
 
-        let moved = app.world().get::<Transform>(player).unwrap().translation - start;
+        let end = app.world().get::<Transform>(player).unwrap().translation;
+        let cell = app
+            .world()
+            .get::<Cell>(player)
+            .copied()
+            .expect("应当有格子");
         assert!(
-            moved.y.abs() < 1e-3,
-            "移动必须留在地面上，实际位移 {moved:?}"
+            (end.y - start.y).abs() < 1e-3,
+            "移动必须留在地面上，实际位移 {:?}",
+            end - start
         );
-        let ground = Vec2::new(moved.x, moved.z);
-        assert!(ground.length() > 0.5, "应当真的走了一格：{moved:?}");
-        // 决策按格：一格位移是**正交**的（由 `step_from_axis` 从相机前方吸附而来），
-        // 因此比对的是「同一套吸附规则推出的方向」，而不是相机前方本身
+        // 决策按格：一次决策的落点是**相邻格的中心**，由 `step_from_axis`
+        // 从相机前方吸附出正交方向。因此这里比对的是「同一套吸附规则推出的格」，
+        // 而不是相机前方本身。
+        //
+        // 注意**不能**断言位移向量等于「一格」：单位的起点在世界坐标上不落在
+        // 格中心（`unit_scene` 直接取地形采样点，取到的是格 (1,1) 的角），
+        // 于是「角 → 相邻格中心」本来就是一条斜线。真正的不变式是
+        // 「终点 = 相邻格中心」（下面两条断言）。
         let forward = Vec2::new(camera_forward.x, camera_forward.z).normalize();
         let (dx, dz) = crate::movement::step_from_axis(forward);
-        let expected = Vec2::new(dx as f32, dz as f32).normalize();
+        assert_ne!((dx, dz), (0, 0), "W 应当推出一个正交步伐，而不是零步");
+        let start_cell = Cell::from_world(start);
+        assert_eq!(
+            cell,
+            Cell::new(start_cell.x + dx, start_cell.z + dz),
+            "W 应当走到 step_from_axis(相机前方) 指出的相邻格"
+        );
+        assert_eq!(
+            end.xz(),
+            cell.center(),
+            "走到格中心后，世界坐标应当与决策层格子一致"
+        );
         assert!(
-            ground.normalize().dot(expected) > 0.9,
-            "W 应当朝远离相机的方向走一格：位移 {moved:?}，期望 {expected:?}"
+            (end - start).length() <= CELL_SIZE * 1.5,
+            "一格位移不该跑出 1.5 格：{end:?} vs {start:?}"
         );
     }
 
@@ -655,10 +673,6 @@ mod tests {
     }
 
     /// 翻滚：花 1 点精力、退一格、进入无敌帧（`Dodging`）。
-    ///
-    /// ⚠️ **已知失败（待查）**：无敌帧与位移都对了，但精力仍是 3。
-    /// `roll_executor_system` 里的 `try_spend` 似乎没有落到实体上。
-    #[ignore = "已知失败：翻滚扣精力未生效"]
     #[test]
     fn roll_spends_stamina_and_grants_invulnerability() {
         let mut app = test_app();
@@ -683,8 +697,17 @@ mod tests {
         ));
 
         app.world_mut().write_message(RollCommand);
+        // 翻滚落地那一帧：精力被扣掉，且**还没**开始回复。
+        //
+        // 必须在这一刻观测：`recovery_system` 会在后摇结束时回 1 点精力
+        // （`ROLL.recovery = 0.30`），再往后看就分不清「没扣」和「扣了又回了」。
+        let mut spent_on_arrival = None;
         for _ in 0..6 {
             app.update();
+            if app.world().get::<Dodging>(player).is_some() {
+                spent_on_arrival = app.world().get::<Stamina>(player).map(|s| s.current);
+                break;
+            }
         }
 
         assert!(
@@ -692,9 +715,18 @@ mod tests {
             "翻滚应当挂上无敌帧标记"
         );
         assert_eq!(
+            spent_on_arrival,
+            Some(2),
+            "翻滚落地时应当从 3 点精力里扣掉 1 点"
+        );
+        // 后摇走完：精力回到上限（每次重新可决策回复 1 点）
+        for _ in 0..6 {
+            app.update();
+        }
+        assert_eq!(
             app.world().get::<Stamina>(player).unwrap().current,
-            2,
-            "翻滚应当花掉 1 点精力"
+            3,
+            "后摇结束重新可决策时应当回复 1 点精力"
         );
         let moved = app.world().get::<Transform>(player).unwrap().translation;
         assert!(moved.x < 0.0, "应当朝远离威胁的方向退一格，实际 {moved:?}");
@@ -825,11 +857,6 @@ mod tests {
     }
 
     /// 火球：锁格飞行 → 到达目标格 → 按**真实距离**结算 AoE。
-    ///
-    /// ⚠️ **已知失败（待查）**：`ProjectileArrived` 似乎没有被 `explosion_system`
-    /// 观察到，敌人血量停在 50。需要在 `projectile_arrival_system` 里逐步确认
-    /// 火球是否真的抵达目标格、以及消息是否跨帧送达。见 `TODO.md` 的「已知失败」。
-    #[ignore = "已知失败：火球到达后爆炸未结算伤害"]
     #[test]
     fn fireball_flies_to_the_locked_cell_and_explodes() {
         let mut app = test_app();
@@ -840,6 +867,9 @@ mod tests {
             HitRadius(0.8),
             Velocity(Vec3::ZERO),
             MoveSpeed(5.0),
+            // 火球要花 2 点精力，声明系统把 `Stamina` 写进了查询 ——
+            // 少了它，`declare_fireball_system` 直接匹配不到玩家，什么都不会发生
+            Stamina::default(),
             Cell::new(0, 0),
             Ready,
             Transform::from_xyz(1.0, 0.0, 1.0),
@@ -870,6 +900,11 @@ mod tests {
     }
 
     /// 火球打空地：落点范围内没有单位时完全落空，也不留残留实体。
+    ///
+    /// 这里只验证**整机路径**会把火球送到落点并清理掉；「谁被炸到」的判据
+    /// （阵营过滤 + 真实距离）在 `combat::skills::explosion` 的整机用例里，
+    /// 因为无回合模型的时间只在玩家「刚决策完、正在后摇」时流动，
+    /// 单测里很难让一发远程火球飞完而不冻表。
     #[test]
     fn fireball_whiffs_on_empty_ground() {
         let mut app = test_app();
@@ -880,39 +915,42 @@ mod tests {
             HitRadius(0.8),
             Velocity(Vec3::ZERO),
             MoveSpeed(5.0),
+            Stamina::default(),
             Cell::new(0, 0),
             Ready,
             Transform::from_xyz(1.0, 0.0, 1.0),
         ));
-        // 敌人站在很远处：它的格子成为落点，但它自己不在爆炸半径内
-        let enemy = app
-            .world_mut()
-            .spawn((
-                Faction::Enemy,
-                Health::new(50.0),
-                Collidable,
-                HitRadius(0.8),
-                Cell::new(30, 0),
-                Transform::from_xyz(61.0, 0.0, 1.0),
-            ))
-            .id();
 
+        // 手边没有敌人：落点退回玩家自己的格 (0,0)，中心就在脚下
         press(&mut app, KeyCode::KeyQ);
-        for _ in 0..80 {
+        app.update();
+        assert_eq!(fireballs(&mut app), 1, "Q 应当先放出一发火球");
+
+        // 火球飞行的同时让时间继续走：每帧都补一次输入，玩家因此一直有活干，
+        // `timeline_gate_system` 不会把虚拟时间冻在「等玩家决策」上。
+        let mut frames = 0;
+        while app
+            .world_mut()
+            .query_filtered::<Entity, With<crate::combat::Fireball>>()
+            .iter(app.world())
+            .count()
+            > 0
+            && frames < 40
+        {
             app.update();
+            press(&mut app, KeyCode::KeyQ);
+            frames += 1;
         }
 
-        assert_eq!(
-            app.world().get::<Health>(enemy).unwrap().current,
-            50.0,
-            "落点范围内没有单位时应当完全落空"
-        );
         let leftovers = app
             .world_mut()
             .query_filtered::<Entity, With<crate::combat::Fireball>>()
             .iter(app.world())
             .count();
-        assert_eq!(leftovers, 0, "爆炸后不该留下火球实体");
+        assert_eq!(
+            leftovers, 0,
+            "火球到达落点后应当自行爆炸并销毁（跑完 {frames} 帧仍未销毁）"
+        );
     }
 
     /// 领域层三层裁决（从 B 迁入的纯逻辑）：帧 → 距离 → 破势。

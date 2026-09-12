@@ -72,7 +72,9 @@ pub fn explosion_system(
 
 #[cfg(test)]
 mod tests {
+    use super::super::fireball::{FIREBALL_DAMAGE, FIREBALL_RADIUS};
     use super::*;
+    use crate::movement::Cell;
 
     #[test]
     fn radial_selection_uses_world_distance_not_cells() {
@@ -103,5 +105,78 @@ mod tests {
         let far = world.spawn_empty().id();
         let hits = radial_damage_units(Vec3::ZERO, 1.0, [(far, Vec3::new(5.0, 0.0, 5.0))]);
         assert!(hits.is_empty(), "空地上爆炸不打任何人");
+    }
+
+    /// 整机（最小 App）：爆炸**只**结算敌对单位，并且一定会销毁投射物。
+    ///
+    /// 这是「锁格 + 真实距离」的收口处：落点由 `ProjectileArrived` 给出，
+    /// 伤害候选必须按阵营过滤（否则火球会炸到自己人），
+    /// 而投射物无论打中还是打空都必须消失（否则留在场上永远飞）。
+    #[test]
+    fn explosion_hits_only_hostiles_and_always_despawns_the_shell() {
+        #[derive(Resource, Default)]
+        struct Caught(Vec<(Entity, f32)>);
+
+        fn collect(mut events: MessageReader<DamageEvent>, mut caught: ResMut<Caught>) {
+            for event in events.read() {
+                caught.0.push((event.target, event.amount));
+            }
+        }
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Caught>()
+            .add_message::<ProjectileArrived>()
+            .add_message::<DamageEvent>()
+            .add_systems(Update, (explosion_system, collect).chain());
+
+        let origin = Vec3::new(5.0, 0.0, 1.0);
+        let ally = app
+            .world_mut()
+            .spawn((
+                Faction::Player,
+                Health::new(50.0),
+                Transform::from_translation(origin),
+            ))
+            .id();
+        let enemy = app
+            .world_mut()
+            .spawn((
+                Faction::Enemy,
+                Health::new(50.0),
+                Transform::from_translation(origin + Vec3::new(2.0, 0.0, 0.0)),
+            ))
+            .id();
+        let bystander = app
+            .world_mut()
+            .spawn((
+                Faction::Enemy,
+                Health::new(50.0),
+                Transform::from_translation(origin + Vec3::new(0.0, 0.0, 9.0)),
+            ))
+            .id();
+        let shell = app.world_mut().spawn_empty().id();
+
+        app.world_mut().write_message(ProjectileArrived {
+            projectile: shell,
+            cell: Cell::new(2, 0),
+            origin,
+            faction: Faction::Player,
+            damage: FIREBALL_DAMAGE,
+            radius: FIREBALL_RADIUS,
+        });
+        app.update();
+
+        let caught = app.world().resource::<Caught>();
+        assert_eq!(
+            caught.0,
+            vec![(enemy, FIREBALL_DAMAGE)],
+            "只该结算半径内的敌对单位：友方不受伤，半径外的敌人也不受伤"
+        );
+        assert!(
+            app.world().get_entity(shell).is_err(),
+            "爆炸后投射物必须被销毁"
+        );
+        let _ = (ally, bystander);
     }
 }
