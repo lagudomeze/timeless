@@ -3,13 +3,44 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
-use crate::combat::defense::{ParryCommand, RollCommand};
-use crate::combat::skills::{CycleSkill, FireCommand, MeleeCommand, SelectSkill, UseSelectedSkill};
+use crate::combat::defense::ParryCommand;
+use crate::combat::skills::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill};
 use crate::movement::{JumpCommand, MoveCommand};
-use crate::presentation::CameraRig;
-use crate::timeline::{ActionsCommitted, TimelineConfig};
+use crate::presentation::{CameraRig, ToggleHelp};
+use crate::timeline::{CycleReactionWindow, TogglePause};
 
-/// WASD / 方向键 → 世界平面移动方向（**按下的那一次**）。
+/// `Q/W/E/R` 的技能热键绑定（默认值；用户自定义留到配置外置那一步）。
+///
+/// 无回合模型里"按一下就出手"是最舒服的输入，所以热键**直接执行**：
+/// 等价于「选中这个技能 + 用一次」（和数字键、左键点击同一条路径）。
+#[derive(Resource, Debug, Clone)]
+pub struct HotkeyBinds {
+    pub entries: Vec<(KeyCode, HotkeyAction)>,
+}
+
+/// 热键能绑定的动作：技能栏里的四种 + 不占栏位的反应动作（招架）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyAction {
+    /// 技能栏里的技能（按注册表下标执行）
+    Skill(SkillKind),
+    /// 招架（不在技能栏里：它是绑定某次攻击的反应）
+    Parry,
+}
+
+impl Default for HotkeyBinds {
+    fn default() -> Self {
+        Self {
+            entries: vec![
+                (KeyCode::KeyQ, HotkeyAction::Skill(SkillKind::Fireball)),
+                (KeyCode::KeyW, HotkeyAction::Skill(SkillKind::Melee)),
+                (KeyCode::KeyE, HotkeyAction::Skill(SkillKind::Roll)),
+                (KeyCode::KeyR, HotkeyAction::Parry),
+            ],
+        }
+    }
+}
+
+/// 方向键 → 世界平面移动方向（**按下的那一次**）。
 ///
 /// 玩家的按键是**屏幕方向**（W 向上 = 远离相机、D 向右 = 相机的右手边），
 /// 所以这里按相机朝向换算到世界 XZ 平面（`MoveCommand.axis` 的约定见
@@ -26,16 +57,16 @@ pub fn player_move_input_system(
     mut last_axis: Local<Vec2>,
 ) {
     let mut screen = Vec2::ZERO;
-    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+    if keys.pressed(KeyCode::ArrowUp) {
         screen.y += 1.0;
     }
-    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+    if keys.pressed(KeyCode::ArrowDown) {
         screen.y -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+    if keys.pressed(KeyCode::ArrowLeft) {
         screen.x -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+    if keys.pressed(KeyCode::ArrowRight) {
         screen.x += 1.0;
     }
     let screen = screen.normalize_or_zero();
@@ -90,81 +121,85 @@ impl GroundBasis {
     }
 }
 
-/// Q → 发射箭矢；E → 近战横扫；空格 → 跳跃；F → 翻滚；V → 招架。
+/// `Q/W/E/R` 技能热键（默认绑定见 [`HotkeyBinds`]）+ `C` 跳跃。
 ///
-/// 翻滚 / 招架是**反应性操作**（消耗精力、随时可用），因此不参与
-/// `require_commit` 的草案流程——它们照旧「按下即声明」。
+/// 热键**直接执行**：选中 + 用一次（和数字键、左键同一条路径）；
+/// 空格已经让给"暂停"，所以跳跃挪到 `C`（后续空战也挂这里）。
 pub fn player_skill_input_system(
     keys: Res<ButtonInput<KeyCode>>,
-    mut fire_commands: MessageWriter<FireCommand>,
-    mut melee_commands: MessageWriter<MeleeCommand>,
-    mut jump_commands: MessageWriter<JumpCommand>,
-    mut roll_commands: MessageWriter<RollCommand>,
+    binds: Res<HotkeyBinds>,
+    mut selects: MessageWriter<SelectSkill>,
+    mut uses: MessageWriter<UseSelectedSkill>,
+    mut jumps: MessageWriter<JumpCommand>,
     mut parry_commands: MessageWriter<ParryCommand>,
 ) {
-    if keys.just_pressed(KeyCode::KeyQ) {
-        fire_commands.write(FireCommand);
+    if keys.just_pressed(KeyCode::KeyC) {
+        jumps.write(JumpCommand);
     }
-    if keys.just_pressed(KeyCode::KeyE) {
-        melee_commands.write(MeleeCommand);
+    for (key, action) in &binds.entries {
+        if !keys.just_pressed(*key) {
+            continue;
+        }
+        match action {
+            HotkeyAction::Skill(kind) => {
+                if let Some(index) = crate::combat::skills::index_of(*kind) {
+                    selects.write(SelectSkill(index));
+                    uses.write(UseSelectedSkill::default());
+                }
+            }
+            HotkeyAction::Parry => {
+                parry_commands.write(ParryCommand);
+            }
+        }
     }
+}
+
+/// 空格 → 暂停 / 继续（**空格只表示暂停**，不触发任何行动）。
+pub fn pause_input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut toggles: MessageWriter<TogglePause>,
+) {
     if keys.just_pressed(KeyCode::Space) {
-        jump_commands.write(JumpCommand);
-    }
-    if keys.just_pressed(KeyCode::KeyF) {
-        roll_commands.write(RollCommand);
-    }
-    if keys.just_pressed(KeyCode::KeyV) {
-        parry_commands.write(ParryCommand);
+        toggles.write(TogglePause);
     }
 }
 
-/// Enter → 提交草案（仅在 `TimelineConfig::require_commit` 开启时有意义）。
+/// F1 → 开合帮助面板。
 ///
-/// 默认「按下即决定」，所以这条消息平时不会改变任何东西；
-/// 需要「先声明、再确认」的手感时用 `F1` 打开开关。
-pub fn player_commit_input_system(
+/// 只翻译成 [`ToggleHelp`] 消息，由 HUD 消费；输入域不认识面板长什么样。
+pub fn player_help_input_system(
     keys: Res<ButtonInput<KeyCode>>,
-    mut commits: MessageWriter<ActionsCommitted>,
+    mut toggles: MessageWriter<ToggleHelp>,
 ) {
-    if keys.just_pressed(KeyCode::Enter) {
-        commits.write(ActionsCommitted);
+    if keys.just_pressed(KeyCode::F1) {
+        toggles.write(ToggleHelp);
     }
 }
 
-/// F1 → 切换「是否需要 Enter 提交」。
+/// F2 → 循环「反应窗口」的松紧（loose → strict → off）。
 ///
-/// 输入域只改**配置**（`TimelineConfig`）而不碰游戏状态；
-/// 是否延迟执行由时间线的 `commit_bridge_system` 解释。
-pub fn commit_mode_toggle_system(
+/// 输入域只改**配置**，是否真的停表由时间线的门控解释。
+pub fn reaction_window_input_system(
     keys: Res<ButtonInput<KeyCode>>,
-    mut config: ResMut<TimelineConfig>,
+    mut requests: MessageWriter<CycleReactionWindow>,
 ) {
-    if !keys.just_pressed(KeyCode::F1) {
+    if !keys.just_pressed(KeyCode::F2) {
         return;
     }
-    config.require_commit = !config.require_commit;
-    info!(
-        "commit mode: {}",
-        if config.require_commit {
-            "ON (declare with input, Enter to commit)"
-        } else {
-            "OFF (input applies immediately)"
-        }
-    );
+    requests.write(CycleReactionWindow);
 }
 
-/// 技能菜单：`1`~`4` 直选 · `Tab`/`Shift+Tab` 循环（跳过负担不起的）。
+/// 技能栏：`1`~`4` **直接执行**那一格 · `Tab`/`Shift+Tab` 循环（只选，不执行）。
 ///
-/// 与其它输入一样**只翻译**：选择消息由技能域的选择系统消费，
-/// 输入层不判断消耗、不生成行动。释放是另一个系统（[`skill_use_input_system`]），
-/// 因为「选择」随时可做，「释放」要求玩家当前就绪。
+/// 与其它输入一样**只翻译**：选择与释放都是消息，落地由技能域负责。
+/// 「直接执行」= 选中 + 用一次（同一条路径），所以键盘和鼠标点击行为一致。
 pub fn skill_menu_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut selects: MessageWriter<SelectSkill>,
     mut cycles: MessageWriter<CycleSkill>,
+    mut uses: MessageWriter<UseSelectedSkill>,
 ) {
-    // 直选
+    // 直接执行那一格（选中 + 用一次）
     let direct = [
         (KeyCode::Digit1, 0usize),
         (KeyCode::Digit2, 1),
@@ -174,6 +209,7 @@ pub fn skill_menu_input_system(
     for (key, index) in direct {
         if keys.just_pressed(key) {
             selects.write(SelectSkill(index));
+            uses.write(UseSelectedSkill::default());
         }
     }
 
@@ -193,7 +229,7 @@ pub fn skill_use_input_system(
     mut uses: MessageWriter<UseSelectedSkill>,
 ) {
     if keys.just_pressed(KeyCode::KeyG) {
-        uses.write(UseSelectedSkill);
+        uses.write(UseSelectedSkill::default());
     }
 }
 
