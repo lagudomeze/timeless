@@ -14,7 +14,7 @@
 | 决策 | 内容 | 影响 |
 | :--- | :--- | :--- |
 | **D1** | 保留 **A** 为主线树，B 的能力迁进来 | 目录/分层/BSN/测试基座不动；B 的战斗能力重写为 A 的领域化形态 |
-| **D2** | **无回合**：所有 PC/NPC「能决策就决策」；仅当**玩家等待输入**时冻结虚拟时间；默认输入**直接生效**，另有 `require_commit` 开关 | 删除 `Phase` / `round` / `RESOLUTION_WINDOW` / `RoundEnded` / `pause_during_planning_system` |
+| **D2** | **无回合**：所有 PC/NPC「能决策就决策」；仅当**玩家等待输入**（或反应窗口判定有威胁）时冻结虚拟时间；输入**声明即生效**，另有一档 `F2` 反应窗口控制"敌人出手时停不停" | 删除 `Phase` / `round` / `RESOLUTION_WINDOW` / `RoundEnded` / `pause_during_planning_system` |
 | **D3** | 保留 A 的**真实距离**结算；**决策**与同格判定按**格子** | 单位/行动落在格上，命中/射程/爆炸用世界距离 |
 | **D4** | 节奏 = **固定冷却**：每个动作自带**前摇 + 后摇** | 动作表决定出手快慢；速度属性暂不引入 |
 | **D5** | 投射物**锁定目标格** → 自由飞行 → 到达后按真实距离结算 AoE | 弹道为实体运动（A 已有），落点检定与 AOE 半径用世界距离 |
@@ -108,11 +108,15 @@ pub struct BusyRecovery { pub executed_at: f32, pub ready_at: f32 }
 ### 系统链（`TimelineSet` 内，顺序即语义）
 
 ```text
-timeline_gate_system      每帧算：是否有单位 Ready 且等待玩家输入 → pause/unpause Time<Virtual>
-commit_bridge_system      require_commit = false 时把 Declared 直接升为 Pending；true 时等 ActionsCommitted
+timeline_gate_system      每帧算：玩家 Ready（或有威胁且反应窗口不是 Off）→ pause/unpause Time<Virtual>
+(pause_toggle_system /    空格手动暂停；F2 循环反应窗口
+ cycle_reaction_window_system)
+interrupt_system          本帧有玩家新意图 → 撤掉它那条可取消的未结算行动（写 UndoCommand）
+commit_bridge_system      把 Declared 当帧升为 Pending（没有"等确认"这一步）
+undo_system               右键：撤销玩家的 Declared / Pending 行动 + 恢复 Ready + 广播退款
 scheduler_system          Pending 且 now >= execute_at → Committed
-（各领域执行器）            Committed → 落地效果（设速度 / 挂防御标记 / 生成投射物）→ despawn 行动实体
-recovery_system           执行器落地时给 actor 挂 BusyRecovery{until}；到期恢复 Ready
+（各领域执行器）            Committed → 落地效果（设速度 / 挂防御标记 / 发射投射物）→ despawn 行动实体
+recovery_system           执行器落地时给 actor 挂 BusyRecovery{ready_at}；到期恢复 Ready
 ```
 
 去掉的东西：`Timeline::phase` / `round` / `window` / `RESOLUTION_WINDOW` / `begin_resolution` /
@@ -127,7 +131,7 @@ recovery_system           执行器落地时给 actor 挂 BusyRecovery{until}；
 
 ---
 
-## 3. 玩家输入门控与 `require_commit` 开关
+## 3. 玩家输入门控与反应窗口
 
 ### 3.1 谁在等谁
 
@@ -136,13 +140,13 @@ recovery_system           执行器落地时给 actor 挂 BusyRecovery{until}；
 pub struct Timeline {
     /// 玩家已 Ready 但还没动作：世界停下等他。
     waiting_for_input: bool,
-    /// 玩家本轮的草案（require_commit = true 时才有值）。
+    /// 本帧刚声明、还没被提交桥升为 Pending 的那条玩家行动（只活一帧，HUD 读它）。
     draft: Option<Entity>,
 }
 ```
 
-- `waiting_for_input = (存在玩家实体) && (玩家 Ready) && (没有单位在空中)`。
-  最后一条不能省：跳跃是不可中断的弹道，若玩家落地前恢复 `Ready` 就停表，单位会僵在半空。
+- `waiting_for_input = (存在玩家实体) && (没有单位在空中) && (玩家 Ready || 反应窗口判定有威胁)`。
+  「没有单位在空中」这一条不能省：跳跃是不可中断的弹道，若玩家落地前恢复 `Ready` 就停表，单位会僵在半空。
 - `timeline_gate_system`：`waiting_for_input == true` → `Time<Virtual>::pause()`，否则 `unpause()`。
   这是**全局唯一的暂停点**，各领域依旧不需要任何 `if paused` 分支——
   移动、计时器、后摇、投射物生命周期全部自动停表。
@@ -151,47 +155,52 @@ pub struct Timeline {
 > 这是刻意的：世界是「等玩家想好」而不是「实时压力」。若将来要做真实时压力模式，
 > 只需把后摇记在 `Time<Real>` 上，其余不动——这一点作为扩展点明确留出。
 >
-> 副作用（写测试时会撞上）：玩家一恢复 `Ready` 时间就冻结，因此**一发远程火球会停在半空**，
-> 直到玩家再次做决策。`fireball_whiffs_on_empty_ground` 因此必须每帧喂输入让时间继续走。
+> **纪律（实现动作执行器时必须遵守）**：既然玩家一 `Ready` 就冻结，那"效果还没发生"
+> 的行动就不能提前把决策权还回去。执行器一律用 `end_action_until(.., busy_until)`，
+> 把 `busy_until` 推到**效果真的发生**那一刻：移动 = 走到目标格（距离 / 速度）、
+> 火球 = 球落地（`flight_time`）。漏掉它，长距离的移动 / 火球会被冻在半路——
+> 实机上看起来就是"按了技能没放出去"，但精力已经扣了。
 
 ### 3.2 默认：输入直接产生效果
 
-`require_commit = false`（默认）时：
-
 ```text
-按 W        → MoveCommand → declare_move_system → 挂 ScheduledAction（windup 0.15）→ 0.15s 后起步
-按 E（近战） → MeleeCommand → 立即执行
-按 Q（火球） → FireCommand → 立即朝目标格飞行
+按方向键    → MoveCommand → declare_move_system → 挂 ScheduledAction（windup 0.15）→ 0.15s 后起步
+左键点地板   → MoveToCommand → 走一条直线到目标格（可以跨多格）
+按 2 / 左键点单位 → MeleeCommand → 前摇到点后横扫
+按 3 / 左键点单位 → FireCommand → 前摇到点后从**当前站位**朝锁定的格扔出火球
 ```
 
 没有「先声明再确认」这一步；玩家按下就是决定。声明完成后 `Ready` 被移除；
 按住方向键**不会**继续走（见 3.4），但**松开再按**会在后摇结束后走出下一格。
 
-### 3.3 开关：`require_commit = true`
+### 3.3 开关：`F2` 循环反应窗口
 
 ```text
-按 W        → 只生成草案（Declared），时间仍然冻结
-按 Enter    → ActionsCommitted → 草案升为 Pending → 时间恢复流动
+按 F2 → ReactionWindow::Loose → Strict → Off → Loose（控制台打印当前档位）
 ```
-
-- 草案同一时刻至多一条：`begin_action` 把新草案记进 `Timeline::draft`，
-  旧的 `Declared` 实体**不会**被主动清掉，而是因为玩家已失去 `Ready`
-  而不再接受新声明（「后声明覆盖先声明」由输入不排队保证）。
-- HUD 在草案存在时提示 `WAITING FOR INPUT  (draft ready, Enter to commit)`。
-- 实现位置：`commit_bridge_system` 读一个 `TimelineConfig` 资源，**不散落到各领域**。
 
 ```rust
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TimelineConfig {
-    /// true = 需要 Enter 确认；false（默认）= 输入立即生效。
-    pub require_commit: bool,
+    pub reaction: ReactionWindow,
+}
+
+pub enum ReactionWindow {
+    #[default]
+    Loose,   // 场上有"正在前摇、且瞄准玩家"的攻击就冻结（默认：最松，方便调试）
+    Strict,  // 只在玩家能反应（Ready 且不在空中）时冻结，且同一发只停一次
+    Off,     // 完全不因威胁冻结
 }
 ```
 
-开关本身只能由 `F1` 切换（`commit_mode_toggle_system`），没有面板。
+威胁的判据是**那条未结算的行动正瞄着玩家**（挂着 `CollisionTarget(玩家)`）。
+「要不要等玩家自己决定」不归它管——玩家 `Ready` 时本来就冻结（3.1）。
 
-> 兼容旧行为：把 `require_commit` 设为 true，玩家的手感就与旧 `Planning` 阶段几乎一致，
-> 区别只是 NPC 不再等玩家（它们按自己的节奏走）。
+> 旧稿在这里写的是 `require_commit` + `Enter` 提交（键位 `F1`/`F2` 来回倒过手）。
+> **已删除**：声明即生效，反悔改走**打断 / 撤销**——右键撤销，或直接按下一个新意图
+> （`interrupt_system` 会先把可取消的旧行动撤掉）；撤销退 `ActionCost`、扣 `CancelCost`，
+> 挂 `Uncancellable` 的行动（跳跃）不给撤。见 `timeline/events.rs` 与
+> `timeline/systems.rs::undo_system`。
 
 ### 3.4 按住键：一次决策一格
 
@@ -378,19 +387,21 @@ phase2_apply_system（写 Arbitration 资源）
 
 | 键 | 动作 | 说明 |
 | :--- | :--- | :--- |
-| `WASD` / 方向键 | 走一格 | 方向变化时才发消息 |
-| `Q` | 火球（快捷） | 等价于选中 `fireball` 再释放 |
-| `E` | 近战横扫（快捷） | 前摇 0.20 / 后摇 0.35 |
-| `Space` | 跳跃 | 弹道 0.6s |
-| `F` | 翻滚（快捷） | 1 精力，退一格 + 0.5s 无敌帧 |
-| `V` | 招架（快捷） | 1 精力，挡下绑定的那次攻击并反制 |
-| `1`~`4` | 直选技能 | 对应 `SKILLS` 的顺序 |
+| 方向键 | 走一格 | 方向变化时才发消息（`WASD` 让给了技能热键） |
+| 左键点地板 | 走到那一格 | `MoveToCommand`，可跨多格，直线走 |
+| 左键点单位 | 用当前选中的技能打那一格 | 选「攻击」时按距离派发近战 / 火球 |
+| 右键 | 撤销未结算的玩家行动 | `UndoCommand`（`Committed` 之后撤不掉） |
+| `1`~`4` | 直接放那一格技能 | 选中 + 用一次（与点击同一条路径） |
 | `Tab` / `Shift+Tab` | 循环技能 | 只在当前负担得起的技能之间走 |
 | `G` | 释放选中技能 | `Attack` 按真实距离派发近战 / 火球 |
-| `Enter` | 提交草案 | 仅在 `require_commit` 开启时有效 |
-| `F1` | 切换 `require_commit` | 控制台打印当前模式 |
-| `R` | 重置战斗 | 功能键，跟着 `spawn/restart.rs` 走 |
+| `Q` / `W` / `E` / `R` | 技能热键 | 默认绑火球 / 近战 / 翻滚 / 招架（`HotkeyBinds`，将来可自定义） |
+| `C` | 跳跃 | 弹道 0.6s；**不可取消**（`Uncancellable`） |
+| `Space` | 暂停 / 继续 | 只翻译成 `TogglePause`，不触发任何行动 |
+| `F2` | 循环反应窗口 | `Loose` / `Strict` / `Off`，控制台打印当前档位 |
+| `F5` | 重置战斗 | 功能键，跟着 `spawn/restart.rs` 走（`R` 让给了热键） |
+| `F1` | 开合帮助面板 | 常驻按键提示不放在屏幕角落 |
 | 中键拖拽 | 平移相机 | 只翻译成 `PanCamera` 消息 |
+| 滚轮 | 拉近 / 拉远 | 只翻译成 `ZoomCamera` 消息 |
 
 ### 6.7 AI 意图循环 — **已落地**
 
@@ -428,7 +439,7 @@ enemy_declare_system（把 Intent 翻成行动实体，防御意图翻成 RollCo
 | `Phase::{Planning, Resolving}` | **删除** | 换成每单位 `Ready` + 每动作 `ActionTiming` |
 | `RESOLUTION_WINDOW`（1s 窗口） | **删除** | 移动走到目标格为止；其余动作各有后摇 |
 | `RoundEnded` / `round()` | **删除** | 需要计步时用「决策次数」而非轮次 |
-| `commit_actions_system` / `ActionsCommitted` | **保留** `ActionsCommitted`（默认旁路） | 仅 `require_commit = true` 时参与 |
+| `commit_actions_system` / `ActionsCommitted` | **删除** `ActionsCommitted` | 声明即生效；反悔走 `undo_system` / `interrupt_system`（`ActionCost` 退款 + `CancelCost` 惩罚） |
 | `pause_during_planning_system` | `timeline_gate_system` | 暂停条件从「规划阶段」变成「玩家等待输入」 |
 | `execute_at = 提交时刻 + 前摇` | `execute_at = 声明时刻 + 前摇` | 声明即开始前摇（无回合） |
 | 逻辑刻度 `hit_clock` / `GlobalTime` | `execute_at`（虚拟秒）+ 领域层破平 | 「帧」= `execute_at` 排序键，不再引入第二套时钟 |
@@ -440,14 +451,15 @@ enemy_declare_system（把 Intent 翻成行动实体，防御意图翻成 RollCo
 | `Can*` 能力标记 | `Ready` + `SKILLS` 注册表 + `MenuSelection` | 删除能力标记组件 |
 | `AttackCooldown` | **删除** | 后摇（`BusyRecovery`）就是冷却 |
 | `CombatResult` 作为组件 | `Arbitration` 资源里的普通 struct | 阶段 2 drain 掉，不留在实体上 |
-| `CancelPrivilege` / `try_cancel` | **不引入** | 无回合下「取消」就是在自己 `Ready` 时改主意，天然无需特权组件 |
+| `CancelPrivilege` / `try_cancel` | 换成 `CancelCost` / `Uncancellable` | 无特权组件：能不能撤由**行动自己**说（默认免费可撤、挂 `Uncancellable` 才不给撤） |
 
 ---
 
 ## 8. 迁移路线图
 
-> **状态：M1–M7 全部完成，M8（文档收口）进行中。**
-> `cargo test` = 100 通过（`src/` 下 98 + `tests/assets.rs` 2）/ 0 失败 / 0 跳过；`cargo clippy --all-targets -- -D warnings` 零警告。
+> **状态：M1–M15 全部完成（M1–M7 是本文件当时的实施清单，M8 之后见 `TODO.md`）。**
+> 当前 `cargo test` = 154 通过（`src/` 下 152 + `tests/assets.rs` 2）/ 0 失败 / 0 跳过；
+> `cargo clippy --all-targets -- -D warnings` 零警告。
 >
 > 下面的勾选框保留为**当时的实施清单**（验收证据是测试名），
 > 与代码有细节偏差的地方已就地标注。进度总览见 [../status.md](../status.md)。
@@ -551,7 +563,7 @@ enemy_declare_system（把 Intent 翻成行动实体，防御意图翻成 RollCo
 
 ## 9. 已确认的两个次要点
 
-1. **翻滚 / 招架不吃 `require_commit`。** 防御是反应性操作，若还要 Enter 确认就失去意义；
-   `require_commit` 只作用于进攻 / 移动类主动作。**已按此实现**。
+1. **防御是反应性操作**：翻滚 / 招架按下即声明，不存在需要"先看后确认"的情况
+   （旧稿的 `require_commit` 开关连同 `Enter` 已删除，理由见 3.3）。
 2. **一格 = 2.0 世界单位**（体素的两倍）。改这一个常量即可切换；
    若改成「一格 = 1 个体素」，需同时把单位模型缩放改到 ~0.5。**已按 2.0 实现**。

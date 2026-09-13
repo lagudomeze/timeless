@@ -1,6 +1,6 @@
 # Project Timeless — 进度与决策记录
 
-> 状态：**唯一进度真相**（最后更新 2026-09-12）
+> 状态：**唯一进度真相**（最后更新 2026-09-13）
 > 维护规则见文末「七、防漂移规则」。
 >
 > **历史留档**：本文件 2026-09-11 的第一版是一份「文档 vs 代码差异分析报告」，
@@ -15,7 +15,7 @@
 
 | 代号 | 位置 | 包名 | 状态 | 测试 |
 | :--- | :--- | :--- | :--- | ---: |
-| **A（主线）** | `src/`（仓库根） | `app` | **无回合**：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 | **100 通过 / 0 失败 / 0 跳过** |
+| **A（主线）** | `src/`（仓库根） | `app` | **无回合**：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 | **154 通过 / 0 失败 / 0 跳过**（152 单元 + 2 资产验收） |
 | **B（冻结）** | `timeless/` | `timeless-app` / `timeless-domain` | 能力已迁入 A；**本检出跑不起来**（`timeless/crates/timeless-app/assets/` 目录不存在、`vendor/parley` 补丁不存在） | 9 |
 
 **D1 已拍板：保留 A，B 的能力迁进来。** 迁移清单与逐项勾选见
@@ -37,19 +37,21 @@ backlog 里（中文 HUD 的前提是补字体资产）。
 | `combat` | `health` / `formula`（纯逻辑 `domain.rs` + 两阶段 `resolution.rs`）/ `attributes` / `targeting` / `lifecycle` / `defense`（精力 + 翻滚 + 招架）/ `skills`（注册表 + 菜单 + 近战 + 箭矢 + 火球 + 爆炸） |
 | `timeline` | `ActionTiming`（前摇 + 后摇）/ `ScheduledAction` / `Declared`–`Pending`–`Committed` / `Ready` / `BusyRecovery`；门控 → 提交桥 → 调度 → 后摇恢复 |
 | `ai` | `EnemyBrain` + `Intent`；`decide_intent_system`（含威胁预读 → `Dodge`）与 `enemy_declare_system` 拆成两个系统 |
-| `input` | 只翻译：键盘 → `MoveCommand` / `JumpCommand` / `FireCommand` / `MeleeCommand` / `RollCommand` / `ParryCommand` / 技能菜单消息 / `ActionsCommitted`；中键 → `PanCamera` |
-| `presentation` | 相机（`CameraRig` + `PanCamera`）、装饰（18 种 Kenney glTF 随机摆放）、`BattleLog`（中文正文，见下）、HUD（英文文案 + Noto Sans SC 字体，只读） |
+| `input` | 只翻译：键盘 → `MoveCommand` / `JumpCommand` / `FireCommand` / `MeleeCommand` / `RollCommand` / `ParryCommand` / 技能菜单消息 / `TogglePause` / `CycleReactionWindow` / `ToggleHelp`；鼠标 → `PointerCommand`（左右键）/ `PanCamera`（中键）/ `ZoomCamera`（滚轮） |
+| `interaction` | 鼠标交互（只读世界 + 相机）：`cursor_ray` + `pick_cell` 沿高度场步进 → `HoveredCell` 资源；悬停高亮实体（按占用者上色）；`AoePreview` / `ConePreview` 预演指示器；点击 → `MoveToCommand` / `UseSelectedSkill` / `UndoCommand` |
+| `presentation` | 相机（`CameraRig` + `PanCamera`）、单位外观（2D 纸片 + 贴地阴影，`unit_sprite.rs`）、装饰（18 种 Kenney glTF 随机摆放）、`BattleLog`（中文正文，见下）、HUD（`hud/`：时间轴 / 玩家与敌人面板 / 技能栏 / 日志 / `F1` 帮助；英文文案 + Noto Sans SC 字体，只读） |
 | `spawn` | 组装车间：`unit_scene` + `player.rs` + `enemy.rs` + `assembly.rs` + `restart.rs`（`ResetBattle` 功能胶水） |
 
-按键：`WASD` 移动 · `Q` 火球 · `E` 近战 · `Space` 跳跃 · `F` 翻滚 · `V` 招架 ·
-`1`~`4` / `Tab` 选技能 · `G` 释放选中技能 · `Enter` 提交 · `F1` 切换提交模式 ·
-`R` 重置 · 中键拖拽平移相机。
+按键：方向键走一格 · 左键点地板走 / 点单位用选中技能 · 右键撤销 · `1`~`4` 直接放技能 ·
+`Tab` 循环 · `Q`/`W`/`E`/`R` 技能热键 · `C` 跳跃 · `Space` 暂停 · `F1` 帮助 ·
+`F2` 循环反应窗口 · `F5` 重置 · 中键拖拽平移相机 · 滚轮缩放。
 
 ## 三、已拍板的决策
 
 **D1 主线树 = A**（根原型 `src/`），B 的能力迁进来。
 **D2 时间线 = 无回合**：所有 PC/NPC「能决策就决策」，仅当玩家等待输入时冻结虚拟时间；
-默认输入直接生效，另加 `require_commit` 开关（`F1`）要求 Enter 提交。
+声明即生效（没有「确认」这一步），反悔靠打断 / 撤销；`F2` 只调**反应窗口**的松紧
+（有攻击瞄着玩家时要不要也停表），`Space` 是手动暂停。
 **D3 坐标 = 决策按格、结算按真实距离**：格（`Cell`，边长 2.0）管决策与同格判定，
 命中 / 射程 / 爆炸半径一律用世界距离。
 **D4 节奏 = 固定冷却**：每个动作自带前摇 + 后摇，没有冷却计时器。
@@ -62,10 +64,14 @@ D2/D3/D4/D5 已全部落地并通过测试；权威设计文档见
 
 ### 玩法与表现
 
-- [ ] **单位是占位模型**：玩家 = `rock_largeA.glb`、敌人 = `tree_oak.glb`
-      （`spawn/player.rs`、`spawn/enemy.rs` 注释自述「后续替换角色模型」）。
-- [ ] **单位没有体素碰撞 / 爬坡**：只在生成时贴地（`TerrainConfig` 注释直言），
-      因此出生点落在**格角**而不是格中心；第一次移动会顺便把它带到格中心。
+- [x] **单位外观已换成 2D 纸片 + 贴地阴影**（`presentation/unit_sprite.rs`）：
+      玩家 = 骑士、敌人 = 幽灵（Kenney Tiny Dungeon，CC0）；旧的岩石 / 树占位 glTF 已移除。
+      美术仍是占位级素材，换角色只需替换 `assets/textures/units/*.png`。
+- [x] **出生点落在格中心**（`spawn::cell_ground`，玩家 `(1,0)` / 敌人 `(3,3)`），
+      且地形量化到决策格（`world::terrain::TERRAIN_CELL = 2`）：一格是一块 2×2 的平地，
+      单位与装饰不再出现"一半陷进邻居方块"。
+- [ ] **单位没有体素碰撞 / 爬坡**：贴地靠 `follow_terrain_system` 追平地表高度，
+      但**能不能走**不查体素——点击目标格走的是直线，没有可行走性判定与寻路。
 - [ ] **没有火球 / 命中特效**：只有实体本身，没有粒子或 Gizmos。
 - [ ] **`assets/textures/ground/grass.png` 无人引用**（`grep textures/` 在 `src/` 下 0 命中）。
 
@@ -73,8 +79,9 @@ D2/D3/D4/D5 已全部落地并通过测试；权威设计文档见
 
 - [x] **`assets/LICENSES.md` 的字体条目现在是真的**：已补 `assets/fonts/NotoSansSC-Regular.otf`
       （OFL-1.1，8.3 MB），HUD 显式指定它，战斗日志的中文不再显示成豆腐块。
-      覆盖由 `tests/assets.rs` 守着（读真实字体查 `cmap`）。体积取舍与子集化出路见
-      `assets/LICENSES.md`。
+      `tests/assets.rs` 现在只验收「文件在、能被识别成 sfnt 字体」——逐字查 `cmap`
+      要引第三方解析库（`skrifa`），已移除，字形覆盖改为运行时人工确认。
+      体积取舍与子集化出路见 `assets/LICENSES.md`。
 - [ ] **动作数值硬编码**：`timeline::timing` 与 `SKILLS` 的数值应外置成 `.ron`
       （见 [timeline-turnless](design/timeline-turnless.md) 6.6）。
 - [ ] **箭矢未接输入**：`ShootAction` / `arrow_scene` 已实现且被测试覆盖，但
@@ -105,7 +112,7 @@ D2/D3/D4/D5 已全部落地并通过测试；权威设计文档见
 代码 A（**仓库根**，package `app`）：
 
 ```bash
-cargo test                              # 100 通过（98 单元 + 2 资产验收）/ 0 跳过
+cargo test                              # 154 通过（152 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check
 cargo run                               # 体素世界空间纵切
@@ -122,7 +129,7 @@ cargo test --workspace                  # domain 7 + app 2 = 9
 > `cargo test --workspace` 只会跑 A，跑不到 B 的 9 个测试。
 
 实机冒烟清单（每轮提交前）：启动无 panic · 无资产加载错误（Bevy 会为缺失 glb 打
-error 日志）· 决策 → 声明 → 前摇到点落地 → 扣血 → `R` 重置可复现。
+error 日志）· 决策 → 声明 → 前摇到点落地 → 扣血 → `F5` 重置可复现。
 
 ## 六、历史分析结论（留档）
 

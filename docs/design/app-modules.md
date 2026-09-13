@@ -24,7 +24,8 @@
 | `timeline` | **无回合**调度：谁能决策（`Ready`）、行动何时到点、后摇何时结束 | `TimelinePlugin` | `TimelineSet` |
 | `ai` | 敌人决策（选意图 + 声明行动，不碰规则） | `AiPlugin` | `AiSet` |
 | `input` | 玩家输入源：键盘 / 鼠标 → 消息（**只翻译**） | `InputPlugin` | `InputSet` |
-| `presentation` | 表现：相机 / 装饰 / 战斗日志 / HUD（只读） | `PresentationPlugin` | `PreloadSet`(Startup)、`PresentationSet`(Update) |
+| `interaction` | 鼠标交互：射线拾取悬停格 → 高亮 / 预演指示器；点击 → 各领域的消息 | `InteractionPlugin` | `InteractionSet` |
+| `presentation` | 表现：相机 / 单位纸片与贴地阴影 / 装饰 / 战斗日志 / HUD（时间轴 · 面板 · 技能栏 · 日志 · 帮助，只读） | `PresentationPlugin` | `PreloadSet`(Startup)、`PresentationSet`(Update) |
 | `spawn` | **组装车间**：把各域零件拼成角色实体；含开局组装与「重建」 | `SpawnPlugin` | `AssemblySet`(Startup)、`SpawnSet`(Update) |
 
 消息全部「谁写 → 谁消费」成对，清单见
@@ -58,10 +59,10 @@ WorldSet ───────────────────────�
 `enemy_declare_system` 写与玩家**同一条**消息）。玩家与 AI 因此共用同一套
 声明 → 调度 → 执行链，防御与技能都只有一份实现。
 
-冻结的判据（`timeline_gate_system`，整个游戏唯一写 `Time<Virtual>` 暂停的地方）：
+冻结的判据（`timeline_gate_system`，整个游戏唯一按游戏状态写 `Time<Virtual>` 的地方）：
 
 ```text
-冻结 ⟺ 场上存在玩家 且 玩家 Ready 且 没有单位在空中
+冻结 ⟺ 场上存在玩家 且 没有单位在空中 且（玩家 Ready 或 反应窗口判定有威胁）
 ```
 
 - **为什么「空中不冻结」**：跳跃是不可中断的弹道。若玩家落地前恢复 `Ready`
@@ -69,24 +70,45 @@ WorldSet ───────────────────────�
 - **为什么各领域没有 `if paused`**：Bevy 每帧把虚拟时间拷进通用 `Time`，
   所以位移、投射物、`Lifetime`、后摇计时**自动**停表（AGENTS.md：
   暂停用 `Time<Virtual>`，不要手写阶段门控）。
-- **`require_commit`**（`F1` 切换，默认关闭）：`true` 时输入只产生 `Declared`
-  草案，按 `Enter` 才升为 `Pending`——「先看后确认」的手感。
+- **反悔不用"确认"**：声明即生效（`commit_bridge_system` 当帧升 `Pending`），
+  改主意走打断 / 撤销——右键，或者直接按下一个新意图；能撤到什么时候由行动自己说
+  （`CancelCost` / `Uncancellable`）。`F2` 只调**反应窗口**的松紧
+  （`Loose` / `Strict` / `Off`），不是提交开关。
 
-按键：`WASD`/方向键 移动 · `Q` 火球 · `E` 近战 · `Space` 跳跃 · `F` 翻滚 ·
-`V` 招架 · `1`~`4` 直选技能 · `Tab`/`Shift+Tab` 循环 · `G` 释放选中技能 ·
-`Enter` 提交 · `F1` 切换提交模式 · `R` 重置 · 按住鼠标中键拖拽平移相机。
+按键：方向键走一格 · 左键点地板走 / 点单位用选中技能 · 右键撤销 · `1`~`4` 直接放技能 ·
+`Tab`/`Shift+Tab` 循环 · `G` 释放选中技能 · `Q`/`W`/`E`/`R` 技能热键 · `C` 跳跃 ·
+`Space` 暂停 · `F1` 帮助 · `F2` 循环反应窗口 · `F5` 重置 · 中键拖拽平移相机 · 滚轮缩放。
 
-移动方向按**屏幕**算（W = 远离相机），由 `input` 的 `GroundBasis` 按相机朝向
+移动方向按**屏幕**算（上 = 远离相机），由 `input` 的 `GroundBasis` 按相机朝向
 换算到世界 XZ 平面，再经 `movement::step_from_axis` **吸附成一格的正交步**。
 **决策按格、结算按真实距离**的分工见
 [ECS 战斗组件 · 第二节](ecs-combat-components.md#二坐标两套坐标各管一段)。
 
-跳跃（`Space`）也是移动领域的行动载荷（`JumpAction` + `Jumping` 弹道）：
+跳跃（`C`）也是移动领域的行动载荷（`JumpAction` + `Jumping` 弹道）：
 到点后给行动者一个向上初速度，落回起跳高度即结束；虚拟时间冻结时弹道一起冻住。
 
-HUD（`presentation/hud.rs`）显示：是否等你决策 / 精力 / 技能行 / 双方血量与坐标 /
-敌人意图 / 按键提示 / 战斗日志尾部。**HUD 文本一律 ASCII**——Bevy 默认字体不含
-CJK，中文界面需要自带字体资产。相机平移同样遵守「输入只翻译」：
+单位外观走**伪 3D**（`presentation/unit_sprite.rs`）：玩家 / 敌人是 2D 精灵
+（billboard，每帧绕 Y 轴对准相机），高度用**正下方地表上的黑色阴影**表示——阴影贴在
+单位所在 XZ 的地表高度上，离地越远越小，因此「脚底到阴影的距离」就是可以直接读出的
+高度差。精灵与阴影都是单位实体的子节点，所以单位根节点保持「脚底 + 无旋转 + 无缩放」；
+树木 / 石头等装饰仍是 3D glTF 模型。
+
+HUD 按**屏幕位置**拆成五块（`presentation/hud/`，每块一个文件 + 自己的更新系统）：
+
+| 位置 | 内容 | 文件 |
+| :--- | :--- | :--- |
+| 顶部 | 时间轴：`execute_at` 排序的行动色块（蓝 = 玩家 / 红 = 敌人，草案半透明） | `hud/timeline.rs` |
+| 左下 / 右下 | 双方面板：头像 + HP / EN 条 + 状态行 + 当前行动 | `hud/panels.rs`、`hud/actions.rs` |
+| 底部居中 | 技能栏：图标按钮 + 消耗角标 + 悬停 tooltip | `hud/skills.rs` |
+| 右下偏上 | 战斗日志：半透明、点标题折叠 | `hud/log_panel.rs` |
+| 居中 | 帮助面板（`F1`，常驻按键提示只在这里） | `hud/help.rs` |
+
+布局树与分辨率适配在 `hud/layout.rs`（`UiScale` = 窗口高 / `BASE_HEIGHT`）。
+每个面板系统都先算一份**纯数据快照**，与 `HudCache` 里的上一帧比对，相等就整帧不碰
+UI 节点（日志用 `Res::is_changed()` + 折叠状态）；WeGo 冻结时 HUD 长期不产生写入。
+**HUD 是只读的**：HP / EN 条是进度条而不是可拖动的控件；**文案一律英文**——
+中文只出现在战斗日志正文，Bevy 默认字体不含 CJK，所以要自带字体资产。
+相机平移同样遵守「输入只翻译」：
 `input/pointer.rs` 把中键拖拽翻译成 `PanCamera` 消息，
 `presentation/camera.rs` 的 `CameraRig` 消费它（注视点限制在场地范围内）。
 
@@ -105,7 +127,7 @@ CJK，中文界面需要自带字体资产。相机平移同样遵守「输入�
 | `Ready` | `timeline` |
 | `EnemyBrain` / `Intent` | `ai` |
 | `ChunkLoader`（仅玩家） | `world` |
-| 模型（`WorldAssetRoot`）/ 相机 / 装饰 / 日志 | `presentation` |
+| 2D 精灵与贴地阴影 / 相机 / 装饰 / 日志 | `presentation` |
 
 玩家和敌人的差别只有两点：**驱动源**（`input` 写消息 vs `ai` 自己选意图）
 与**特质零件**（区块加载器）；两者共用同一套 `movement` / `combat` / `timeline` 系统。
@@ -158,9 +180,9 @@ src/
 ├── movement/
 │   ├── cell.rs                 #   Cell / MoveGoal（决策层坐标）
 │   ├── components.rs           #   Velocity / MoveSpeed
-│   ├── events.rs               #   MoveCommand / JumpCommand
+│   ├── events.rs               #   MoveCommand / MoveToCommand / JumpCommand
 │   ├── actions.rs              #   MoveAction / JumpAction / RollAction + 工厂 + 声明/执行器
-│   ├── systems.rs              #   move_entities_system + DodgingOnArrival
+│   ├── systems.rs              #   move_entities_system / follow_terrain_system + DodgingOnArrival
 │   └── plugin.rs
 ├── combat/
 │   ├── components.rs           #   Faction / Collidable
@@ -176,12 +198,19 @@ src/
 │   ├── timing.rs               #   ActionTiming + 常量表 + CELL_SIZE
 │   ├── components.rs           #   ScheduledAction + Declared / Pending / Committed / Ready / BusyRecovery
 │   ├── resources.rs            #   Timeline / TimelineConfig
-│   ├── events.rs               #   ActionsCommitted
-│   ├── systems.rs              #   门控 / 提交桥 / 调度 / 后摇 + begin_action / end_action
+│   ├── events.rs               #   TogglePause / CycleReactionWindow / ActionBlocked / UndoCommand / ActionCancelled
+│   ├── systems.rs              #   门控 / 暂停 / 打断 / 提交桥 / 撤销 / 调度 / 后摇 + begin_action / end_action
 │   └── plugin.rs
 ├── ai/{components,systems,plugin}.rs
 ├── input/{keyboard,pointer,plugin}.rs   # 键盘 / 鼠标 → 消息（只翻译）
-├── presentation/{components,camera,decoration,hud,log,preload,plugin}.rs
+├── interaction/                # 鼠标交互：拾取 / 高亮 / 点击 → 消息 / 预演指示器
+│   ├── components.rs           #   HoveredCell（资源）/ HoverHighlight / HoverTint / AoePreview / ConePreview
+│   ├── events.rs               #   PointerCommand
+│   ├── raycast.rs              #   cursor_ray + pick_cell（沿高度场步进的纯函数）
+│   ├── systems.rs              #   悬停 / 高亮 / 预演 / 读数 / 点击解释
+│   └── plugin.rs
+├── presentation/{components,camera,unit_sprite,decoration,log,preload,plugin}.rs
+├── presentation/hud/{mod,layout,panels,actions,skills,timeline,log_panel,hint,help}.rs
 └── spawn/                       # 组装车间
     ├── unit.rs                  #   玩家 / 敌人共用的单位零件
     ├── player.rs                #   单位零件 + 输入驱动 + ChunkLoader
@@ -235,7 +264,7 @@ v0.1 只做**面剔除**（`MeshingConfig::cull_hidden_faces`，被实心邻居�
 **技能菜单也遵守这条**：`SelectSkill` / `CycleSkill` 只改 `MenuSelection`
 （一个资源），`UseSelectedSkill` 由派发系统按当前选择再写
 `MeleeCommand` / `FireCommand` / `RollCommand`——菜单**不生成行动实体、不扣精力**，
-扣费只在各领域的声明系统里发生。功能自带的触发键（`R` 重置）跟着功能走，
+扣费只在各领域的声明系统里发生。功能自带的触发键（`F5` 重置）跟着功能走，
 见 `spawn/restart.rs`。
 
 ### 5. 战斗流水线（`CombatSet` 内部链）

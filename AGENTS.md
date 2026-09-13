@@ -42,7 +42,7 @@ timeless/
 根目录 `src/` 原型（package `app`）在**仓库根目录**执行：
 
 - `cargo run` — 启动原型（体素地形 + 世界空间战斗）。
-- `cargo test` — 原型测试：`src/` 下 98 个单元测试 + `tests/assets.rs` 2 个资产验收用例（字体覆盖）。
+- `cargo test` — 原型测试：`src/` 下 152 个单元测试 + `tests/assets.rs` 2 个资产验收用例（字体可解析、单位精灵与技能图标是带 alpha 的方图）。
 - `cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` — 同 timeless 的验收标准。
 
 环境注意事项：本机 crates.io 直连不可用，依赖经清华镜像解析。不要使用 `cargo add`（已知兼容性问题）；依赖须手动写入 `Cargo.toml`，并在代码中引入前更新根目录 `TODO.md` 的版本索引表。
@@ -73,11 +73,13 @@ timeless/
   翻译成 Bevy `Message`，再由对应领域的单一职责系统消费并落地。禁止在输入系统里
   同时做「翻译 + 决策 + 改状态」。A 原型现有的输入消息：`MoveCommand` / `JumpCommand` /
   `FireCommand` / `MeleeCommand` / `RollCommand` / `ParryCommand` / `SelectSkill` /
-  `CycleSkill` / `UseSelectedSkill` / `ActionsCommitted` / `PanCamera`。
+  `CycleSkill` / `UseSelectedSkill` / `PointerCommand` / `TogglePause` /
+  `CycleReactionWindow` / `ToggleHelp` / `PanCamera` / `ZoomCamera`。
 - **消息定义与消费它的系统同属一个领域**：如 `MoveCommand` 与 `declare_move_system`
   在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/skills/`、
   `RollCommand` 与 `declare_roll_system` 在 `combat/defense/`、
-  `ActionsCommitted` 与 `commit_bridge_system` 在 `timeline/`。
+  `TogglePause` / `UndoCommand` 与 `pause_toggle_system` / `undo_system` 在 `timeline/`、
+  `PointerCommand` 与 `pointer_command_system` 在 `interaction/`。
   其他领域需要发起该操作时只写消息，不重复实现；不要在生产者文件里定义消费方领域的消息。
 - 跨模块交互一律走 `MessageWriter` / `MessageReader`；需要立即生效、针对具体
   实体时才用 Event + Observer，两者不可混用。
@@ -104,23 +106,36 @@ timeless/
 - **暂停等输入**：唯一的暂停点是 `timeline_gate_system`——玩家就绪且未在空中时冻结
   `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用 `Time`，位移 / 投射物 / 后摇自动停表）；
   禁止在其它地方手写 `if paused` 阶段门控。
-  键位：`WASD` 移动 · `Q` 火球 · `E` 近战 · `Space` 跳跃 · `F` 翻滚 · `V` 招架 ·
-  `1`~`4` / `Tab` 选技能 · `G` 释放选中技能 · `Enter` 提交 · `F1` 切换「是否需要 Enter 提交」 ·
-  `R` 重置 · 按住鼠标中键拖拽平移相机。
-  移动方向按**屏幕**算（W = 远离相机），由 `input` 的 `GroundBasis` 按相机朝向
+  键位：**方向键**走一格 · **左键**点地板 = 走到那一格、点单位 = 用当前选中的技能打
+  那一格 · **右键**撤销未结算的行动 · `1`~`4` 直接放技能 · `Tab` 循环 ·
+  `Q`/`W`/`E`/`R` 技能热键（`HotkeyBinds`） · `C` 跳跃 · `Space` 暂停 ·
+  **`F1` 开合帮助面板** · `F2` 循环反应窗口（`Loose`/`Strict`/`Off`） · `F5` 重置 ·
+  按住鼠标中键拖拽平移相机 · 滚轮缩放。
+  **没有"确认"步骤**：声明即生效，反悔靠打断 / 撤销（`CancelCost` 定代价，
+  `Uncancellable` 的行动撤不掉）。
+  移动方向按**屏幕**算（上 = 远离相机），由 `input` 的 `GroundBasis` 按相机朝向
   换算到世界 XZ 平面，再经 `movement::step_from_axis` **吸附成一格的正交步**；
   平面轴约定见 `movement::ground_direction`。
 - **坐标：决策按格、结算按真实距离**：格（`movement::Cell`，边长 `CELL_SIZE`）只用于
   决策与同格判定；命中 / 射程 / 爆炸半径一律用世界距离。单位只在停下时更新 `Cell`
   （`move_entities_system` 吸附到目标格中心），不每帧从 `Transform` 反推。
-- **表现层只读**：HUD（就绪 / 精力 / 技能 / 双方状态 / 敌人意图 / 战斗日志）与相机平移都在
-  `presentation/`，只读游戏状态。
+- **表现层只读**：HUD 与相机平移都在 `presentation/`，只读游戏状态。
+  HUD 按屏幕位置拆成五块（`presentation/hud/`）：顶部时间轴（行动色块，蓝 = 玩家 /
+  红 = 敌人，未提交的草案半透明）、左下玩家面板 / 右下敌人面板（头像 + HP / EN 条 +
+  状态行 + 当前行动）、底部居中技能栏（图标 + 消耗角标 + 悬停 tooltip）、右下偏上
+  可折叠战斗日志、居中帮助面板（`F1`）。**常驻按键提示不放在屏幕角落**——它们只在
+  帮助面板里。分辨率适配靠 `fit_ui_scale_system`（窗口高 / `BASE_HEIGHT` → `UiScale`），
+  面板尺寸用像素、锚点用百分比。
   **文本语言与字体**：HUD 自己的文案用英文；**战斗日志正文是中文**
   （`presentation/log.rs`），因此 HUD 显式指定 `hud::HUD_FONT`
   （`assets/fonts/NotoSansSC-Regular.otf`，OFL-1.1）而不是 Bevy 默认字体
   （默认字体不含 CJK，会显示成豆腐块）。改日志文案时**必须**跑 `tests/assets.rs`——
   它读真实字体查 `cmap`，缺字会直接让它失败（运行时只会静默变方块）。
   许可与体积取舍见 `assets/LICENSES.md`。
+- **单位外观是 2D 纸片 + 贴地阴影**（`presentation/unit_sprite.rs`）：玩家 / 敌人用 2D
+  精灵（绕 Y 轴对准相机的 billboard），**高度靠正下方地表上的黑色阴影表示**（离地越高
+  阴影越小）。精灵与阴影是单位实体的子节点，因此单位根节点必须保持「脚底 + 无旋转 +
+  无缩放」的参考系；树木 / 石头等装饰继续用 3D 模型。
 - **功能不是领域**：像「战斗重置」这种只把已有系统拼一次的胶水，留在调用方
   （`spawn/restart.rs`），有数据模型 / 规则才进领域。
 - 玩家输入只在 `input/` 翻译成消息（键盘 → `MoveCommand` / `FireCommand` /
@@ -132,8 +147,10 @@ timeless/
 
 ## 测试规范
 
-- 单元测试写在源码旁的 `#[cfg(test)] mod tests` 中：A 原型集中在 `src/lib.rs` 的
-  `mod tests`（98 个）+ 各领域文件内的纯逻辑用例；资产验收用例在 `tests/assets.rs`（2 个）；B 的领域层用例在 `timeless-domain`。
+- 单元测试写在源码旁的 `#[cfg(test)] mod tests` 中：A 原型共 152 个——`src/lib.rs` 的
+  `mod tests` 放**整机用例**（25 个：真实流水线顺序 + `headless_app`），其余散在各领域
+  文件里的纯逻辑用例；资产验收用例在 `tests/assets.rs`（2 个）；B 的领域层用例在
+  `timeless-domain`。
 - 测试名用描述性的 snake_case，例如 `layer1_speed_frame_decides_who_hits_first`。
 - 使用 `assert_eq!`，断言意图不直观时附带简短说明。
 - **不要用 `#[ignore]` 隐藏失败**：跳过的用例要么修好，要么在 `TODO.md` 写明根因与下一步。
