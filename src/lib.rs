@@ -12,8 +12,9 @@
 //! | [`combat`] | 生命 / 伤害 / 目标获取 / 攻击实体生命周期 / 技能 / 精力 / 防御 / 两阶段结算 |
 //! | [`ai`] | 敌人决策（选意图 → 声明行动，同样不改状态） |
 //! | [`timeline`] | 无回合调度：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 |
-//! | [`input`] | 玩家输入源（键盘 → 消息，只翻译） |
-//! | [`presentation`] | 表现：相机 / 装饰 / 日志（将来还有 UI / 动画 / 特效） |
+//! | [`input`] | 玩家输入源（键盘 / 鼠标 → 消息，只翻译） |
+//! | [`interaction`] | 鼠标交互：射线拾取、网格高亮、点击 → 消息、行动预演指示器 |
+//! | [`presentation`] | 表现：相机 / 单位纸片与贴地阴影 / HUD / 装饰 / 日志 |
 //! | [`spawn`] | **组装车间**：把各域零件拼成「玩家 / 敌人」实体，含开局组装与重建功能 |
 //!
 //! 「玩家」「敌人」不是模块，而是组件的组合体——零件归各领域，组装归 [`spawn`]，
@@ -21,7 +22,8 @@
 //!
 //! ```text
 //! spawn ──▶ combat / movement / ai / world / presentation
-//! input ──▶ movement / combat / timeline（只写它们的消息）
+//! input ──▶ movement / combat / timeline / interaction / presentation（只写它们的消息）
+//! interaction ──▶ movement / combat / timeline（点击解释成它们的消息）
 //! ai    ──▶ movement / combat（只声明行动实体）
 //! ```
 //!
@@ -39,6 +41,7 @@ use bevy::prelude::*;
 pub mod ai;
 pub mod combat;
 pub mod input;
+pub mod interaction;
 pub mod movement;
 pub mod presentation;
 pub mod spawn;
@@ -49,6 +52,7 @@ pub mod world;
 pub use ai::{AiPlugin, AiSet};
 pub use combat::{CombatPlugin, CombatSet};
 pub use input::{InputPlugin, InputSet};
+pub use interaction::{InteractionPlugin, InteractionSet};
 pub use movement::{MovementPlugin, MovementSet};
 pub use presentation::{PreloadSet, PresentationPlugin, PresentationSet};
 pub use spawn::{AssemblySet, SpawnPlugin, SpawnSet};
@@ -73,6 +77,7 @@ pub fn configure_pipeline(app: &mut App) {
             (
                 SpawnSet,
                 InputSet,
+                InteractionSet,
                 TimelineSet,
                 AiSet,
                 MovementSet,
@@ -95,6 +100,7 @@ impl Plugin for GamePlugin {
             PresentationPlugin,
             SpawnPlugin,
             InputPlugin,
+            InteractionPlugin,
             TimelinePlugin,
             MovementPlugin,
             CombatPlugin,
@@ -125,6 +131,8 @@ pub(crate) mod test_support {
             // `setup_hud` 会 `AssetServer::load` 一份字体句柄；不注册 `Font` 资产类型
             // 会在 `load` 那一刻 panic（而且是在并行计算线程里，错误信息很难指向 HUD）
             .init_asset::<Font>()
+            // 单位精灵同理：`presentation::preload` 会 load 三张贴图
+            .init_asset::<Image>()
             .insert_resource(ButtonInput::<bevy::input::keyboard::KeyCode>::default())
             .insert_resource(ButtonInput::<bevy::input::mouse::MouseButton>::default())
             .insert_resource(bevy::input::mouse::AccumulatedMouseMotion::default())
@@ -133,6 +141,8 @@ pub(crate) mod test_support {
                 PresentationPlugin,
                 SpawnPlugin,
                 InputPlugin,
+                // 输入域要写的 `PointerCommand` 由交互域注册
+                InteractionPlugin,
                 TimelinePlugin,
                 MovementPlugin,
                 CombatPlugin,
@@ -159,7 +169,8 @@ mod tests {
         PhysicalDamage, Projectile, health::Health,
     };
     use crate::movement::{Cell, MoveSpeed, Velocity};
-    use crate::timeline::{CELL_SIZE, Pending, Ready, TimelineConfig};
+    use crate::timeline::{CELL_SIZE, Pending, Ready, Timeline};
+    use crate::world::{TerrainConfig, ground_position};
 
     /// 最小 App：装输入 / 时间线 / 战斗 / 移动领域，不启动渲染。
     ///
@@ -180,6 +191,8 @@ mod tests {
             .init_asset::<StandardMaterial>()
             // HUD 会加载字体句柄，因此测试 App 也要注册 `Font` 资产类型
             .init_asset::<Font>()
+            // 贴地系统要读地形高度：测试 App 少了它会在系统初始化就 panic
+            .init_resource::<TerrainConfig>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 100,
             )))
@@ -188,7 +201,20 @@ mod tests {
             .insert_resource(bevy::input::mouse::AccumulatedMouseMotion::default())
             // 输入域写的消息由「消费它们的领域」注册；轻量 App 里手动补上相机平移
             .add_message::<crate::presentation::PanCamera>()
-            .add_plugins((InputPlugin, TimelinePlugin, MovementPlugin, CombatPlugin));
+            // 同上：F1 的帮助开关由 HUD 消费，这里没有 PresentationPlugin
+            .add_message::<crate::presentation::ToggleHelp>()
+            // 预演读数也是 HUD 消费的消息（写方是 interaction）
+            .add_message::<crate::presentation::hud::PreviewReadout>()
+            // 滚轮缩放由 presentation 消费（本测试 App 没有 PresentationPlugin）
+            .add_message::<crate::presentation::ZoomCamera>()
+            .add_plugins((
+                InputPlugin,
+                // 输入域要写的 `PointerCommand` 由交互域注册
+                InteractionPlugin,
+                TimelinePlugin,
+                MovementPlugin,
+                CombatPlugin,
+            ));
         configure_pipeline(&mut app);
         app
     }
@@ -373,7 +399,7 @@ mod tests {
         let mut app = test_app();
         let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
 
-        press(&mut app, KeyCode::KeyW);
+        press(&mut app, KeyCode::ArrowUp);
         app.update(); // 声明移动：产生 Declared 草案 + 玩家失去 Ready
         app.update(); // 提交桥：Declared → Pending
         assert_eq!(pending_actions(&mut app), 1, "W 应当产生一条待执行移动");
@@ -392,10 +418,18 @@ mod tests {
             Some(Cell::new(0, 1)),
             "W 应当走一格到 +Z 方向的邻格"
         );
+        // 目标格 (0,1) 的中心 = 世界 (1, 3)；`y` 由地形决定（停下时贴地）
+        let terrain = *app.world().resource::<TerrainConfig>();
+        let expected = ground_position(&terrain, 1.0, 3.0);
+        let transform = app.world().get::<Transform>(player).unwrap().translation;
         assert_eq!(
-            app.world().get::<Transform>(player).unwrap().translation,
-            Vec3::new(1.0, 0.0, 3.0),
+            (transform.x, transform.z),
+            (expected.x, expected.z),
             "应当停在目标格中心（格 (0,1) 的中心）"
+        );
+        assert_eq!(
+            transform.y, expected.y,
+            "停下时应当贴着目标格的地面，而不是停在出生高度"
         );
         assert_eq!(
             velocity_of(&mut app, player),
@@ -404,17 +438,12 @@ mod tests {
         );
     }
 
-    /// 默认模式（`require_commit = false`）：输入直接产生效果，不按 Enter 也会执行。
     #[test]
-    fn input_applies_immediately_by_default() {
+    fn fast_mode_applies_input_without_enter() {
         let mut app = test_app();
-        assert!(
-            !app.world().resource::<TimelineConfig>().require_commit,
-            "默认应当是「按下即决定」"
-        );
         let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
 
-        press(&mut app, KeyCode::KeyW);
+        press(&mut app, KeyCode::ArrowUp);
         for _ in 0..7 {
             app.update();
         }
@@ -423,47 +452,6 @@ mod tests {
             app.world().get::<Cell>(player).copied(),
             Some(Cell::new(0, 1)),
             "没有按 Enter，W 也应当直接走一格"
-        );
-    }
-
-    /// `require_commit = true`：输入只产生草案，等玩家按 Enter 才升为待执行。
-    #[test]
-    fn require_commit_defers_execution_until_enter() {
-        let mut app = test_app();
-        app.insert_resource(TimelineConfig {
-            require_commit: true,
-        });
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
-
-        press(&mut app, KeyCode::KeyW);
-        for _ in 0..6 {
-            app.update();
-        }
-        assert_eq!(pending_actions(&mut app), 0, "未提交时不该有待执行行动");
-        assert_eq!(
-            app.world().get::<Cell>(player).copied(),
-            Some(Cell::new(0, 0)),
-            "未提交时不该移动"
-        );
-        assert!(
-            !app.world()
-                .resource::<crate::timeline::Timeline>()
-                .waiting_for_input(),
-            "草案已经存在：玩家处于「等自己按 Enter」的状态，而不是等输入"
-        );
-        assert!(
-            !app.world().resource::<Time<Virtual>>().is_paused(),
-            "已声明草案：世界不必继续冻结，但草案不会执行"
-        );
-
-        press(&mut app, KeyCode::Enter);
-        for _ in 0..7 {
-            app.update();
-        }
-        assert_eq!(
-            app.world().get::<Cell>(player).copied(),
-            Some(Cell::new(0, 1)),
-            "提交后应当走一格"
         );
     }
 
@@ -494,7 +482,7 @@ mod tests {
         };
 
         // 按 W（屏幕向上）：一次决策走一格，方向 = 相机前方（远离相机）
-        press(&mut app, KeyCode::KeyW);
+        press(&mut app, KeyCode::ArrowUp);
         for _ in 0..7 {
             app.update();
         }
@@ -505,19 +493,18 @@ mod tests {
             .get::<Cell>(player)
             .copied()
             .expect("应当有格子");
+        // 贴地：结束位置的高度必须是**脚下那格的地表高度**（而不是"高度永远不变"）
+        let terrain = *app.world().resource::<TerrainConfig>();
+        let ground = ground_position(&terrain, end.x, end.z).y;
         assert!(
-            (end.y - start.y).abs() < 1e-3,
-            "移动必须留在地面上，实际位移 {:?}",
-            end - start
+            (end.y - ground).abs() < 1e-3,
+            "移动结束必须站在地表上：y = {}, 地表 = {ground}（起点 y = {}）",
+            end.y,
+            start.y
         );
         // 决策按格：一次决策的落点是**相邻格的中心**，由 `step_from_axis`
         // 从相机前方吸附出正交方向。因此这里比对的是「同一套吸附规则推出的格」，
         // 而不是相机前方本身。
-        //
-        // 注意**不能**断言位移向量等于「一格」：单位的起点在世界坐标上不落在
-        // 格中心（`unit_scene` 直接取地形采样点，取到的是格 (1,1) 的角），
-        // 于是「角 → 相邻格中心」本来就是一条斜线。真正的不变式是
-        // 「终点 = 相邻格中心」（下面两条断言）。
         let forward = Vec2::new(camera_forward.x, camera_forward.z).normalize();
         let (dx, dz) = crate::movement::step_from_axis(forward);
         assert_ne!((dx, dz), (0, 0), "W 应当推出一个正交步伐，而不是零步");
@@ -538,33 +525,143 @@ mod tests {
         );
     }
 
-    /// 一次决策 = 一个动作：忙的时候（正在前摇 / 后摇）不接受新声明。
+    /// 一次决策 = 一个意图：**新意图会打断尚未结算的旧意图**（前摇窗口内）。
     ///
-    /// 取代了旧的「同一轮只允许一个草案」——无回合模型没有「轮」，
-    /// 约束由 `Ready` 表达。
+    /// 这是无回合模型"随时可以改主意"的落点；打断的代价由旧行动自己声明
+    /// （火球 2 点精力，见 `CancelCost`）。
     #[test]
-    fn a_busy_unit_cannot_declare_another_action() {
+    fn a_new_intent_interrupts_the_unresolved_action() {
         let mut app = test_app();
         spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
 
         press(&mut app, KeyCode::KeyQ);
         app.update(); // 声明火球 → 失去 Ready
-        assert_eq!(fireballs(&mut app), 1, "Q 应当声明一次火球");
+        // 声明当帧行动还是 `Declared`（提交桥下一帧才升 `Pending`），所以直接数行动实体
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<crate::timeline::ScheduledAction>>()
+                .iter(app.world())
+                .count(),
+            1,
+            "Q 应当声明一条火球行动"
+        );
 
-        // 忙的时候按 W：不接受（输入不会排队到下一次决策）
-        press(&mut app, KeyCode::KeyW);
+        // 前摇里按方向键：打断火球，换成移动
+        press(&mut app, KeyCode::ArrowUp);
         app.update();
         assert_eq!(
             app.world_mut()
                 .query_filtered::<Entity, With<crate::movement::MoveAction>>()
                 .iter(app.world())
                 .count(),
-            0,
-            "后摇内不该再声明移动"
+            1,
+            "新意图应当顶掉旧行动、换成移动"
+        );
+        assert_eq!(fireballs(&mut app), 0, "被打断的火球不该真的发射出去");
+    }
+
+    /// 整机链路：被拒的输入要**看得见**——声明系统写 `ActionBlocked`、HUD 消费并弹出提示。
+    ///
+    /// 这条守的是「消息有没有真的接上」：单看两边的单测都过，中间少注册一条消息
+    /// 或系统顺序接错，玩家感受到的就是"按了没反应、也没人告诉我为什么"。
+    ///
+    #[test]
+    fn a_blocked_input_makes_the_hud_say_so() {
+        use crate::presentation::hud::ActionHint;
+
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        app.update(); // Startup：组装单位 + HUD
+
+        // 先打一发火球：执行后玩家进入**不可打断**的后摇窗口（火球后摇 0.5s）
+        press(&mut app, KeyCode::KeyQ);
+        for _ in 0..5 {
+            app.update();
+        }
+
+        // 后摇里按方向键：撤不掉（行动已经结算）、也声明不了 → 应当弹出提示
+        press(&mut app, KeyCode::ArrowLeft);
+        app.update();
+
+        let mut query = app.world_mut().query_filtered::<&Node, With<ActionHint>>();
+        let hint = query.iter(app.world()).next().expect("HUD 应当有提示条");
+        assert_eq!(
+            hint.display,
+            Display::Flex,
+            "被拒的输入应当让 HUD 提示一句，而不是静默丢弃"
         );
     }
 
     /// 后摇走完会恢复 `Ready`，此时按 W 能正常走一格。
+    ///
+    /// 下面两条是「鼠标路径」的整机验收：点地板跨多格走、右键撤销退资源。
+    #[test]
+    fn clicking_a_far_cell_walks_more_than_one_cell() {
+        let mut app = test_app();
+        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let target = Cell::new(3, 0);
+
+        app.world_mut()
+            .write_message(crate::movement::MoveToCommand { cell: target });
+        // 前摇 0.15 + 直线约 7.1 / 速度 5.0 ≈ 1.4s，再加后摇，跑到 2s 足够
+        for _ in 0..20 {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world().get::<Cell>(player).copied(),
+            Some(target),
+            "一次点击应当走到目标格（跨多格）"
+        );
+        assert!(
+            app.world().get::<Ready>(player).is_some(),
+            "走到位并走完后摇之后应当重新可决策"
+        );
+    }
+
+    /// 右键撤销：草案被销毁、精力退回来、玩家重新可决策。
+    #[test]
+    fn undo_cancels_the_draft_and_refunds_stamina() {
+        let mut app = test_app();
+        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
+
+        press(&mut app, KeyCode::KeyQ); // 火球：声明时先扣 2 精力
+        app.update();
+
+        let stamina = |app: &App| app.world().get::<Stamina>(player).unwrap().current;
+        assert_eq!(stamina(&app), 3, "火球声明时应当先扣 2 点精力");
+        assert_eq!(pending_actions(&mut app), 0, "预演态下还没有提交");
+        assert!(
+            app.world().resource::<Timeline>().has_draft(),
+            "应当有一条待确认的草案"
+        );
+
+        app.world_mut().write_message(crate::timeline::UndoCommand);
+        app.update();
+
+        // 火球声明时扣 2；取消时退 2 但**收 2 点取消代价**（CancelCost）→ 净剩 3
+        assert_eq!(stamina(&app), 3, "取消大招要付代价：不能白打断");
+        assert!(
+            app.world().get::<Ready>(player).is_some(),
+            "撤销之后玩家重新可决策"
+        );
+        assert!(
+            !app.world().resource::<Timeline>().has_draft(),
+            "草案记录要清干净"
+        );
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<crate::timeline::ScheduledAction>>()
+                .iter(app.world())
+                .count(),
+            0,
+            "行动实体应当被销毁"
+        );
+        assert_eq!(fireballs(&mut app), 0, "撤销后不该留下飞行中的火球");
+    }
+
     #[test]
     fn recovery_restores_the_ability_to_decide() {
         let mut app = test_app();
@@ -580,7 +677,7 @@ mod tests {
         );
 
         // 方向没变过，但上一次决策已经消耗掉了；重新按 W 应当能再声明
-        press(&mut app, KeyCode::KeyW);
+        press(&mut app, KeyCode::ArrowUp);
         for _ in 0..7 {
             app.update();
         }
@@ -597,7 +694,7 @@ mod tests {
         let mut app = test_app();
         let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
 
-        press(&mut app, KeyCode::Space);
+        press(&mut app, KeyCode::KeyC);
         app.update();
         assert_eq!(
             app.world_mut()
@@ -618,10 +715,13 @@ mod tests {
         for _ in 0..6 {
             app.update();
         }
+        // 单位没动过位置，所以落地高度就是它脚下那一格的地表高度
+        let terrain = *app.world().resource::<TerrainConfig>();
+        let ground = ground_position(&terrain, 0.0, 0.0).y;
         assert_eq!(
             app.world().get::<Transform>(player).unwrap().translation.y,
-            0.0,
-            "应当落回起跳高度"
+            ground,
+            "应当落回起跳高度（也就是脚下的地面）"
         );
         assert!(
             app.world()
@@ -849,7 +949,7 @@ mod tests {
     fn jump_does_not_get_stuck_in_the_air() {
         let mut app = test_app();
         let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
-        press(&mut app, KeyCode::Space);
+        press(&mut app, KeyCode::KeyC);
         for _ in 0..12 {
             app.update();
         }
@@ -904,6 +1004,46 @@ mod tests {
         );
     }
 
+    /// 远程火球：飞行时间比后摇长时，行动者必须**忙到落地**。
+    ///
+    /// 修复前：后摇 0.50s 一结束玩家就恢复 `Ready`，`timeline_gate_system`
+    /// 立刻冻结虚拟时间——1.5s 的飞行被截断，火球悬在半空、敌人一点血不掉。
+    /// 实机上这就是"按了 3 没放出去，但精力已经扣了"。
+    #[test]
+    fn a_long_shot_keeps_the_shooter_busy_until_impact() {
+        let mut app = test_app();
+        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        // 6 格之外：飞 12 米要 1.5s，远超 0.50s 的后摇
+        let enemy = app
+            .world_mut()
+            .spawn((
+                Faction::Enemy,
+                Health::new(50.0),
+                Cell::new(6, 0),
+                Transform::from_xyz(13.0, 0.0, 1.0),
+            ))
+            .id();
+
+        press(&mut app, KeyCode::KeyQ);
+        // 12 帧 = 1.2s：后摇早在 0.8s 就过完了，此刻火球还在飞
+        for _ in 0..12 {
+            app.update();
+        }
+        assert!(
+            app.world().get::<Ready>(player).is_none(),
+            "火球还在飞的时候射手不该拿到决策权，否则门控会把球冻在半空"
+        );
+
+        for _ in 0..14 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().get::<Health>(enemy).unwrap().current,
+            38.0,
+            "1.8s 之后火球应当已经落地并炸掉 12 点血（全程不手动解冻虚拟时间）"
+        );
+    }
+
     /// 火球打空地：落点范围内没有单位时完全落空，也不留残留实体。
     ///
     /// 这里只验证**整机路径**会把火球送到落点并清理掉；「谁被炸到」的判据
@@ -942,8 +1082,8 @@ mod tests {
             > 0
             && frames < 40
         {
-            app.update();
-            press(&mut app, KeyCode::KeyQ);
+            // 保持世界流动：直接给虚拟时钟解冻（**不按键**——按 Q 会打断自己的火球）
+            app.world_mut().resource_mut::<Time<Virtual>>().unpause();
             frames += 1;
         }
 
