@@ -19,10 +19,11 @@
 //! 因此移动、计时器、生命周期全部自动停表，不需要任何手写阶段门控
 //! （AGENTS.md：暂停用 `Time<Virtual>`，不要手写阶段门控）。
 //!
-//! 操作：`WASD` 声明移动、`Q` 火球、`E` 近战、`Space` 跳跃、`F` 翻滚、`V` 招架、
-//! `1`~`4` / `Tab` 选技能、`G` 释放选中技能、`R` 重置战斗。
-//! 默认**按下即生效**（`TimelineConfig::require_commit = false`）；
-//! 需要「先声明再确认」时按 `F1` 打开开关，`Enter` 才提交。
+//! 操作：方向键走一格、左键点地板 / 敌人、`1`~`4` 直接放技能、`Q/W/E/R` 热键、
+//! `Space` 暂停、`F2` 循环反应窗口、`F5` 重置战斗。
+//! **没有"确认"这一步**：声明即生效（[`commit_bridge_system`] 当帧把它升为
+//! `Pending`）；反悔靠**打断 / 撤销**（[`interrupt_system`] / [`undo_system`]），
+//! 只要还没到结算帧就能撤。
 //!
 //! 决策按**格子**、命中按**真实距离**，格边长见 [`timing::CELL_SIZE`]。
 
@@ -35,13 +36,19 @@ pub mod resources;
 pub mod systems;
 pub mod timing;
 
-pub use components::{BusyRecovery, Committed, Declared, Pending, Ready, ScheduledAction};
-pub use events::ActionsCommitted;
+pub use components::{
+    ActionCost, BusyRecovery, CancelCost, Committed, Declared, Pending, Ready, ScheduledAction,
+    Uncancellable,
+};
+pub use events::{
+    ActionBlocked, ActionCancelled, BlockReason, CycleReactionWindow, TogglePause, UndoCommand,
+};
 pub use plugin::TimelinePlugin;
-pub use resources::{Timeline, TimelineConfig};
+pub use resources::{ReactionWindow, Timeline, TimelineConfig};
 pub use systems::{
-    begin_action, commit_bridge_system, end_action, recovery_system, scheduler_system,
-    timeline_gate_system,
+    begin_action, commit_bridge_system, cycle_reaction_window_system, end_action, end_action_until,
+    insert_on_actor, pause_toggle_system, recovery_system, scheduler_system, timeline_gate_system,
+    undo_system,
 };
 pub use timing::{ActionTiming, CELL_SIZE};
 

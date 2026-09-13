@@ -47,10 +47,15 @@ impl Default for Fireball {
 
 /// 火球行动载荷：`FireCommand` 的产物。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct FireballAction;
+pub struct FireballAction {
+    /// 锁定的目标格（发射时用）
+    pub target_cell: Cell,
+}
 
 /// 火球飞行速度（世界单位 / 秒）：一格 2.0 → 约 0.25s 飞一格。
 pub const FIREBALL_SPEED: f32 = 8.0;
+/// 出手高度（世界单位）：从脚底往上抬一点扔，避免火球贴地穿模。
+pub const SHOOT_HEIGHT: f32 = 0.9;
 /// 火球爆炸伤害。
 pub const FIREBALL_DAMAGE: f32 = 12.0;
 /// 爆炸半径（世界单位）：1.5 格。
@@ -59,11 +64,13 @@ pub const FIREBALL_RADIUS: f32 = 3.0;
 pub const FIREBALL_COST: u32 = 2;
 
 /// 火球行动工厂。
-pub fn fireball_action_scene(actor: Entity, now: f32) -> impl Scene {
+pub fn fireball_action_scene(actor: Entity, target_cell: Cell, now: f32) -> impl Scene {
     let schedule = ScheduledAction::declared_at(actor, timing::SHOOT, now);
     bsn! {
-        FireballAction
+        FireballAction { target_cell: {target_cell} }
         template_value(schedule)
+        // 取消代价 = 一次技能的钱：大招打断不能白打断
+        template_value(crate::timeline::CancelCost(FIREBALL_COST))
         Declared
     }
 }
@@ -120,6 +127,7 @@ pub fn declare_fireball_system(
     now: Res<Time<Virtual>>,
     mut timeline: ResMut<Timeline>,
     mut fires: MessageReader<FireCommand>,
+    mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     mut players: Query<
         (
             Entity,
@@ -132,45 +140,51 @@ pub fn declare_fireball_system(
     >,
     units: Query<(&Transform, &Faction)>,
 ) {
-    if fires.read().last().is_none() {
+    let Some(request) = fires.read().last().copied() else {
         return;
-    }
+    };
     // 必须按阵营挑玩家：`single_mut()` 可能抓到敌人
     let player = players
         .iter_mut()
         .find(|(_, _, _, _, faction)| **faction == Faction::Player);
     let Some((player, cell, mut stamina, transform, faction)) = player else {
+        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return; // 忙或没有玩家
     };
     if !stamina.can_afford(FIREBALL_COST) {
+        blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
         info!("火球失败：精力不足");
         return;
     }
 
-    // 锁格：朝最近敌对单位所在的那一格（射程内的格子决策）
+    // 锁格：鼠标给了目标格就打那一格；键盘没给就打最近敌对单位所在的格
     let origin = transform.translation;
     let faction = *faction;
-    let target_cell = units
-        .iter()
-        .filter(|(_, other)| **other != faction)
-        .min_by(|(a, _), (b, _)| {
-            a.translation
-                .distance_squared(origin)
-                .total_cmp(&b.translation.distance_squared(origin))
-        })
-        .map(|(target, _)| Cell::from_world(target.translation))
-        .unwrap_or(*cell);
+    let target_cell = request.target_cell.unwrap_or_else(|| {
+        units
+            .iter()
+            .filter(|(_, other)| **other != faction)
+            .min_by(|(a, _), (b, _)| {
+                a.translation
+                    .distance_squared(origin)
+                    .total_cmp(&b.translation.distance_squared(origin))
+            })
+            .map(|(target, _)| Cell::from_world(target.translation))
+            .unwrap_or(*cell)
+    });
 
     stamina.try_spend(FIREBALL_COST);
-    declare_fireball_at(
+    let action = declare_fireball_at(
         &mut commands,
         &mut timeline,
         player,
-        origin,
         target_cell,
-        faction,
         now.elapsed_secs(),
     );
+    // 记下这次花掉多少：撤销时要原样退回来
+    commands
+        .entity(action)
+        .insert(crate::timeline::ActionCost(FIREBALL_COST));
 }
 
 /// 声明近战：`MeleeCommand` → 技能域的横扫行动（不消耗精力）。
@@ -179,6 +193,7 @@ pub fn declare_melee_system(
     now: Res<Time<Virtual>>,
     mut timeline: ResMut<Timeline>,
     mut melees: MessageReader<MeleeCommand>,
+    mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     players: Query<(Entity, &Faction), With<Ready>>,
 ) {
     if melees.read().last().is_none() {
@@ -189,6 +204,7 @@ pub fn declare_melee_system(
         .find(|(_, faction)| **faction == Faction::Player)
         .map(|(entity, _)| entity);
     let Some(player) = player else {
+        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return;
     };
     let draft = commands
@@ -200,42 +216,59 @@ pub fn declare_melee_system(
     begin_action(&mut commands, &mut timeline, player, draft);
 }
 
-/// 声明一次火球（行动实体 + 投射物），**不检查精力**。
+/// 声明一次火球（只生成**行动实体**），**不检查精力**。
 ///
 /// 玩家路径（[`declare_fireball_system`]）负责扣精力；AI 路径直接调用它
 /// （敌人当前没有精力预算，见 `docs/design/timeline-turnless.md` 6.7 的后续项）。
+/// 发射点与发射者都取自**执行那一帧**的世界状态
+/// （见 [`fireball_action_executor_system`]）：声明与落地之间这一发还能被撤销，
+/// 在声明时就生成投射物会留下撤不干净的半空火球。
 pub fn declare_fireball_at(
     commands: &mut Commands,
     timeline: &mut Timeline,
     actor: Entity,
-    launch_from: Vec3,
     target_cell: Cell,
-    faction: Faction,
     now: f32,
-) {
-    let draft = commands.spawn_scene(fireball_action_scene(actor, now)).id();
+) -> Entity {
+    let draft = commands
+        .spawn_scene(fireball_action_scene(actor, target_cell, now))
+        .id();
     begin_action(commands, timeline, actor, draft);
-    commands.spawn_scene(fireball_scene(
-        Vec3::new(launch_from.x, launch_from.y + 0.9, launch_from.z),
-        target_cell,
-        faction,
-    ));
+    draft
 }
 
-/// 执行火球行动：行动实体本身不落地任何效果（投射物在声明时已经生成），
-/// 只负责收尾——进入后摇。
+/// 执行火球行动：发射投射物，然后**忙到火球落地**，之后才是后摇。
+///
+/// 和移动执行器同一个道理（`movement/actions.rs`）：忙到"效果真的发生"为止。
+/// 火球的效果发生在落地那一刻，而飞行时间随距离变长；只忙一个后摇的话，
+/// 远程火球会在玩家恢复 [`Ready`] 的那一帧被冻在半空。
 pub fn fireball_action_executor_system(
     mut commands: Commands,
     now: Res<Time<Virtual>>,
     actions: Query<(Entity, &ScheduledAction, &FireballAction), With<crate::timeline::Committed>>,
+    actors: Query<(&Transform, &Faction)>,
 ) {
-    for (entity, schedule, _) in &actions {
-        crate::timeline::end_action(
+    for (entity, schedule, action) in &actions {
+        let executed_at = now.elapsed_secs();
+        // 默认只忙一个后摇；发射出去之后按飞行时间顺延
+        let mut busy_until = executed_at;
+        // 发射：从行动者**当前位置**朝锁定的格扔出投射物
+        if let Ok((transform, faction)) = actors.get(schedule.actor) {
+            let origin = Vec3::new(
+                transform.translation.x,
+                transform.translation.y + SHOOT_HEIGHT,
+                transform.translation.z,
+            );
+            busy_until = executed_at + flight_time(origin, action.target_cell);
+            commands.spawn_scene(fireball_scene(origin, action.target_cell, *faction));
+        }
+        crate::timeline::end_action_until(
             &mut commands,
             entity,
             schedule.actor,
             schedule,
-            now.elapsed_secs(),
+            executed_at,
+            busy_until,
         );
     }
 }
@@ -280,7 +313,22 @@ pub fn projectile_arrival_system(
 /// 落点容差（世界单位）：小于它就算「到了那一格」。
 pub const ARRIVAL_TOLERANCE: f32 = 0.2;
 
+/// 从 `origin` 平飞到目标格中心要多久（虚拟秒）。
+///
+/// 飞行时间必须算进「行动者忙到什么时候」：火球后摇只有 0.50s，而飞行时间
+/// 随距离线性增长（8 米/秒）。只按后摇恢复 [`Ready`] 的话，玩家一就绪
+/// `timeline_gate_system` 就会冻结虚拟时间，火球**停在半空**——实机上看起来
+/// 就像"按了技能没放出去"，但精力已经扣了。
+pub fn flight_time(origin: Vec3, target_cell: Cell) -> f32 {
+    let target = target_cell.center();
+    let destination = Vec3::new(target.x, origin.y, target.y);
+    origin.distance(destination) / FIREBALL_SPEED
+}
+
 /// 爆炸落点消息（写：到达系统；消费：爆炸结算）。
+///
+/// 注意：落地前的飞行时间算在行动者的忙碌窗口里（见 [`flight_time`]），
+/// 所以这发球一定会在玩家重新拿到决策权之前炸掉。
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ProjectileArrived {
     /// 投射物实体（爆炸后销毁）

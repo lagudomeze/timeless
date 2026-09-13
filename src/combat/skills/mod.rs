@@ -35,7 +35,7 @@ pub use fireball::{
 };
 pub use melee::{MELEE_DAMAGE, MELEE_FRAME, MELEE_IMPACT, melee_scene};
 pub use menu::{
-    CycleSkill, MenuSelection, SelectSkill, UseSelectedSkill, cycle_skill_system,
+    CycleSkill, MELEE_REACH, MenuSelection, SelectSkill, UseSelectedSkill, cycle_skill_system,
     select_skill_system, skill_line, use_selected_skill_system,
 };
 pub use registry::{

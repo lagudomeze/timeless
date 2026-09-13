@@ -9,7 +9,8 @@ use bevy::prelude::*;
 use super::CombatSet;
 use super::defense::{
     AttackResolved, ParryCommand, RollCommand, declare_parry_system, declare_roll_system,
-    expire_defense_markers_system, parry_executor_system, roll_executor_system,
+    expire_defense_markers_system, parry_executor_system, refund_cancelled_actions_system,
+    roll_executor_system,
 };
 use super::formula::{Arbitration, DamageEvent, phase1_arbitrate_system, phase2_apply_system};
 use super::health::{
@@ -53,6 +54,8 @@ impl Plugin for CombatPlugin {
                 (
                     // 防御标记先过期，本帧到期的无敌帧不该再生效
                     expire_defense_markers_system,
+                    // 撤销的退款：本帧退掉，别让玩家先看到扣费又看到退还
+                    refund_cancelled_actions_system,
                     // 菜单先更新选择，再按选择派发成各领域的指令
                     (select_skill_system, cycle_skill_system),
                     use_selected_skill_system,

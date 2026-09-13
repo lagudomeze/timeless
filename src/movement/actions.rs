@@ -9,11 +9,13 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::timeline::{Declared, Ready, ScheduledAction, Timeline, begin_action, timing};
+use crate::timeline::{
+    ActionBlocked, Declared, Ready, ScheduledAction, Timeline, begin_action, timing,
+};
 
 use super::cell::{Cell, MoveGoal};
 use super::components::{MoveSpeed, Velocity};
-use super::events::{JumpCommand, MoveCommand};
+use super::events::{JumpCommand, MoveCommand, MoveToCommand};
 
 /// 移动载荷：朝 `axis`（归一化平面方向）走**一格**。
 ///
@@ -87,6 +89,8 @@ pub fn jump_action_scene(actor: Entity, now: f32) -> impl Scene {
     bsn! {
         JumpAction
         template_value(schedule)
+        // 起跳就谁都别想插队：跳跃**不给取消**（前摇里也撤不掉）
+        template_value(crate::timeline::Uncancellable)
         Declared
     }
 }
@@ -116,6 +120,7 @@ pub fn declare_move_system(
     now: Res<Time<Virtual>>,
     mut timeline: ResMut<Timeline>,
     mut requests: MessageReader<MoveCommand>,
+    mut blocked: MessageWriter<ActionBlocked>,
     players: ReadyPlayer<'_, '_>,
 ) {
     let Some(axis) = requests.read().last().map(|command| command.axis) else {
@@ -130,6 +135,8 @@ pub fn declare_move_system(
         .find(|(_, _, faction)| **faction == Faction::Player)
         .ok_or(())
     else {
+        // 静默丢弃是最差的手感：告诉 HUD"现在还动不了"
+        blocked.write(ActionBlocked::BUSY);
         return; // 忙（正在前摇 / 后摇）或没有玩家
     };
 
@@ -145,6 +152,38 @@ pub fn declare_move_system(
     begin_action(&mut commands, &mut timeline, player, draft);
 }
 
+/// 声明移动（点地板）：`MoveToCommand` → 朝目标格走**一条直线**的行动。
+///
+/// 多格与单格走的是**同一个载荷与执行器**（`MoveAction { from_cell, to_cell }`）：
+/// 执行器本来就是"朝目标格中心设速度"，所以跨几格天然成立；忙多久也按
+/// `距离 / 速度` 自动变长（见 `end_action_until`）。
+pub fn declare_move_to_system(
+    mut commands: Commands,
+    now: Res<Time<Virtual>>,
+    mut timeline: ResMut<Timeline>,
+    mut requests: MessageReader<MoveToCommand>,
+    mut blocked: MessageWriter<ActionBlocked>,
+    players: ReadyPlayer<'_, '_>,
+) {
+    let Some(target) = requests.read().last().map(|request| request.cell) else {
+        return;
+    };
+    let Some((player, cell, _)) = players
+        .iter()
+        .find(|(_, _, faction)| **faction == Faction::Player)
+    else {
+        blocked.write(ActionBlocked::BUSY);
+        return;
+    };
+    if *cell == target {
+        return; // 点自己脚下：不浪费一次决策
+    }
+    let draft = commands
+        .spawn_scene(move_action_scene(player, *cell, target, now.elapsed_secs()))
+        .id();
+    begin_action(&mut commands, &mut timeline, player, draft);
+}
+
 /// 执行：到点的移动行动 → 朝**目标格中心**设速度，到位后由 `move_entities_system` 停下。
 pub fn move_action_executor_system(
     mut commands: Commands,
@@ -153,19 +192,29 @@ pub fn move_action_executor_system(
     mut actors: Query<(&Cell, &MoveSpeed, &mut Velocity, &Transform)>,
 ) {
     for (entity, action, schedule) in &actions {
+        let executed_at = now.elapsed_secs();
+        // 忙到"人真的走到目标格"为止，而不是只忙一个后摇：
+        // `Cell` 只在到位时更新，半路恢复 Ready 会让下一手声明用旧格当起点。
+        let mut busy_until = executed_at;
         if let Ok((_, speed, mut velocity, transform)) = actors.get_mut(schedule.actor) {
-            velocity.0 =
-                ground_direction(action.to_cell.center() - transform.translation.xz()) * speed.0;
-            commands.entity(schedule.actor).insert(MoveGoal {
-                cell: action.to_cell,
-            });
+            let to_goal = action.to_cell.center() - transform.translation.xz();
+            velocity.0 = ground_direction(to_goal) * speed.0;
+            busy_until = executed_at + to_goal.length() / speed.0.max(f32::EPSILON);
+            crate::timeline::insert_on_actor(
+                &mut commands,
+                schedule.actor,
+                MoveGoal {
+                    cell: action.to_cell,
+                },
+            );
         }
-        finish(
+        crate::timeline::end_action_until(
             &mut commands,
             entity,
             schedule.actor,
             schedule,
-            now.elapsed_secs(),
+            executed_at,
+            busy_until,
         );
     }
 }
@@ -176,6 +225,7 @@ pub fn declare_jump_system(
     now: Res<Time<Virtual>>,
     mut timeline: ResMut<Timeline>,
     mut requests: MessageReader<JumpCommand>,
+    mut blocked: MessageWriter<ActionBlocked>,
     players: Query<(Entity, &Faction), With<Ready>>,
 ) {
     if requests.read().last().is_none() {
@@ -186,6 +236,7 @@ pub fn declare_jump_system(
         .find(|(_, faction)| **faction == Faction::Player)
         .map(|(entity, _)| entity);
     let Some(player) = player else {
+        blocked.write(ActionBlocked::BUSY);
         return; // 忙（前摇 / 后摇中）或没有玩家
     };
     let draft = commands
@@ -203,10 +254,14 @@ pub fn jump_action_executor_system(
 ) {
     for (entity, schedule, _) in &actions {
         if let Ok(transform) = actors.get(schedule.actor) {
-            commands.entity(schedule.actor).insert(Jumping {
-                ground_y: transform.translation.y,
-                velocity: JUMP_SPEED,
-            });
+            crate::timeline::insert_on_actor(
+                &mut commands,
+                schedule.actor,
+                Jumping {
+                    ground_y: transform.translation.y,
+                    velocity: JUMP_SPEED,
+                },
+            );
         }
         finish(
             &mut commands,
@@ -256,6 +311,7 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::BusyRecovery;
 
     #[test]
     fn step_from_axis_snaps_to_one_orthogonal_cell() {
@@ -299,6 +355,51 @@ mod tests {
             Cell::from_world(Vec3::new(center.x, 0.0, center.y)),
             cell,
             "格中心反推应当回到同一格"
+        );
+    }
+
+    /// 移动要忙到「人真的到位」，而不是只忙一个后摇。
+    ///
+    /// 一格 2.0 / 玩家速度 5.0 = 0.4s，而 MOVE 的后摇只有 0.10s。若只按后摇恢复
+    /// `Ready`，玩家会在滑行途中拿到决策权，而 `Cell` 还是旧格——下一手声明
+    /// 就用旧格当起点（反复按 A/D 时表现为掉头 / 回弹）。
+    #[test]
+    fn move_action_keeps_the_actor_busy_until_arrival() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_systems(Update, move_action_executor_system);
+        let actor = app
+            .world_mut()
+            .spawn((
+                Cell::new(0, 0),
+                MoveSpeed(5.0),
+                Velocity::default(),
+                Transform::from_xyz(1.0, 0.0, 1.0),
+            ))
+            .id();
+        app.world_mut().spawn((
+            MoveAction {
+                from_cell: Cell::new(0, 0),
+                to_cell: Cell::new(0, 1),
+            },
+            ScheduledAction::declared_at(actor, timing::MOVE, 0.0),
+            crate::timeline::Committed,
+        ));
+
+        app.update();
+
+        let recovery = *app
+            .world()
+            .get::<BusyRecovery>(actor)
+            .expect("执行完应当进入后摇");
+        let busy = recovery.ready_at - recovery.executed_at;
+        assert!(
+            (busy - 0.4).abs() < 1e-3,
+            "忙时间应当是「走到目标格」的 0.4s，实际 {busy}"
+        );
+        assert!(
+            busy > timing::MOVE.recovery,
+            "必须比单纯的后摇更久，否则会半路恢复 Ready"
         );
     }
 }

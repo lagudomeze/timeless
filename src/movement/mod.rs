@@ -26,14 +26,15 @@ pub mod systems;
 
 pub use actions::{
     JumpAction, Jumping, MoveAction, RollAction, declare_jump_system, declare_move_system,
-    ground_direction, jump_action_executor_system, jump_action_scene, jump_motion_system,
-    move_action_executor_system, move_action_scene, roll_action_scene, step_from_axis,
+    declare_move_to_system, ground_direction, jump_action_executor_system, jump_action_scene,
+    jump_motion_system, move_action_executor_system, move_action_scene, roll_action_scene,
+    step_from_axis,
 };
 pub use cell::{Cell, MoveGoal};
 pub use components::{MoveSpeed, Velocity};
-pub use events::{JumpCommand, MoveCommand};
+pub use events::{JumpCommand, MoveCommand, MoveToCommand};
 pub use plugin::MovementPlugin;
-pub use systems::{DodgingOnArrival, move_entities_system};
+pub use systems::{DodgingOnArrival, follow_terrain_system, move_entities_system};
 
 /// 移动领域在 `Update` 中的系统集。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

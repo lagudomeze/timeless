@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! 键盘 / 面板 ──SelectSkill / CycleSkill──▶ 选择系统（只改 MenuSelection）
-//!            ──UseSelectedSkill──────────▶ 派发系统（按当前选择写 MoveCommand / MeleeCommand / …）
+//!            ──UseSelectedSkill──────────▶ 派发系统（按当前选择写 MeleeCommand / FireCommand / …）
 //! ```
 //!
 //! 与 AGENTS.md 的「UI 输入只翻译、不执行」一致：菜单不生成行动实体，
@@ -13,13 +13,13 @@ use bevy::prelude::*;
 use crate::combat::Faction;
 use crate::combat::defense::{ROLL_COST, RollCommand, Stamina};
 use crate::combat::skills::events::{FireCommand, MeleeCommand};
-use crate::movement::MoveCommand;
+use crate::movement::Cell;
 use crate::timeline::{CELL_SIZE, Ready};
 
 use super::registry::{SKILLS, SkillKind};
 
 /// 贴脸判据（世界单位）：与 AI 的 `MELEE_REACH` 同一约定（3/4 格）。
-const MELEE_REACH: f32 = CELL_SIZE * 0.75;
+pub const MELEE_REACH: f32 = CELL_SIZE * 0.75;
 
 /// 当前选中的技能（资源）。
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -77,15 +77,19 @@ pub struct CycleSkill {
     pub forward: bool,
 }
 
-/// 释放当前选中的技能（`G`）。
+/// 释放当前选中的技能（`G` 键 / 鼠标左键点目标）。
 ///
 /// 写：[`crate::input`]；消费：[`use_selected_skill_system`]——按种类派发成
 /// `MeleeCommand` / `FireCommand` / `RollCommand`。
-#[derive(Message, Debug, Clone, Copy)]
-pub struct UseSelectedSkill;
+///
+/// `target_cell`：`None` = 由声明系统挑最近敌人（键盘）；`Some` = 打点中的那一格（鼠标）。
+#[derive(Message, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UseSelectedSkill {
+    pub target_cell: Option<Cell>,
+}
 
-/// 就绪的玩家（菜单选择与释放都要求「现在轮到玩家决策」）。
-type ReadyPlayer<'w, 's> = Query<'w, 's, (Entity, &'static Stamina), (With<Faction>, With<Ready>)>;
+/// 就绪的单位（菜单选择与释放都要求「现在轮到玩家决策」，所以下游还要按阵营挑人）。
+type ReadyUnit<'w, 's> = Query<'w, 's, (Entity, &'static Stamina, &'static Faction), With<Ready>>;
 
 /// 选中：只改 [`MenuSelection`]。
 pub fn select_skill_system(
@@ -121,18 +125,24 @@ pub fn cycle_skill_system(
 pub fn use_selected_skill_system(
     mut requests: MessageReader<UseSelectedSkill>,
     selection: Res<MenuSelection>,
-    players: ReadyPlayer<'_, '_>,
+    players: ReadyUnit<'_, '_>,
     transforms: Query<&Transform>,
     bodies: Query<(&Transform, &Faction)>,
     mut fire_commands: MessageWriter<FireCommand>,
     mut melee_commands: MessageWriter<MeleeCommand>,
     mut roll_commands: MessageWriter<RollCommand>,
-    _move_commands: MessageWriter<MoveCommand>,
+    mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
 ) {
-    if requests.read().next().is_none() {
+    let Some(request) = requests.read().last().copied() else {
         return;
-    }
-    let Ok((player, stamina)) = players.single() else {
+    };
+    // **必须按阵营挑玩家**：就绪的单位里也有敌人，`single()` 会抓错人
+    // （两个都就绪时还会直接失败 —— 表现为按 G 什么也没发生）。
+    let Some((player, stamina, _)) = players
+        .iter()
+        .find(|(_, _, faction)| **faction == Faction::Player)
+    else {
+        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return; // 忙（前摇 / 后摇）或没有玩家
     };
     let Some(def) = SKILLS.get(selection.index()) else {
@@ -140,6 +150,7 @@ pub fn use_selected_skill_system(
     };
     if !stamina.can_afford(def.cost) {
         debug!("技能 {} 精力不足（需要 {}）", def.label, def.cost);
+        blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
         return;
     }
 
@@ -149,23 +160,35 @@ pub fn use_selected_skill_system(
             let Ok(transform) = transforms.get(player) else {
                 return;
             };
-            let nearest = bodies
-                .iter()
-                .filter(|(_, faction)| **faction != Faction::Player)
-                .map(|(body, _)| body.translation.distance(transform.translation))
-                .min_by(f32::total_cmp)
-                .unwrap_or(f32::MAX);
-            if nearest <= MELEE_REACH {
+            // 鼠标给了目标格就按「玩家到那一格」算距离；键盘路径按最近的敌人算
+            let distance = match request.target_cell {
+                Some(cell) => {
+                    let center = cell.center();
+                    let target = Vec3::new(center.x, transform.translation.y, center.y);
+                    transform.translation.distance(target)
+                }
+                None => bodies
+                    .iter()
+                    .filter(|(_, faction)| **faction != Faction::Player)
+                    .map(|(body, _)| body.translation.distance(transform.translation))
+                    .min_by(f32::total_cmp)
+                    .unwrap_or(f32::MAX),
+            };
+            if distance <= MELEE_REACH {
                 melee_commands.write(MeleeCommand);
             } else {
-                fire_commands.write(FireCommand);
+                fire_commands.write(FireCommand {
+                    target_cell: request.target_cell,
+                });
             }
         }
         SkillKind::Melee => {
             melee_commands.write(MeleeCommand);
         }
         SkillKind::Fireball => {
-            fire_commands.write(FireCommand);
+            fire_commands.write(FireCommand {
+                target_cell: request.target_cell,
+            });
         }
         SkillKind::Roll => {
             if stamina.can_afford(ROLL_COST) {

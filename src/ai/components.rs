@@ -6,7 +6,12 @@ use bevy::prelude::*;
 ///
 /// 无回合模型下敌人靠自己的节奏决策：一有 [`Ready`](crate::timeline::Ready) 就选一个意图。
 /// 「射程」不在这里——那是**武器**的属性（[`AttackRange`](crate::combat::AttackRange)）。
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+///
+/// **`#[require(Intent)]`**：两个 AI 系统都要求 `&mut Intent`，少了它 AI 会**静默地
+/// 一行都不执行**（敌人站着不动）。用 `require` 声明这条依赖，组装层就不可能再漏。
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq)]
+#[reflect(Component)]
+#[require(Intent)]
 pub struct EnemyBrain {
     /// 超过这个距离（世界单位）就只想靠近
     pub engage_range: f32,
@@ -24,7 +29,8 @@ impl Default for EnemyBrain {
 }
 
 /// 敌人本次决策选出的意图（HUD / 死亡复盘读它）。
-#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Reflect, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
 pub enum Intent {
     /// 目标太远：按兵不动
     #[default]

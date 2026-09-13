@@ -14,14 +14,15 @@ use crate::timeline::CELL_SIZE;
 ///
 /// 只在单位**停下**时由 [`move_entities_system`](super::systems::move_entities_system)
 /// 更新，不每帧从 `Transform` 反推——避免浮点抖动让格子跳变。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[reflect(Component)]
 pub struct Cell {
     pub x: i32,
     pub z: i32,
 }
 
 impl Cell {
-    pub fn new(x: i32, z: i32) -> Self {
+    pub const fn new(x: i32, z: i32) -> Self {
         Self { x, z }
     }
 

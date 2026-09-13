@@ -13,6 +13,27 @@ use crate::combat::targeting::MeleeShape;
 use crate::movement::Velocity;
 
 use super::components::{Dodging, Parrying};
+use super::stamina::Stamina;
+
+/// 撤销行动时退还精力（`ActionCancelled` → `Stamina`）。
+///
+/// 撤销本身归时间线管（它知道"哪条行动还没结算"），**退多少、退给谁**归资源
+/// 的拥有者管——这里只负责把广播变成一次 `regen`。
+pub fn refund_cancelled_actions_system(
+    mut cancelled: MessageReader<crate::timeline::ActionCancelled>,
+    mut units: Query<&mut Stamina>,
+) {
+    for event in cancelled.read() {
+        if event.refund == 0 {
+            continue;
+        }
+        if let Ok(mut stamina) = units.get_mut(event.actor) {
+            stamina.regen(event.refund);
+            // 取消本身的代价：够就扣，不够就只扣到 0（**不拦着玩家改主意**）
+            stamina.try_spend(event.penalty);
+        }
+    }
+}
 
 /// 攻击实体探针：命中任何一类攻击都算「它还在」。
 ///

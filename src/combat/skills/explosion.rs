@@ -131,14 +131,12 @@ mod tests {
             .add_systems(Update, (explosion_system, collect).chain());
 
         let origin = Vec3::new(5.0, 0.0, 1.0);
-        let ally = app
-            .world_mut()
-            .spawn((
-                Faction::Player,
-                Health::new(50.0),
-                Transform::from_translation(origin),
-            ))
-            .id();
+        // 友方 + 半径外的敌人：只是"不该被结算"的背景，断言只看 `caught` 里有什么
+        app.world_mut().spawn((
+            Faction::Player,
+            Health::new(50.0),
+            Transform::from_translation(origin),
+        ));
         let enemy = app
             .world_mut()
             .spawn((
@@ -147,14 +145,11 @@ mod tests {
                 Transform::from_translation(origin + Vec3::new(2.0, 0.0, 0.0)),
             ))
             .id();
-        let bystander = app
-            .world_mut()
-            .spawn((
-                Faction::Enemy,
-                Health::new(50.0),
-                Transform::from_translation(origin + Vec3::new(0.0, 0.0, 9.0)),
-            ))
-            .id();
+        app.world_mut().spawn((
+            Faction::Enemy,
+            Health::new(50.0),
+            Transform::from_translation(origin + Vec3::new(0.0, 0.0, 9.0)),
+        ));
         let shell = app.world_mut().spawn_empty().id();
 
         app.world_mut().write_message(ProjectileArrived {
@@ -177,6 +172,5 @@ mod tests {
             app.world().get_entity(shell).is_err(),
             "爆炸后投射物必须被销毁"
         );
-        let _ = (ally, bystander);
     }
 }

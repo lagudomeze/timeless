@@ -26,64 +26,93 @@ pub const PARRY_SECS: f32 = 0.5;
 /// 翻滚的位移速度（世界单位 / 秒）：比走路快，但仍然是「退一格」。
 pub const ROLL_SPEED: f32 = 8.0;
 
-/// 最近的敌对单位位置（翻滚方向 = 远离它）。
-fn nearest_enemy(
-    units: &Query<(&Transform, &Faction)>,
+/// 翻滚方向：远离最近的威胁（`threats` 给「位置 + 阵营」），没有威胁就不动。
+///
+/// 纯函数：玩家与 AI 共用同一份"往哪滚"的规则，谁触发只在调用方区分。
+pub fn roll_step(
     origin: Vec3,
     faction: Faction,
-) -> Option<Vec3> {
-    units
-        .iter()
-        .filter(|(_, other)| **other != faction)
-        .map(|(transform, _)| transform.translation)
+    threats: impl Iterator<Item = (Vec3, Faction)>,
+) -> (i32, i32) {
+    let threat = threats
+        .filter(|(_, other)| *other != faction)
+        .map(|(position, _)| position)
         .min_by(|a, b| {
             a.distance_squared(origin)
                 .total_cmp(&b.distance_squared(origin))
-        })
+        });
+    let Some(threat) = threat else {
+        return (0, 0);
+    };
+    let away = origin - threat;
+    step_from_axis(Vec2::new(away.x, away.z).normalize_or_zero())
 }
 
-/// 声明翻滚：`RollCommand` → 远离最近敌对单位退一格 + 无敌帧。
+/// 声明一次翻滚（载荷实体 + [`begin_action`]）——**行动是统一实体**的落点。
 ///
-/// **玩家与 AI 共用同一条路径**：玩家由键盘写消息、敌人由 `enemy_declare_system`
-/// 写同一条消息，都落在这里。因此防御逻辑只有一份实现。
+/// 玩家走输入消息、AI 直接调用它，产出的行动实体完全一样；
+/// 区别只在"谁触发"，不在"行动长什么样"。
+pub fn declare_roll(
+    commands: &mut Commands,
+    timeline: &mut Timeline,
+    actor: Entity,
+    from_cell: Cell,
+    to_cell: Cell,
+    now: f32,
+) -> Entity {
+    let draft = commands
+        .spawn_scene(crate::movement::roll_action_scene(
+            actor, from_cell, to_cell, now,
+        ))
+        .id();
+    begin_action(commands, timeline, actor, draft);
+    draft
+}
+
+/// 声明翻滚（PC 路径）：`RollCommand` → 远离最近威胁退一格 + 无敌帧。
+///
+/// **只有 PC 靠按键决策**：`RollCommand` 是玩家输入消息，AI 不经它
+/// （AI 的 `Intent::Dodge` 直接调 [`declare_roll`]）。
 pub fn declare_roll_system(
     mut commands: Commands,
     now: Res<Time<Virtual>>,
     mut timeline: ResMut<Timeline>,
     mut requests: MessageReader<RollCommand>,
+    mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     mut rollers: Query<(Entity, &Cell, &Stamina, &Transform, &Faction), With<Ready>>,
     units: Query<(&Transform, &Faction)>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    for (entity, cell, stamina, transform, faction) in &mut rollers {
-        if !stamina.can_afford(ROLL_COST) {
-            continue;
-        }
-
-        let origin = transform.translation;
-        let faction = *faction;
-        let axis = nearest_enemy(&units, origin, faction)
-            .map(|threat| {
-                let away = origin - threat;
-                Vec2::new(away.x, away.z).normalize_or_zero()
-            })
-            .unwrap_or(Vec2::ZERO);
-        let (dx, dz) = step_from_axis(axis);
-        let from_cell = *cell;
-        let to_cell = Cell::new(cell.x + dx, cell.z + dz);
-
-        let draft = commands
-            .spawn_scene(crate::movement::roll_action_scene(
-                entity,
-                from_cell,
-                to_cell,
-                now.elapsed_secs(),
-            ))
-            .id();
-        begin_action(&mut commands, &mut timeline, entity, draft);
+    // **必须按阵营挑玩家**：就绪的单位里也有敌人，不筛就会把玩家的按键挂到敌人身上。
+    let Some((entity, cell, stamina, transform, _)) = rollers
+        .iter_mut()
+        .find(|(_, _, _, _, faction)| **faction == Faction::Player)
+    else {
+        blocked.write(crate::timeline::ActionBlocked::BUSY);
+        return;
+    };
+    if !stamina.can_afford(ROLL_COST) {
+        blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
+        return;
     }
+
+    let (dx, dz) = roll_step(
+        transform.translation,
+        Faction::Player,
+        units
+            .iter()
+            .map(|(other, faction)| (other.translation, *faction)),
+    );
+    declare_roll(
+        &mut commands,
+        &mut timeline,
+        entity,
+        *cell,
+        Cell::new(cell.x + dx, cell.z + dz),
+        now.elapsed_secs(),
+    );
 }
 
 /// 执行翻滚：朝目标格设速度 + 请求「到位时挂无敌帧」 + 扣精力。
@@ -102,21 +131,24 @@ pub fn roll_executor_system(
         ),
         With<crate::timeline::Committed>,
     >,
-    mut actors: Query<(&mut Velocity, &mut Stamina, &Cell, &Transform)>,
+    mut actors: Query<(&mut Velocity, &mut Stamina, &Transform), With<Cell>>,
 ) {
     let now = now.elapsed_secs();
     for (entity, roll, schedule) in &actions {
-        if let Ok((mut velocity, mut stamina, cell, transform)) = actors.get_mut(schedule.actor) {
+        if let Ok((mut velocity, mut stamina, transform)) = actors.get_mut(schedule.actor) {
             stamina.try_spend(ROLL_COST);
             let target = roll.to_cell.center();
             velocity.0 = ground_direction(target - transform.translation.xz()) * ROLL_SPEED;
-            commands.entity(schedule.actor).insert((
-                crate::movement::MoveGoal { cell: roll.to_cell },
-                crate::movement::DodgingOnArrival {
-                    expires_at: now + DODGE_SECS,
-                },
-            ));
-            let _ = cell;
+            crate::timeline::insert_on_actor(
+                &mut commands,
+                schedule.actor,
+                (
+                    crate::movement::MoveGoal { cell: roll.to_cell },
+                    crate::movement::DodgingOnArrival {
+                        expires_at: now + DODGE_SECS,
+                    },
+                ),
+            );
         }
         crate::timeline::end_action(&mut commands, entity, schedule.actor, schedule, now);
     }
@@ -131,17 +163,26 @@ pub fn declare_parry_system(
     now: Res<Time<Virtual>>,
     mut timeline: ResMut<Timeline>,
     mut requests: MessageReader<ParryCommand>,
-    mut players: Query<(Entity, &Stamina), With<Ready>>,
+    mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
+    mut players: Query<(Entity, &Stamina, &Faction), With<Ready>>,
     threats: Query<&crate::timeline::ScheduledAction, With<Declared>>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    let Ok((player, stamina)) = players.single_mut() else {
+    // **必须按阵营挑玩家**：就绪的单位里也有敌人，`single_mut()` 会抓错人
+    // （两个都就绪时还会直接失败 —— 表现为按 V 什么也没发生）。
+    // `ParryCommand` 只有玩家写，所以找不到就绪的玩家就等于"这次按键被拒"。
+    let Some((player, stamina, _)) = players
+        .iter_mut()
+        .find(|(_, _, faction)| **faction == Faction::Player)
+    else {
+        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return;
     };
     if !stamina.can_afford(PARRY_COST) {
         info!("招架失败：精力不足");
+        blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
         return;
     }
     // 威胁 = 任何「还在草案里」的动作实体（玩家与敌人共用一条声明流程）
@@ -173,10 +214,14 @@ pub fn parry_executor_system(
     for (entity, parry, schedule) in &actions {
         if let Ok(mut stamina) = actors.get_mut(schedule.actor) {
             stamina.try_spend(PARRY_COST);
-            commands.entity(schedule.actor).insert(Parrying {
-                target_attack: parry.target_attack,
-                expires_at: now + PARRY_SECS,
-            });
+            crate::timeline::insert_on_actor(
+                &mut commands,
+                schedule.actor,
+                Parrying {
+                    target_attack: parry.target_attack,
+                    expires_at: now + PARRY_SECS,
+                },
+            );
         }
         crate::timeline::end_action(&mut commands, entity, schedule.actor, schedule, now);
     }
@@ -202,5 +247,54 @@ pub fn expire_defense_markers_system(
         if now >= parrying.expires_at || target_gone {
             commands.entity(entity).remove::<Parrying>();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::movement::RollAction;
+
+    /// PC 的按键**只作用于 PC**：就绪的敌人不会被 `RollCommand` 一起带着滚。
+    ///
+    /// 无回合模型里"谁能决策"由各自 `Ready` 决定，但**触发源**只有玩家：AI 不走输入
+    /// 消息（见 `ai::systems::enemy_declare_system`）。
+    #[test]
+    fn the_players_roll_command_only_moves_the_player() {
+        let mut app = crate::test_support::headless_app();
+        app.update(); // Startup：组装玩家 + 敌人
+
+        let (player, enemy) = {
+            let mut query = app.world_mut().query::<(Entity, &Faction)>();
+            let units: Vec<(Entity, Faction)> = query
+                .iter(app.world())
+                .map(|(entity, faction)| (entity, *faction))
+                .collect();
+            let find = |wanted: Faction| {
+                units
+                    .iter()
+                    .find(|(_, faction)| *faction == wanted)
+                    .map(|(entity, _)| *entity)
+                    .expect("应当有单位")
+            };
+            (find(Faction::Player), find(Faction::Enemy))
+        };
+
+        app.world_mut().write_message(RollCommand);
+        app.update();
+
+        let rolls: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<RollAction>>()
+            .iter(app.world())
+            .collect();
+        assert_eq!(rolls.len(), 1, "一次按键只该产生一条翻滚");
+        let actor = app
+            .world()
+            .get::<crate::timeline::ScheduledAction>(rolls[0])
+            .expect("行动实体应当带调度数据")
+            .actor;
+        assert_eq!(actor, player, "翻滚必须挂在玩家身上");
+        assert_ne!(actor, enemy, "敌人的 Ready 不该被玩家的按键消耗");
     }
 }

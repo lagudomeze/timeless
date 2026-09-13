@@ -18,7 +18,7 @@
 
 use bevy::prelude::*;
 
-use crate::combat::defense::{ROLL_COST, RollCommand, Stamina};
+use crate::combat::defense::{ROLL_COST, Stamina, declare_roll, roll_step};
 use crate::combat::skills::{declare_fireball_at, melee_action_scene};
 use crate::combat::{AttackRange, Faction, Health};
 use crate::movement::{Cell, move_action_scene, step_from_axis};
@@ -113,15 +113,17 @@ fn choose(decision: &Decision) -> Intent {
     Intent::Approach
 }
 
-/// 执行意图：把 [`Intent`] 翻译成行动实体（防御意图则翻成 [`RollCommand`]）。
+/// 执行意图：把 [`Intent`] 翻译成**行动实体**（AI 直接生成，不经玩家输入消息）。
 ///
 /// 威胁预判已经在 [`decide_intent_system`] 里完成，这里只负责声明。
+///
+/// 「行动是统一实体」在两边是同一种东西：AI 直接调载荷工厂 + [`begin_action`]，
+/// 玩家则由输入消息走各自的声明系统；**唯一的区别是触发源**。
 #[allow(clippy::type_complexity)]
 pub fn enemy_declare_system(
     mut commands: Commands,
     now: Res<Time<Virtual>>,
     mut timeline: ResMut<Timeline>,
-    mut roll_requests: MessageWriter<RollCommand>,
     mut enemies: Query<(Entity, &Transform, &Cell, &Faction, &Stamina, &mut Intent), With<Ready>>,
     bodies: Query<(&Transform, &Cell, &Faction)>,
 ) {
@@ -146,9 +148,24 @@ pub fn enemy_declare_system(
 
         match *intent {
             Intent::Idle => {}
-            // 翻滚走玩家那条同一条路径（消息 → `declare_roll_system`），不重复实现
+            // 闪避直接生成 roll 行动：`RollCommand` 是**玩家输入消息**，AI 不该借用它
+            // （借用会让玩家的 F 键把就绪的敌人也带着滚）
             Intent::Dodge => {
-                roll_requests.write(RollCommand);
+                let (dx, dz) = roll_step(
+                    transform.translation,
+                    *faction,
+                    bodies
+                        .iter()
+                        .map(|(body, _, other)| (body.translation, *other)),
+                );
+                declare_roll(
+                    &mut commands,
+                    &mut timeline,
+                    entity,
+                    *cell,
+                    Cell::new(cell.x + dx, cell.z + dz),
+                    now,
+                );
             }
             Intent::Approach | Intent::Retreat => {
                 let Some((target_position, _)) = target else {
@@ -177,15 +194,7 @@ pub fn enemy_declare_system(
                 let Some((_, target_cell)) = target else {
                     continue;
                 };
-                declare_fireball_at(
-                    &mut commands,
-                    &mut timeline,
-                    entity,
-                    transform.translation,
-                    target_cell,
-                    *faction,
-                    now,
-                );
+                declare_fireball_at(&mut commands, &mut timeline, entity, target_cell, now);
             }
         }
     }
@@ -251,5 +260,83 @@ mod tests {
             return Intent::Dodge;
         }
         choose(decision)
+    }
+
+    /// 整机：AI 的闪避**直接生成自己的 roll 行动**，不经玩家输入消息，也不碰玩家的 `Ready`。
+    ///
+    /// 「行动是统一实体」的两种触发源在这里对齐：AI 走载荷工厂 + `begin_action`，
+    /// 玩家走 `RollCommand`；区别只在触发源。曾经的实现是 AI 借用玩家的 `RollCommand`，
+    /// 于是玩家按 F 会把就绪的敌人一起带着滚。
+    #[test]
+    fn a_dodging_enemy_declares_its_own_roll() {
+        // 组装出来的敌人必须带 `Intent`，否则两个 AI 系统都匹配不到它（静默不行动）
+        {
+            let mut probe = crate::test_support::headless_app();
+            probe.update();
+            let mut intents = probe.world_mut().query_filtered::<&Intent, With<Faction>>();
+            assert_eq!(
+                intents.iter(probe.world()).count(),
+                1,
+                "敌人应当从组装开始就带 `Intent`，否则 AI 一行都不会执行"
+            );
+        }
+
+        use crate::combat::{CollisionTarget, PhysicalDamage};
+        use crate::movement::RollAction;
+
+        let mut app = crate::test_support::headless_app();
+        app.update(); // Startup：组装玩家 + 敌人
+
+        let (player, enemy) = {
+            let mut query = app.world_mut().query::<(Entity, &Faction)>();
+            let units: Vec<(Entity, Faction)> = query
+                .iter(app.world())
+                .map(|(entity, faction)| (entity, *faction))
+                .collect();
+            let find = |wanted: Faction| {
+                units
+                    .iter()
+                    .find(|(_, faction)| *faction == wanted)
+                    .map(|(entity, _)| *entity)
+                    .expect("应当有单位")
+            };
+            (find(Faction::Player), find(Faction::Enemy))
+        };
+
+        // 让敌人重新可决策：首帧 AI 可能已经替它声明了一个移动（本测试只关心"闪避由谁触发"）
+        let stale: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<ScheduledAction>>()
+            .iter(app.world())
+            .collect();
+        for action in stale {
+            app.world_mut().entity_mut(action).despawn();
+        }
+        app.world_mut().entity_mut(enemy).insert(Ready);
+
+        // 一发「正在前摇」的攻击瞄准敌人 → 意图变成 Dodge
+        app.world_mut().spawn((
+            Faction::Player,
+            PhysicalDamage(10.0),
+            CollisionTarget(enemy),
+            ScheduledAction::declared_at(player, crate::timeline::timing::MELEE, 0.0),
+        ));
+        app.update();
+
+        let rolls: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<RollAction>>()
+            .iter(app.world())
+            .collect();
+        assert_eq!(rolls.len(), 1, "敌人应当自己声明一条翻滚");
+        assert_eq!(
+            app.world().get::<ScheduledAction>(rolls[0]).unwrap().actor,
+            enemy,
+            "行动必须挂在敌人自己身上"
+        );
+        assert!(
+            app.world().get::<Ready>(player).is_some(),
+            "玩家的 Ready 不该被 AI 的行动消耗掉"
+        );
     }
 }

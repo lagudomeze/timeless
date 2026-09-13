@@ -22,13 +22,13 @@ pub mod stamina;
 pub mod systems;
 
 pub use actions::{
-    DODGE_SECS, PARRY_COST, PARRY_SECS, ROLL_COST, declare_parry_system, declare_roll_system,
-    parry_executor_system, roll_executor_system,
+    DODGE_SECS, PARRY_COST, PARRY_SECS, ROLL_COST, declare_parry_system, declare_roll,
+    declare_roll_system, parry_executor_system, roll_executor_system, roll_step,
 };
 pub use components::{AttackResolved, DefenseOutcome, Dodging, ParryAction, Parrying};
 pub use events::{ParryCommand, RollCommand};
 pub use stamina::{STAMINA_REGEN_PER_DECISION, Stamina};
-pub use systems::expire_defense_markers_system;
+pub use systems::{expire_defense_markers_system, refund_cancelled_actions_system};
 
 /// 招架行动工厂：载荷 + 调度数据 + 草案标记。
 pub fn parry_action_scene(actor: Entity, target_attack: Entity, now: f32) -> impl Scene {

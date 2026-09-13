@@ -2,14 +2,45 @@
 
 use bevy::prelude::*;
 
-/// 时间线配置。
+/// 反应窗口：**敌人打过来时要不要停下来等玩家决定**。
 ///
-/// `require_commit = false`（默认）= 输入直接生效；无回合模型里
-/// 玩家不该为每个动作按两次键，因此默认值就是「按下即决定」。
+/// 无回合模型默认已经会在「玩家就绪」时冻结时间；这个开关管的是**威胁**：
+/// 场上有「正在前摇、且瞄准玩家」的攻击时，要不要也停。
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TimelineConfig {
-    /// `true` = 输入只产生草案，按 `Enter` 才提交；`false` = 输入直接生效。
-    pub require_commit: bool,
+    pub reaction: ReactionWindow,
+}
+
+/// 反应窗口的三种松紧（按 `F2` 循环）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReactionWindow {
+    /// 只要敌人有瞄准玩家的未结算攻击就冻结（**默认：最松，方便调试**）
+    #[default]
+    Loose,
+    /// 只在玩家**能反应**（就绪）时冻结，且同一发攻击只停一次
+    Strict,
+    /// 完全不因威胁冻结
+    Off,
+}
+
+impl ReactionWindow {
+    /// `F2` 循环：Loose → Strict → Off → Loose。
+    pub fn next(self) -> Self {
+        match self {
+            Self::Loose => Self::Strict,
+            Self::Strict => Self::Off,
+            Self::Off => Self::Loose,
+        }
+    }
+
+    /// 状态行上显示的名字。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Loose => "loose",
+            Self::Strict => "strict",
+            Self::Off => "off",
+        }
+    }
 }
 
 /// 时间线状态：整个游戏唯一的暂停判据。
@@ -21,7 +52,10 @@ pub struct TimelineConfig {
 pub struct Timeline {
     /// 玩家已就绪、世界正在等他做决定：此时冻结虚拟时间。
     waiting_for_input: bool,
-    /// 玩家本轮尚未提交的草案（仅 `require_commit = true` 时有值）。
+    /// 本帧刚声明、还没被提交桥升为 `Pending` 的那条玩家行动。
+    ///
+    /// 提交桥每帧清一次，所以它的实际寿命只有一帧——HUD 靠它区分
+    /// "正在等玩家决定"和"玩家这一手刚落地"。
     draft: Option<Entity>,
 }
 
@@ -31,7 +65,7 @@ impl Timeline {
         self.waiting_for_input
     }
 
-    /// 玩家是否有未提交的草案。
+    /// 玩家是否有"刚声明、还没进 `Pending`"的行动。
     pub fn has_draft(&self) -> bool {
         self.draft.is_some()
     }
@@ -52,12 +86,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_executes_input_directly() {
+    fn the_reaction_window_starts_loose_for_easy_debugging() {
         let config = TimelineConfig::default();
         assert!(
-            !config.require_commit,
-            "默认应当是「按下即决定」，而不是要求 Enter 确认"
+            matches!(config.reaction, ReactionWindow::Loose),
+            "默认应当最松：敌人一动就停，方便调试"
         );
+        assert_eq!(ReactionWindow::Loose.next(), ReactionWindow::Strict);
+        assert_eq!(ReactionWindow::Strict.next(), ReactionWindow::Off);
+        assert_eq!(ReactionWindow::Off.next(), ReactionWindow::Loose);
     }
 
     #[test]

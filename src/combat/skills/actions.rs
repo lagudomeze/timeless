@@ -44,6 +44,8 @@ pub fn melee_action_scene(actor: Entity, now: f32) -> impl Scene {
     bsn! {
         MeleeAction
         template_value(schedule)
+        // 抡出去再收招要付一点精力（比火球轻）
+        template_value(crate::timeline::CancelCost(1))
         Declared
     }
 }
@@ -57,6 +59,7 @@ pub fn declare_skill_system(
     mut timeline: ResMut<Timeline>,
     mut fires: MessageReader<FireCommand>,
     mut melees: MessageReader<MeleeCommand>,
+    mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     players: Query<(Entity, &Faction), With<Ready>>,
 ) {
     let fire = fires.read().last().is_some();
@@ -69,6 +72,7 @@ pub fn declare_skill_system(
         .find(|(_, faction)| **faction == Faction::Player)
         .map(|(entity, _)| entity);
     let Some(player) = player else {
+        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return; // 忙（前摇 / 后摇中）或没有玩家
     };
 
