@@ -1,0 +1,254 @@
+//! 单位面板的最后一行：**当前行动**（`act: fireball`，空闲时 `-`）。
+//!
+//! 调度器按设计不感知载荷（见 [`crate::timeline`]），所以这里由表现层代它读一次
+//! 载荷标记，只把「这条行动是什么」翻成人话——HUD 依然只读游戏状态。
+
+use bevy::prelude::*;
+
+use crate::combat::Faction;
+use crate::combat::defense::ParryAction;
+use crate::combat::skills::{FireballAction, MeleeAction, ShootAction};
+use crate::movement::{JumpAction, MoveAction, RollAction};
+use crate::timeline::{Declared, ScheduledAction};
+
+use super::HudCache;
+
+/// 面板上的行动行标记。
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
+pub struct ActionLabel {
+    pub faction: Faction,
+}
+
+/// 行动行快照缓存：与上一帧完全相同就整帧不碰 UI。
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ActionLabelCache {
+    labels: [String; 2],
+}
+
+/// 阵营 → 快照下标。
+fn slot(faction: Faction) -> usize {
+    match faction {
+        Faction::Player => 0,
+        Faction::Enemy => 1,
+    }
+}
+
+/// 把「这个单位现在挂着的行动」写进文本。
+#[allow(clippy::too_many_arguments)]
+pub fn update_action_labels_system(
+    units: Query<(Entity, &Faction)>,
+    actions: Query<(Entity, &ScheduledAction, Has<Declared>)>,
+    movements: Query<&MoveAction>,
+    jumps: Query<&JumpAction>,
+    rolls: Query<&RollAction>,
+    parries: Query<&ParryAction>,
+    shoots: Query<&ShootAction>,
+    fireballs: Query<&FireballAction>,
+    melees: Query<&MeleeAction>,
+    mut cache: ResMut<HudCache>,
+    mut labels: Query<(&ActionLabel, &mut Text)>,
+) {
+    // 先算快照（纯读），再决定要不要写
+    let mut snapshot = cache.actions.labels.clone();
+    for (label, _) in &labels {
+        snapshot[slot(label.faction)] = action_text(
+            label.faction,
+            &units,
+            &actions,
+            &movements,
+            &jumps,
+            &rolls,
+            &parries,
+            &shoots,
+            &fireballs,
+            &melees,
+        );
+    }
+    if cache.actions.labels == snapshot {
+        return;
+    }
+    cache.actions.labels.clone_from(&snapshot);
+
+    for (label, mut text) in &mut labels {
+        **text = snapshot[slot(label.faction)].clone();
+    }
+}
+
+/// 某个阵营这一帧该显示的行动文案。
+#[allow(clippy::too_many_arguments)]
+fn action_text(
+    faction: Faction,
+    units: &Query<(Entity, &Faction)>,
+    actions: &Query<(Entity, &ScheduledAction, Has<Declared>)>,
+    movements: &Query<&MoveAction>,
+    jumps: &Query<&JumpAction>,
+    rolls: &Query<&RollAction>,
+    parries: &Query<&ParryAction>,
+    shoots: &Query<&ShootAction>,
+    fireballs: &Query<&FireballAction>,
+    melees: &Query<&MeleeAction>,
+) -> String {
+    let Some(actor) = units
+        .iter()
+        .find(|(_, unit_faction)| **unit_faction == faction)
+        .map(|(entity, _)| entity)
+    else {
+        return "down".to_string();
+    };
+    let Some((action, draft)) = actions
+        .iter()
+        .find(|(_, schedule, _)| schedule.actor == actor)
+        .map(|(entity, _, draft)| (entity, draft))
+    else {
+        return "act: -".to_string();
+    };
+    let name = payload_name(
+        action, movements, jumps, rolls, parries, shoots, fireballs, melees,
+    );
+    if draft {
+        format!("act: {name} (draft)")
+    } else {
+        format!("act: {name}")
+    }
+}
+
+/// 行动实体 → 载荷名（找不到就退回 `action`）。
+#[allow(clippy::too_many_arguments)]
+fn payload_name(
+    action: Entity,
+    movements: &Query<&MoveAction>,
+    jumps: &Query<&JumpAction>,
+    rolls: &Query<&RollAction>,
+    parries: &Query<&ParryAction>,
+    shoots: &Query<&ShootAction>,
+    fireballs: &Query<&FireballAction>,
+    melees: &Query<&MeleeAction>,
+) -> &'static str {
+    if movements.get(action).is_ok() {
+        "move"
+    } else if jumps.get(action).is_ok() {
+        "jump"
+    } else if rolls.get(action).is_ok() {
+        "roll"
+    } else if parries.get(action).is_ok() {
+        "parry"
+    } else if fireballs.get(action).is_ok() {
+        "fireball"
+    } else if shoots.get(action).is_ok() {
+        "shoot"
+    } else if melees.get(action).is_ok() {
+        "melee"
+    } else {
+        "action"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::timeline::{Pending, timing};
+
+    fn label_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<HudCache>()
+            .add_systems(Update, update_action_labels_system);
+        app
+    }
+
+    fn spawn_unit(app: &mut App, faction: Faction) -> Entity {
+        app.world_mut().spawn(faction).id()
+    }
+
+    fn spawn_label(app: &mut App, faction: Faction) -> Entity {
+        app.world_mut()
+            .spawn((ActionLabel { faction }, Text::new("")))
+            .id()
+    }
+
+    fn text_of(app: &App, entity: Entity) -> String {
+        app.world().get::<Text>(entity).unwrap().0.clone()
+    }
+
+    /// 空闲单位显示 `-`。
+    #[test]
+    fn idle_unit_shows_a_dash() {
+        let mut app = label_app();
+        spawn_unit(&mut app, Faction::Player);
+        let label = spawn_label(&mut app, Faction::Player);
+
+        app.update();
+
+        assert_eq!(text_of(&app, label), "act: -");
+    }
+
+    /// 挂着移动行动时显示载荷名；草案额外标注 draft。
+    #[test]
+    fn pending_action_is_named_and_drafts_are_marked() {
+        let mut app = label_app();
+        let player = spawn_unit(&mut app, Faction::Player);
+        let label = spawn_label(&mut app, Faction::Player);
+        app.world_mut().spawn((
+            MoveAction::default(),
+            ScheduledAction::declared_at(player, timing::MOVE, 0.0),
+            Pending,
+        ));
+
+        app.update();
+        assert_eq!(text_of(&app, label), "act: move");
+
+        // 同一份载荷换成草案：文案要告诉玩家「还没提交」
+        let pending: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<Pending>>()
+            .iter(app.world())
+            .collect();
+        for action in pending {
+            app.world_mut()
+                .entity_mut(action)
+                .remove::<Pending>()
+                .insert(Declared);
+        }
+        app.update();
+        assert_eq!(text_of(&app, label), "act: move (draft)");
+    }
+
+    /// 单位阵亡（实体没了）时显示 `down`，不留下过期的行动名。
+    #[test]
+    fn missing_unit_shows_down() {
+        let mut app = label_app();
+        let label = spawn_label(&mut app, Faction::Enemy);
+
+        app.update();
+
+        assert_eq!(text_of(&app, label), "down");
+    }
+
+    /// 行动没变时整帧不碰 UI（拿哨兵值当探针）。
+    #[test]
+    fn action_labels_are_left_alone_when_nothing_changes() {
+        let mut app = label_app();
+        let player = spawn_unit(&mut app, Faction::Player);
+        let label = spawn_label(&mut app, Faction::Player);
+
+        app.update();
+        assert_eq!(text_of(&app, label), "act: -");
+
+        app.world_mut().get_mut::<Text>(label).unwrap().0 = "SENTINEL".to_string();
+        app.update();
+        assert_eq!(
+            text_of(&app, label),
+            "SENTINEL",
+            "数据没变就不该被系统盖回去"
+        );
+
+        app.world_mut().spawn((
+            JumpAction,
+            ScheduledAction::declared_at(player, timing::JUMP, 0.0),
+            Pending,
+        ));
+        app.update();
+        assert_eq!(text_of(&app, label), "act: jump", "换了行动就必须重写");
+    }
+}
