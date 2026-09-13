@@ -5,12 +5,8 @@ edition = "2024"
 
 [dependencies]
 rand = "0.10.2"
-bevy_ufbx = "0.19"
+bevy_brp_extras = "0.22"
 
 [dependencies.bevy]
 version = "0.19"
-
-[dev-dependencies]
-# 只用于「字体真的覆盖日志里那些 CJK 字」的验收测试（Bevy 的文本栈本来就用它读字体）。
-# 版本与 bev 依赖树里的 parley 对齐，避免多编译一份。
-skrifa = "0.40"
+features = ["default", "bevy_remote"]
