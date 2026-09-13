@@ -2,11 +2,12 @@
 //!
 //! 它没有自己的数据模型：只是「清场 + 用同一套工厂重新组装」这段功能胶水，
 //! 所以既不归 ECS 数据域，也不归表现域，跟着组装车间走。
-//! 触发键（R）与消费系统同属本文件：功能自己负责翻译按键、自己负责落地。
+//! 触发键（`F5`）与消费系统同属本文件：功能自己负责翻译按键、自己负责落地。
 
 use bevy::prelude::*;
 
 use crate::combat::{Collidable, Faction, Projectile};
+use crate::presentation::UnitSprites;
 use crate::timeline::{ScheduledAction, Timeline};
 use crate::world::TerrainConfig;
 
@@ -17,12 +18,14 @@ use super::player::player_scene;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResetBattle;
 
-/// R 键 → [`ResetBattle`]（只翻译，不改状态）。
+/// `F5` → [`ResetBattle`]（只翻译，不改状态）。
+///
+/// 原来是 `R`，但 `R` 现在让给了技能热键（`Q/W/E/R`）。
 pub fn restart_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: MessageWriter<ResetBattle>,
 ) {
-    if keys.just_pressed(KeyCode::KeyR) {
+    if keys.just_pressed(KeyCode::F5) {
         commands.write(ResetBattle);
     }
 }
@@ -49,6 +52,7 @@ pub fn reset_battle_system(
     mut reset_requests: MessageReader<ResetBattle>,
     mut commands: Commands,
     terrain: Res<TerrainConfig>,
+    sprites: Res<UnitSprites>,
     mut timeline: ResMut<Timeline>,
     entities: ResetQuery<'_, '_>,
 ) {
@@ -59,8 +63,8 @@ pub fn reset_battle_system(
         commands.entity(entity).despawn();
     }
     timeline.set_draft(None);
-    commands.spawn_scene(player_scene(&terrain));
-    commands.spawn_scene(enemy_scene(&terrain));
+    commands.spawn_scene(player_scene(&terrain, &sprites));
+    commands.spawn_scene(enemy_scene(&terrain, &sprites));
     info!("🔄 战斗已重置");
 }
 
@@ -93,7 +97,7 @@ mod tests {
         app.update();
         assert_eq!(units(&mut app).len(), 1);
 
-        // R 键请求重置 → 清场重建
+        // F5 键请求重置 → 清场重建
         app.world_mut().write_message(ResetBattle);
         app.update();
         app.update();

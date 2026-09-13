@@ -31,6 +31,9 @@
 
 use bevy::prelude::*;
 
+use crate::movement::Cell;
+use crate::world::{TerrainConfig, ground_position};
+
 pub mod assembly;
 pub mod enemy;
 pub mod player;
@@ -44,6 +47,15 @@ pub use player::player_scene;
 pub use plugin::SpawnPlugin;
 pub use restart::{ResetBattle, reset_battle_system, restart_input_system};
 pub use unit::unit_scene;
+
+/// 某一格的**中心**在地表上的世界坐标（单位的出生点）。
+///
+/// 一定要用格中心：`ground_position` 只按世界坐标取高度，拿格角当出生点会让第一步
+/// 走成「格角 → 邻格中心」的斜线，而且人一开始就 straddle 在两格之间。
+pub(crate) fn cell_ground(terrain: &TerrainConfig, cell: Cell) -> Vec3 {
+    let center = cell.center();
+    ground_position(terrain, center.x, center.y)
+}
 
 /// 开局组装（Startup）：在资源预载之后跑。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

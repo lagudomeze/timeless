@@ -6,22 +6,25 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::movement::MoveSpeed;
-use crate::world::{ChunkLoader, TerrainConfig, ground_position};
+use crate::movement::{Cell, MoveSpeed};
+use crate::presentation::unit_sprite::UnitSprites;
+use crate::world::{ChunkLoader, TerrainConfig};
 
+use super::cell_ground;
 use super::unit::unit_scene;
 
-/// 玩家场景：示例用 glTF 岩石占位（后续替换角色模型）。
-pub fn player_scene(terrain: &TerrainConfig) -> impl Scene {
-    let position = ground_position(terrain, 2.0, 2.0);
+/// 玩家出生格（镜头也跟着它走，见 `presentation::camera`）。
+///
+/// 取 (1,0) 而不是 (1,1)：与敌人 (3,3) 的**格中心**间距保持约 3.6 格，
+/// 和改动前（世界 (2,2) → (7,7) = 7.1 单位）基本一致。
+pub const PLAYER_SPAWN: Cell = Cell::new(1, 0);
+
+/// 玩家场景：骑士精灵（后续换一张贴图即可换角色，逻辑零件不动）。
+pub fn player_scene(terrain: &TerrainConfig, sprites: &UnitSprites) -> impl Scene {
+    let position = cell_ground(terrain, PLAYER_SPAWN);
     let loader = ChunkLoader::default();
     bsn! {
-        unit_scene(
-            Faction::Player,
-            position,
-            3.0,
-            "models/nature/rock_largeA.glb#Scene0"
-        )
+        unit_scene(Faction::Player, position, sprites)
         MoveSpeed(5.0)
         template_value(loader)
     }

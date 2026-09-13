@@ -2,6 +2,7 @@
 
 use bevy::prelude::*;
 
+use crate::presentation::unit_sprite::UnitSprites;
 use crate::presentation::{camera, decoration};
 use crate::world::{TerrainConfig, ground_position};
 
@@ -16,6 +17,7 @@ pub fn setup_scene(
     mut commands: Commands,
     natures: Res<decoration::Natures>,
     terrain: Res<TerrainConfig>,
+    sprites: Res<UnitSprites>,
 ) {
     commands.spawn((
         DirectionalLight::default(),
@@ -24,8 +26,8 @@ pub fn setup_scene(
 
     commands.spawn_scene(camera::main_camera());
     commands.spawn_scene(camera::light());
-    commands.spawn_scene(player_scene(&terrain));
-    commands.spawn_scene(enemy_scene(&terrain));
+    commands.spawn_scene(player_scene(&terrain, &sprites));
+    commands.spawn_scene(enemy_scene(&terrain, &sprites));
 
     // 地表装饰：铺满可视范围，位置随地形起伏
     for x in 0..5 {

@@ -7,24 +7,24 @@ use bevy::prelude::*;
 
 use crate::ai::EnemyBrain;
 use crate::combat::Faction;
-use crate::movement::MoveSpeed;
-use crate::world::{TerrainConfig, ground_position};
+use crate::movement::{Cell, MoveSpeed};
+use crate::presentation::unit_sprite::UnitSprites;
+use crate::world::TerrainConfig;
 
+use super::cell_ground;
 use super::unit::unit_scene;
 
-/// 敌人场景：示例用 glTF 树木占位（后续替换怪物模型）。
+/// 敌人出生格（格中心出生）。
+pub const ENEMY_SPAWN: Cell = Cell::new(3, 3);
+
+/// 敌人场景：幽灵精灵（换贴图即可换怪物，逻辑零件不动）。
 ///
 /// 没有独立冷却组件：敌人「多久能再决策」由它上一个动作的后摇决定
 /// （见 [`crate::timeline::timing`]）。
-pub fn enemy_scene(terrain: &TerrainConfig) -> impl Scene {
-    let position = ground_position(terrain, 7.0, 7.0);
+pub fn enemy_scene(terrain: &TerrainConfig, sprites: &UnitSprites) -> impl Scene {
+    let position = cell_ground(terrain, ENEMY_SPAWN);
     bsn! {
-        unit_scene(
-            Faction::Enemy,
-            position,
-            1.6,
-            "models/nature/tree_oak.glb#Scene0"
-        )
+        unit_scene(Faction::Enemy, position, sprites)
         MoveSpeed(2.0)
         template_value(EnemyBrain::default())
     }
