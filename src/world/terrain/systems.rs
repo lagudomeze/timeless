@@ -38,15 +38,29 @@ fn value_noise(seed: u32, x: f32, z: f32) -> f32 {
     top + (bottom - top) * sz
 }
 
+/// 地形高度的量化粒度（体素）：`TERRAIN_CELL × TERRAIN_CELL` 个体素列共享一个高度。
+///
+/// **必须等于决策格 `Cell` 的边长**（`timeline::CELL_SIZE`，有测试守着）。
+///
+/// 为什么地形要跟着决策格走：决策层"一格一步"，单位与装饰都摆在**格中心**——
+/// 而格中心（CELL_SIZE = 2 时是奇数世界坐标）正好落在体素**边界**上。如果地形按
+/// 单个体素列起伏，格中心两侧就可能差一格高，footprint 稍大的对象（树、单位纸片）
+/// 就会有一半陷进邻居方块里：看上去就是"树长在地面下、人跟地面重叠"。
+/// 量化到格之后，一格 = 一块 2×2 的平地，台阶只出现在格与格的边界上。
+pub const TERRAIN_CELL: i32 = 2;
+
 /// 某个体素列的地表高度（世界体素 y）：该列最上面一块实心方块的**上方**。
 ///
 /// 纯函数：不依赖 ECS，可直接单测；地形生成与单位/装饰贴地都调用它。
+/// 采样点取**所在格的中心**，因此整格同高（见 [`TERRAIN_CELL`]）。
 pub fn surface_height(config: &TerrainConfig, x: i32, z: i32) -> i32 {
     let amplitude = config.amplitude.max(0);
+    let cell_center =
+        |v: i32| (v.div_euclid(TERRAIN_CELL) * TERRAIN_CELL + TERRAIN_CELL / 2) as f32;
     let noise = value_noise(
         config.seed,
-        x as f32 / config.scale.max(1.0),
-        z as f32 / config.scale.max(1.0),
+        cell_center(x) / config.scale.max(1.0),
+        cell_center(z) / config.scale.max(1.0),
     );
     let steps = (noise * (amplitude + 1) as f32).floor() as i32;
     config.base_height - steps.clamp(0, amplitude)
@@ -109,6 +123,38 @@ pub fn generate_terrain_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 地形量化粒度必须与决策格一致——差一格就会出现"树长在地面下、人陷进地里"。
+    #[test]
+    fn terrain_quantisation_matches_the_decision_cell_size() {
+        assert_eq!(
+            TERRAIN_CELL as f32,
+            crate::timeline::CELL_SIZE,
+            "地形必须与 `Cell` 同粒度：单位与装饰都摆在格中心（体素边界）上"
+        );
+    }
+
+    /// 一格内部的体素列必须同高：格中心两侧差一格，footprint 稍大的对象就会被埋一半。
+    #[test]
+    fn every_voxel_column_inside_a_cell_shares_one_height() {
+        let config = TerrainConfig::default();
+        for cell_x in -3..6 {
+            for cell_z in -3..6 {
+                let base = surface_height(&config, cell_x * TERRAIN_CELL, cell_z * TERRAIN_CELL);
+                for dx in 0..TERRAIN_CELL {
+                    for dz in 0..TERRAIN_CELL {
+                        let x = cell_x * TERRAIN_CELL + dx;
+                        let z = cell_z * TERRAIN_CELL + dz;
+                        assert_eq!(
+                            surface_height(&config, x, z),
+                            base,
+                            "格 ({cell_x},{cell_z}) 内的 ({x},{z}) 与格角不同高"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn terrain_is_deterministic_for_the_same_seed_and_position() {
