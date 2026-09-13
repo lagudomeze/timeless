@@ -219,7 +219,7 @@ pub fn declare_melee_system(
 /// 声明一次火球（只生成**行动实体**），**不检查精力**。
 ///
 /// 玩家路径（[`declare_fireball_system`]）负责扣精力；AI 路径直接调用它
-/// （敌人当前没有精力预算，见 `docs/design/timeline-turnless.md` 6.7 的后续项）。
+/// （敌人当前没有精力预算，见 [`TODO.md`](../../../TODO.md) 的「资源分线」）。
 /// 发射点与发射者都取自**执行那一帧**的世界状态
 /// （见 [`fireball_action_executor_system`]）：声明与落地之间这一发还能被撤销，
 /// 在声明时就生成投射物会留下撤不干净的半空火球。

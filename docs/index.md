@@ -1,53 +1,63 @@
-# Project Timeless 文档索引
+# Project Timeless — 文档入口
 
-> 本文件是项目文档的唯一入口。项目处于 WIP 阶段，文档与代码都可大胆调整；改动后请同步本索引。
+> 本文件是项目文档的**唯一入口**。改动文档后同步本页的表格。
 
 ## 项目定位
 
-**无回合**（所有单位能决策就决策，仅玩家等待输入时冻结虚拟时间）+ 戴森球式供应链 +
-信息即力量的 roguelike 策略游戏，代号 Project Timeless，基于 Bevy 0.19 实现。
-战斗结算用**真实距离**，决策与同格判定按**格子**（见
-[design/timeline-turnless.md](design/timeline-turnless.md)）。
+**无回合**战斗时间线 + 戴森球式供应链 + 「信息即力量」的 roguelike 策略游戏，
+基于 **Bevy 0.19.1**。
+
+节奏来自两件事：每个单位自己的 `Ready`（能决策就决策）与每个动作自带的前摇 + 后摇；
+世界只在**玩家等待输入**时冻结。结算用**真实距离**，决策与同格判定按**格子**。
+
+## 当前状态
+
+代码在仓库根目录 `src/`（package `app`）：
+
+```bash
+cargo test                              # 154 通过（152 单元 + 2 资产验收）/ 0 跳过
+cargo clippy --all-targets -- -D warnings   # 必须零警告
+cargo fmt --check
+cargo run                                # 体素地形 + 世界空间战斗
+```
+
+进度与 backlog 只有一处：根目录 [`TODO.md`](../TODO.md)。
 
 ## 文档地图
 
-| 主题 | 文档 | 描述对象 |
+| 主题 | 文档 | 什么时候读 |
 | :--- | :--- | :--- |
-| **进度与决策记录（唯一进度真相）** | [status.md](status.md) | 全部 |
-| 游戏设计总纲 | [design/game-design.md](design/game-design.md) | 设计稿 |
-| **无回合时间线详细设计（当前权威）** | [design/timeline-turnless.md](design/timeline-turnless.md) | 代码 A |
-| 根目录 app 原型的领域化模块设计 | [design/app-modules.md](design/app-modules.md) | 代码 A |
-| ECS 战斗组件化设计 | [design/ecs-combat-components.md](design/ecs-combat-components.md) | 代码 A |
-| 架构原则与分层 | [design/architecture.md](design/architecture.md) | 设计稿 |
-| 时间线系统详细设计（历史，已被取代） | [design/timeline.md](design/timeline.md) | 代码 B（冻结） |
-| 时间线核心 v0.1 接口签名（历史） | [design/timeline-core-design.md](design/timeline-core-design.md) | 设计稿 |
-| 旧 app → 根目录迁移记录（历史） | [design/app-migration.md](design/app-migration.md) | 代码 A 的前身 |
-| 旧内容盘点与重设计（历史） | [design/app-redesign.md](design/app-redesign.md) | 设计稿 |
-| Action Graph 设计（未落地） | [bevy/action-graph.md](bevy/action-graph.md) | 未来设计稿 |
-| Bevy 0.19 速查与最佳实践 | [bevy/bevy-019.md](bevy/bevy-019.md) | 通用 |
-| 免费素材获取与接入 | [art/assets.md](art/assets.md) | 通用 |
-| Agent 协作规范 | [agent-guidelines.md](agent-guidelines.md) | 流程 |
-
-> 「描述对象」是 [`status.md`](status.md) 第七节第 1 条强制的口径：
-> 每篇文档必须说清自己描述的是**代码 A**（`src/`，主线）、**代码 B**（`timeless/`，冻结）
-> 还是**未来设计稿**。`design/app-modules.md` 的旧版曾描述已删除的 We-Go 版本，
-> 现已按代码 A 重写。
-
-仓库入口指南见 [../AGENTS.md](../AGENTS.md)（不随本套文档自动同步，如需更新请手动维护）。
+| **架构与模块** | [architecture.md](architecture.md) | 想知道「这个功能该放在哪」「谁依赖谁」 |
+| **无回合时间线** | [timeline.md](timeline.md) | 改战斗节奏、行动、防御、投射物、AI |
+| **组件 → 系统对照** | [components.md](components.md) | 想知道「这个组件被谁读 / 写」或设计新零件 |
+| 游戏设计总纲 | [game-design.md](game-design.md) | 想知道「为什么做这个机制」 |
+| 素材与字体 | [assets.md](assets.md) | 选素材、换贴图、动 HUD 文案 |
+| Bevy 0.19 速查 | [bevy-019.md](bevy-019.md) | 写任何 Bevy 代码之前 |
+| 进度与 backlog | [../TODO.md](../TODO.md) | 想知道「现在做到哪了」「下一步做什么」 |
+| 仓库指南 | [../AGENTS.md](../AGENTS.md) | 命令、编码风格、提交规范 |
 
 ## 可复用 Skill
 
-项目技能源码存放在 [../skills](../skills)，并安装到 `$CODEX_HOME/skills` 供本地 Codex 使用：
+技能源码在 [`../skills`](../skills)，并安装到 `$CODEX_HOME/skills` 供本地 Codex 使用：
 
 | Skill | 用途 | 使用时机 |
 | :--- | :--- | :--- |
-| `bevy-019-docs` | 查证 Bevy 0.19 API / 最佳实践，来源优先级与已知差异 | 任何 Bevy 代码编写、审查、迁移 |
-| `bevy-assets` | 免费 2D/3D/音频素材获取、许可证检查、接入 Bevy | 素材选型、下载、入库、接入 |
+| `bevy-019-docs` | 查证 Bevy 0.19 API / 最佳实践、来源优先级与已知差异 | 任何 Bevy 代码编写、审查、迁移 |
+| `bevy-assets` | 免费 2D / 3D / 音频素材获取、许可检查、接入 Bevy | 素材选型、下载、入库、接入 |
 
-安装与维护方式见 [agent-guidelines.md](agent-guidelines.md)。
+## 维护规则（防漂移）
+
+1. **进度只写 `TODO.md`**：其他文档只写「设计与约定」，不写「做到哪了」。
+2. **勾选要有验收证据**：命令输出、测试名或控制台片段；没有证据就保持 `[ ]`。
+3. **不引用不存在的标识符**：文档里出现的类型名必须能在 `src/` 里 grep 到，
+   否则明确标「设计稿」。
+4. **改代码后同步三处**：受影响的 `architecture.md` / `timeline.md` / `components.md`
+   对应段落。
+5. **不用 `#[ignore]` 隐藏失败**：要么修好，要么在 `TODO.md` 写明根因与下一步。
 
 ## 版本基线
 
 - Bevy `0.19.1`；文档与代码示例一律以 0.19 API 为准，引用前须核对官方来源。
-- 对话记录或旧文档中的示例若与 0.19 冲突（如 `EventReader`、`SceneBundle`），以本文档与官方资料为准。
-- 依赖版本索引与镜像环境注意事项见根目录 `../TODO.md`。
+- 旧对话记录或旧文档里的示例若与 0.19 冲突（如 `EventReader` / `SceneBundle`），
+  以 [bevy-019.md](bevy-019.md) 与官方资料为准。
+- 依赖版本索引与镜像环境注意事项见 [`../TODO.md`](../TODO.md)。

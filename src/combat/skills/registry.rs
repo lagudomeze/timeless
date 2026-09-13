@@ -1,8 +1,8 @@
 //! 技能注册表：**展示与消耗的单一来源**。
 //!
 //! 菜单、HUD、可用性判断都读这里，因此「加一个技能」只需要加一条 [`SkillDef`]，
-//! 不需要在三个地方各写一遍花费。数值先硬编码，Phase 2.1 外置成 `.ron`（见
-//! [docs/design/timeline-turnless.md](../../../docs/design/timeline-turnless.md) 6.6）。
+//! 不需要在三个地方各写一遍花费。数值先硬编码，后续外置成 `.ron`（见
+//! [TODO.md](../../../TODO.md) 的「动作数值外置」）。
 
 use crate::combat::defense::{PARRY_COST, ROLL_COST};
 use crate::combat::skills::FIREBALL_DAMAGE;

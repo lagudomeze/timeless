@@ -1,7 +1,7 @@
 //! 动作节奏与格子尺度的常量表。
 //!
 //! 无回合模型下没有「回合」这个时间单位，节奏完全由**每个动作自带的前摇 + 后摇**决定
-//! （见 [docs/design/timeline-turnless.md](../../../docs/design/timeline-turnless.md) 第 4 节）。
+//! （见 [docs/timeline.md](../../../docs/timeline.md) 第四节）。
 //! 数值先集中在这里硬编码，Phase 2.1 再外置成 `.ron`。
 
 /// 一格的世界边长（世界单位 / 格）。

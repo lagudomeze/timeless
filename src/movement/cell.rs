@@ -4,7 +4,7 @@
 //! 高度永远取自地形 / 弹道，不进格坐标。
 //!
 //! 与 [`Transform`] 的分工：**决策与同格判定按格算，命中 / 射程 / 爆炸按真实距离算**
-//! （见 [docs/design/timeline-turnless.md](../../../docs/design/timeline-turnless.md)）。
+//! （见 [docs/timeline.md](../../../docs/timeline.md)）。
 
 use bevy::prelude::*;
 

@@ -19,7 +19,7 @@
 //! 那里只显示"现在能决策、但还没声明"的人，一眼能看出还剩谁没动。
 //!
 //! 无回合模型里没有「回合格子」，所以时间轴**不是**回合队列，而是一段连续时间窗；
-//! 玩家等输入时虚拟时间冻结，色块也跟着停住（这正是 WeGo 的读盘时机）。
+//! 玩家等输入时虚拟时间冻结，色块也跟着停住（这正是玩家读盘的时机）。
 
 use bevy::prelude::*;
 
@@ -41,7 +41,7 @@ struct TimelineSlot {
 
 /// 时间轴快照缓存：与上一帧完全相同就整帧不碰 UI。
 ///
-/// WeGo 里这条路径收益最大——玩家等输入时虚拟时间冻结，`now` 不变、队列不变，
+/// 冻结时这条路径收益最大——玩家等输入时虚拟时间冻结，`now` 不变、队列不变，
 /// 时间轴于是完全静止，每帧的 `Node` 写入全部省掉。
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TimelineCache {
@@ -913,7 +913,7 @@ mod tests {
         assert_eq!(display(&app, block), Display::Flex, "排期画在自己的车道里");
     }
 
-    /// 世界冻结（WeGo 等输入）时时间轴应当整帧静止；队列一变就必须重画。
+    /// 世界冻结（等玩家输入）时时间轴应当整帧静止；队列一变就必须重画。
     #[test]
     fn frozen_timeline_is_left_alone_until_the_queue_changes() {
         let mut app = App::new();
@@ -921,7 +921,7 @@ mod tests {
             .init_resource::<Timeline>()
             .init_resource::<HudCache>()
             .add_systems(Update, update_timeline_system);
-        // 玩家等输入 → 虚拟时间冻结：这是 WeGo 里 HUD 最常处的状态
+        // 玩家等输入 → 虚拟时间冻结：这是 HUD 最常处的状态
         app.world_mut().resource_mut::<Time<Virtual>>().pause();
         let player = app.world_mut().spawn(Faction::Player).id();
         let state = app
