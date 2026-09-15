@@ -1,11 +1,11 @@
-//! 防御组件：瞬时标记与结算结果。
+//! 防御组件：招架载荷 + 两个短命标记。
 //!
-//! 载荷不在这里：翻滚是移动原语，其载荷 [`RollAction`](crate::movement::RollAction)
-//! 住在移动领域；招架载荷 [`ParryAction`] 只绑实体、不产生位移，因此留在这里。
+//! 翻滚的载荷不在这里：它是移动原语，载荷 [`RollAction`](crate::movement::RollAction)
+//! 住在移动领域；这里只有招架（它不产生位移）。
 
 use bevy::prelude::*;
 
-/// 招架载荷：挡下指定的这次攻击。
+/// 招架载荷：挡下指定的**那一次攻击**（攻击实体，来自目标获取）。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParryAction {
     /// 被招架的攻击实体
@@ -38,19 +38,7 @@ pub struct Parrying {
     pub expires_at: f32,
 }
 
-/// 一次攻击的判定结果（写：防御结算；消费：战斗日志 / 表现）。
-#[derive(Message, Debug, Clone, Copy, PartialEq)]
-pub struct AttackResolved {
-    /// 攻击实体（近战横扫 / 箭矢）
-    pub attacker: Entity,
-    /// 被打的目标
-    pub target: Entity,
-    pub outcome: DefenseOutcome,
-    /// 若被招架，攻击者应承受的反制伤害
-    pub counter: f32,
-}
-
-/// 三种判定结果。
+/// 三种判定结果（由 [`resolve_defense`](crate::combat::formula::resolve_defense) 给出）。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum DefenseOutcome {
     /// 命中
@@ -60,18 +48,4 @@ pub enum DefenseOutcome {
     Dodged,
     /// 被招架（免伤 + 反制）
     Parried,
-    /// 被**破势打断**：防御没挡住，但这一击没打出去（三层裁决 L3 的产物）
-    Interrupted,
-}
-
-impl DefenseOutcome {
-    /// 英文标签（HUD / 日志）。
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Landed => "hit",
-            Self::Dodged => "dodged",
-            Self::Parried => "parried",
-            Self::Interrupted => "interrupted",
-        }
-    }
 }

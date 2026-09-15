@@ -14,7 +14,8 @@ use crate::timeline::CELL_SIZE;
 ///
 /// 只在单位**停下**时由 [`move_entities_system`](super::systems::move_entities_system)
 /// 更新，不每帧从 `Transform` 反推——避免浮点抖动让格子跳变。
-#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq, Default)]
+// `Hash` 是给「威胁覆盖了哪几格」这类集合判定用的（见 `combat::reaction`）
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[reflect(Component)]
 pub struct Cell {
     pub x: i32,

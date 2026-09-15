@@ -1,0 +1,252 @@
+//! 威胁检测：有**敌对**的东西瞄准玩家 → 请求冻结世界，等玩家表态。
+
+use std::collections::HashSet;
+
+use bevy::prelude::*;
+
+use crate::combat::Faction;
+use crate::movement::Cell;
+use crate::timeline::{InputDriven, PauseRequest, ScheduledAction, THREAT};
+
+use super::components::{TargetCell, ThreatWindow, Threatens};
+
+/// 每帧检测：**有没有敌对的东西正打在玩家头上**。
+///
+/// 判据（两条取或）：
+///
+/// 1. 有行动**还没到点**（`now < execute_at`）、行动者是敌对阵营、且它的 [`Threatens`]
+///    覆盖玩家所在的格——前摇中的火球与近战横扫都在这里被看见；
+/// 2. 有飞行中的**敌对**投射物瞄准玩家所在的格（[`TargetCell`]）——已经出了手的那种。
+///
+/// 「敌对」这一条不能省：玩家自己的火球砸在自己脚下时，那是**自己**说了算的事，
+/// 把世界冻住只会让那发火球永远飞不出去。
+///
+/// 威胁出现时写 `Pause("threat")`，世界因此冻结，玩家可以撤销 / 换手 /
+/// 花 1 点 Focus 抢先手。**玩家换了一手就算表态**（见 [`ThreatWindow`]），
+/// 世界随即解冻——否则双方都在冻结里，威胁永远不会自己消失。
+#[allow(clippy::too_many_arguments)]
+pub fn detect_threat_system(
+    threats: Query<(&ScheduledAction, &Threatens)>,
+    actions: Query<&ScheduledAction>,
+    projectiles: Query<(&TargetCell, &Faction)>,
+    players: Query<(&Cell, &Faction), With<InputDriven>>,
+    actors: Query<&Faction>,
+    drivers: Query<(), With<InputDriven>>,
+    time: Res<Time<Virtual>>,
+    mut window: ResMut<ThreatWindow>,
+    mut pause: MessageWriter<PauseRequest>,
+) {
+    let now = time.elapsed_secs();
+    let player_cells: HashSet<Cell> = players.iter().map(|(cell, _)| *cell).collect();
+    let player_factions: Vec<Faction> = players.iter().map(|(_, faction)| *faction).collect();
+    let hostile = |faction: &Faction| !player_factions.contains(faction);
+
+    let threatened = threats.iter().any(|(schedule, threat)| {
+        schedule.pending(now)
+            && actors.get(schedule.actor).is_ok_and(hostile)
+            && threat.cells.iter().any(|cell| player_cells.contains(cell))
+    }) || projectiles
+        .iter()
+        .any(|(target, faction)| hostile(faction) && player_cells.contains(&target.0));
+
+    // 玩家眼下这一手（用于判断"表态了没有"）。冻结时虚拟时间不动，
+    // 因此只能比实体身份，不能比时间戳。
+    let player_action = actions
+        .iter()
+        .find(|schedule| schedule.pending(now) && drivers.get(schedule.actor).is_ok())
+        .map(|schedule| schedule.actor);
+
+    // 威胁消失：复位（下一次威胁会重新开窗）
+    if !threatened {
+        if window.threatening {
+            window.threatening = false;
+            window.answered = false;
+            window.opening_action = None;
+            pause.write(PauseRequest::Resume(THREAT.to_string()));
+        }
+        return;
+    }
+
+    // 新威胁：开窗并冻住世界
+    if !window.threatening {
+        window.threatening = true;
+        window.answered = false;
+        window.opening_action = player_action;
+        debug!("⚔ 敌对威胁逼近玩家：冻结世界等反应");
+        pause.write(PauseRequest::Pause(THREAT.to_string()));
+        return;
+    }
+
+    // 玩家换了一手 = 表态：解冻，让他那一手照常落地
+    if !window.answered && window.opening_action != player_action {
+        window.answered = true;
+        debug!("⚔ 玩家已就这次威胁表态：解冻");
+        pause.write(PauseRequest::Resume(THREAT.to_string()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::timeline::timing;
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
+
+    #[derive(Resource, Default)]
+    struct Captured(Vec<PauseRequest>);
+
+    fn capture(mut requests: MessageReader<PauseRequest>, mut captured: ResMut<Captured>) {
+        captured.0.extend(requests.read().cloned());
+    }
+
+    fn threat_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                100,
+            )))
+            .init_resource::<ThreatWindow>()
+            .init_resource::<Captured>()
+            .add_message::<PauseRequest>()
+            .add_systems(Update, (detect_threat_system, capture).chain());
+        app
+    }
+
+    fn spawn_player(app: &mut App, cell: Cell) -> Entity {
+        app.world_mut()
+            .spawn((InputDriven, cell, Faction::Player))
+            .id()
+    }
+
+    fn spawn_enemy(app: &mut App) -> Entity {
+        app.world_mut().spawn(Faction::Enemy).id()
+    }
+
+    fn capture_of(app: &App) -> Vec<PauseRequest> {
+        app.world().resource::<Captured>().0.clone()
+    }
+
+    /// 敌对威胁瞄准玩家 → 请求冻结；威胁消失 → 请求解冻。
+    #[test]
+    fn a_threat_on_the_players_cell_asks_for_a_freeze() {
+        let mut app = threat_app();
+        let player = spawn_player(&mut app, Cell::new(2, 2));
+        let enemy = spawn_enemy(&mut app);
+        let action = app
+            .world_mut()
+            .spawn((
+                ScheduledAction::declared_at(enemy, timing::SHOOT, 0.0),
+                Threatens {
+                    cells: vec![Cell::new(2, 2)],
+                },
+            ))
+            .id();
+
+        app.update();
+        assert_eq!(
+            capture_of(&app).last(),
+            Some(&PauseRequest::Pause(THREAT.to_string())),
+            "有人瞄着玩家脚下的格 → 冻住世界"
+        );
+
+        // 那条行动被撤销 / 打断 / 落地：威胁消失 → 解冻
+        app.world_mut().entity_mut(action).despawn();
+        app.world_mut().resource_mut::<Captured>().0.clear();
+        app.update();
+        assert_eq!(
+            capture_of(&app).last(),
+            Some(&PauseRequest::Resume(THREAT.to_string())),
+            "威胁没了就解冻"
+        );
+        assert!(app.world().get_entity(player).is_ok());
+    }
+
+    /// 玩家自己的攻击不是威胁：否则「往自己脚下扔火球」会把世界冻死。
+    #[test]
+    fn the_players_own_action_is_not_a_threat() {
+        let mut app = threat_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0));
+        app.world_mut().spawn((
+            ScheduledAction::declared_at(player, timing::SHOOT, 0.0),
+            Threatens {
+                cells: vec![Cell::new(0, 0)],
+            },
+        ));
+
+        app.update();
+
+        assert!(
+            capture_of(&app).is_empty(),
+            "自己瞄自己：不冻世界（否则那发火球永远飞不出去）"
+        );
+    }
+
+    /// 飞行中的敌对投射物也算威胁（它已经出了手）。
+    #[test]
+    fn a_projectile_aimed_at_the_player_counts_as_a_threat() {
+        let mut app = threat_app();
+        spawn_player(&mut app, Cell::new(1, 1));
+        app.world_mut()
+            .spawn((TargetCell(Cell::new(1, 1)), Faction::Enemy));
+
+        app.update();
+
+        assert_eq!(
+            capture_of(&app).last(),
+            Some(&PauseRequest::Pause(THREAT.to_string()))
+        );
+    }
+
+    /// **玩家表态就解冻**：否则双方都冻着，威胁永远不消失（死锁）。
+    #[test]
+    fn answering_the_threat_releases_the_freeze() {
+        let mut app = threat_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0));
+        let enemy = spawn_enemy(&mut app);
+        app.world_mut().spawn((
+            ScheduledAction::declared_at(enemy, timing::MELEE, 0.0),
+            Threatens {
+                cells: vec![Cell::new(0, 0)],
+            },
+        ));
+
+        app.update(); // 窗口打开：玩家此刻没有行动
+        let window = *app.world().resource::<ThreatWindow>();
+        assert!(window.threatening && !window.answered);
+
+        // 玩家举起一招（换了一手）
+        app.world_mut()
+            .spawn(ScheduledAction::declared_at(player, timing::MELEE, 1.0));
+        app.world_mut().resource_mut::<Captured>().0.clear();
+        app.update();
+
+        assert_eq!(
+            capture_of(&app).last(),
+            Some(&PauseRequest::Resume(THREAT.to_string())),
+            "玩家已经就这次威胁表态过了"
+        );
+        let window = *app.world().resource::<ThreatWindow>();
+        assert!(
+            window.threatening && window.answered,
+            "表态过就不再重复开窗（否则世界会走一帧停一帧）"
+        );
+    }
+
+    /// 没瞄到玩家脚下的格就不算威胁（同一发火球打向别处）。
+    #[test]
+    fn a_threat_elsewhere_does_not_freeze_the_world() {
+        let mut app = threat_app();
+        spawn_player(&mut app, Cell::new(0, 0));
+        let enemy = spawn_enemy(&mut app);
+        app.world_mut().spawn((
+            ScheduledAction::declared_at(enemy, timing::SHOOT, 0.0),
+            Threatens {
+                cells: vec![Cell::new(5, 5)],
+            },
+        ));
+
+        app.update();
+
+        assert!(capture_of(&app).is_empty(), "打别处不该惊动玩家");
+    }
+}

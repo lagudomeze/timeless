@@ -14,7 +14,7 @@ use crate::combat::Faction;
 use crate::combat::defense::{ROLL_COST, RollCommand, Stamina};
 use crate::combat::skills::events::{FireCommand, MeleeCommand};
 use crate::movement::Cell;
-use crate::timeline::{CELL_SIZE, Ready};
+use crate::timeline::{CELL_SIZE, DecisionSlot, InputDriven};
 
 use super::registry::{SKILLS, SkillKind};
 
@@ -88,8 +88,11 @@ pub struct UseSelectedSkill {
     pub target_cell: Option<Cell>,
 }
 
-/// 就绪的单位（菜单选择与释放都要求「现在轮到玩家决策」，所以下游还要按阵营挑人）。
-type ReadyUnit<'w, 's> = Query<'w, 's, (Entity, &'static Stamina, &'static Faction), With<Ready>>;
+/// 玩家的零件：精力（够不够）+ 决策槽（现在能不能出手）。
+///
+/// 「谁是玩家」认 [`InputDriven`] 标记，不再满世界 `find(|faction| … == Player)`。
+type PlayerUnit<'w, 's> =
+    Query<'w, 's, (Entity, &'static Stamina, &'static DecisionSlot), With<InputDriven>>;
 
 /// 选中：只改 [`MenuSelection`]。
 pub fn select_skill_system(
@@ -105,7 +108,8 @@ pub fn select_skill_system(
 pub fn cycle_skill_system(
     mut requests: MessageReader<CycleSkill>,
     mut selection: ResMut<MenuSelection>,
-    players: Query<&Stamina, (With<Faction>, With<Ready>)>,
+    // 选择**随时可做**（忙的时候也能先把下一个选好），因此只读玩家当前的精力
+    players: Query<&Stamina, With<InputDriven>>,
 ) {
     for request in requests.read() {
         let affordable = players
@@ -125,7 +129,7 @@ pub fn cycle_skill_system(
 pub fn use_selected_skill_system(
     mut requests: MessageReader<UseSelectedSkill>,
     selection: Res<MenuSelection>,
-    players: ReadyUnit<'_, '_>,
+    players: PlayerUnit<'_, '_>,
     transforms: Query<&Transform>,
     bodies: Query<(&Transform, &Faction)>,
     mut fire_commands: MessageWriter<FireCommand>,
@@ -136,11 +140,10 @@ pub fn use_selected_skill_system(
     let Some(request) = requests.read().last().copied() else {
         return;
     };
-    // **必须按阵营挑玩家**：就绪的单位里也有敌人，`single()` 会抓错人
-    // （两个都就绪时还会直接失败 —— 表现为按 G 什么也没发生）。
+    // 决策槽不是空的就是"这次输入被拒"（前摇 / 后摇 / 位移中）
     let Some((player, stamina, _)) = players
         .iter()
-        .find(|(_, _, faction)| **faction == Faction::Player)
+        .find(|(_, _, slot)| **slot == DecisionSlot::Empty)
     else {
         blocked.write(crate::timeline::ActionBlocked::BUSY);
         return; // 忙（前摇 / 后摇）或没有玩家

@@ -9,13 +9,13 @@
 //! | [`world`] | 体素地图**数据**：区块、地形生成、体素存取（零渲染依赖，可脱离渲染单测） |
 //! | [`voxel_render`] | 体素**表现**：异步网格化、材质、明暗 |
 //! | [`movement`] | 格子决策（`Cell` / `MoveGoal`）+ 速度位移 + 移动 / 跳跃 / 翻滚行动 |
-//! | [`combat`] | 生命 / 伤害 / 目标获取 / 攻击实体生命周期 / 技能 / 精力 / 防御 / 两阶段结算 |
+//! | [`combat`] | 生命 / 伤害 / 目标获取 / 攻击实体生命周期 / 技能 / 精力 / 防御 / 反应 |
 //! | [`ai`] | 敌人决策（选意图 → 声明行动，同样不改状态） |
-//! | [`timeline`] | 无回合调度：`Ready` 决定谁能决策，每个动作自带前摇 + 后摇 |
+//! | [`timeline`] | 无回合调度：决策槽决定谁能决策，每个动作自带前摇 + 后摇 |
 //! | [`input`] | 玩家输入源（键盘 / 鼠标 → 消息，只翻译） |
 //! | [`interaction`] | 鼠标交互：射线拾取、网格高亮、点击 → 消息、行动预演指示器 |
 //! | [`presentation`] | 表现：相机 / 单位纸片与贴地阴影 / HUD / 装饰 / 日志 |
-//! | [`spawn`] | **组装车间**：把各域零件拼成「玩家 / 敌人」实体，含开局组装与重建功能 |
+//! | [`spawn`] | **组装车间**：把各域零件拼成「玩家 / 敌人」实体，含开局组装与重置 |
 //!
 //! 「玩家」「敌人」不是模块，而是组件的组合体——零件归各领域，组装归 [`spawn`]，
 //! 且**没有任何领域依赖 `spawn`**：
@@ -27,14 +27,17 @@
 //! ai    ──▶ movement / combat（只声明行动实体）
 //! ```
 //!
-//! 跨领域**执行顺序**只在 [`GamePlugin`] 里声明一次，领域内部顺序由各插件自己维护：
+//! 跨领域**执行顺序**只在 [`configure_pipeline`] 里声明一次，领域内部顺序由各插件自己维护：
 //!
 //! ```text
 //! Startup:  PreloadSet ─▶ AssemblySet
-//! Update:   SpawnSet ─▶ InputSet ─▶ TimelineSet ─▶ AiSet ─▶ MovementSet ─▶ CombatSet
-//!           ─▶ VoxelRenderSet ─▶ PresentationSet
+//! Update:   SpawnSet ─▶ InputSet ─▶ InteractionSet ─▶ TimelineSet ─▶ AiSet
+//!           ─▶ MovementSet ─▶ CombatSet ─▶ VoxelRenderSet ─▶ PresentationSet ─▶ ClockSet
 //! WorldSet ────────────────────────▶（必须早于 VoxelRenderSet）
 //! ```
+//!
+//! [`ClockSet`] 排在帧末：这一帧所有系统看到的是同一个冻结状态，而**唯一**写
+//! `Time<Virtual>` 的 `apply_clock` 就在那里落地（见 [`timeline`]）。
 
 use bevy::prelude::*;
 
@@ -56,7 +59,7 @@ pub use interaction::{InteractionPlugin, InteractionSet};
 pub use movement::{MovementPlugin, MovementSet};
 pub use presentation::{PreloadSet, PresentationPlugin, PresentationSet};
 pub use spawn::{AssemblySet, SpawnPlugin, SpawnSet};
-pub use timeline::{TimelinePlugin, TimelineSet};
+pub use timeline::{ClockSet, TimelinePlugin, TimelineSet};
 pub use voxel_render::{VoxelRenderPlugin, VoxelRenderSet};
 pub use world::{WorldPlugin, WorldSet};
 
@@ -84,6 +87,8 @@ pub fn configure_pipeline(app: &mut App) {
                 CombatSet,
                 VoxelRenderSet,
                 PresentationSet,
+                // 帧末：暂停请求 → 原因集合 → 时钟。冻结只影响下一帧
+                ClockSet,
             )
                 .chain(),
         )
@@ -162,20 +167,23 @@ mod tests {
     use bevy::world_serialization::WorldSerializationPlugin;
     use std::time::Duration;
 
-    use crate::combat::defense::{Dodging, Parrying, RollCommand, Stamina};
-    use crate::combat::formula::{AttackStats, HitOrder, Side, resolve_combat};
+    use crate::combat::defense::{Dodging, Parrying, ROLL_COST, RollCommand, Stamina};
+    use crate::combat::skills::{FireballAction, fireball_action_scene};
     use crate::combat::{
-        Armor, AttackFrame, Collidable, Faction, HitOnce, HitRadius, Impact, Lifetime, MeleeShape,
-        PhysicalDamage, Projectile, health::Health,
+        Armor, Collidable, DamageEvent, Faction, Fireball, HitOnce, HitRadius, InterruptPower,
+        Lifetime, MeleeShape, PhysicalDamage, Projectile, Threatens, health::Health,
     };
-    use crate::movement::{Cell, MoveSpeed, Velocity};
-    use crate::timeline::{CELL_SIZE, Pending, Ready, Timeline};
+    use crate::movement::{Cell, Jumping, MoveAction, MoveSpeed, Velocity};
+    use crate::timeline::{
+        Busy, DecisionSlot, FOCUS_MAX, Focus, InputDriven, InterruptEvent, PauseReasons,
+        ScheduledAction, THREAT, UndoCommand, timing,
+    };
     use crate::world::{TerrainConfig, ground_position};
 
     /// 最小 App：装输入 / 时间线 / 战斗 / 移动领域，不启动渲染。
     ///
     /// 时间用 `ManualDuration` 手动步进（100ms/帧），测试因此可以精确走完
-    /// 「声明 → 提交桥 → 到点执行 → 后摇恢复」的整条时间线。
+    /// 「声明 → 前摇到点 → 执行器落地 → 后摇恢复」的整条时间线。
     ///
     /// 注册 `Mesh` / `StandardMaterial` 两个资产类型：行动实体的场景工厂
     /// （火球 / 近战横扫）用 `asset_value(...)` 造视觉，而 BSN 模板在实例化时
@@ -223,152 +231,19 @@ mod tests {
         app.world().get::<Velocity>(entity).unwrap().0
     }
 
-    fn pending_actions(app: &mut App) -> usize {
-        let mut query = app.world_mut().query_filtered::<Entity, With<Pending>>();
-        query.iter(app.world()).count()
-    }
-
-    /// 场上未执行完的火球行动实体数。
-    fn fireballs(app: &mut App) -> usize {
+    /// 场上还没被收拾掉的行动实体数（按载荷类型数）。
+    fn actions<A: Component>(app: &mut App) -> usize {
         app.world_mut()
-            .query_filtered::<Entity, With<crate::combat::FireballAction>>()
+            .query_filtered::<Entity, With<A>>()
             .iter(app.world())
             .count()
     }
 
-    /// 生成一个**真实的**近战攻击实体，并让它立刻命中 `target`。
-    ///
-    /// 组件与 [`crate::combat::skills::melee_scene`] 保持一致（伤害 15 / 帧 5 / 破势 3），
-    /// 但直接 `spawn` 而不是 `spawn_scene`：`World::spawn_scene` 在这个最小 App 里
-    /// 需要额外的场景反序列化环境，测试不值得依赖它。
-    fn spawn_melee_attack(app: &mut App, target: Entity, faction: Faction) -> Entity {
-        app.world_mut()
-            .spawn((
-                faction,
-                PhysicalDamage(crate::combat::skills::MELEE_DAMAGE),
-                AttackFrame(crate::combat::skills::MELEE_FRAME),
-                Impact(crate::combat::skills::MELEE_IMPACT),
-                MeleeShape::default(),
-                HitOnce::default(),
-                Lifetime::default(),
-                crate::combat::CollisionTarget(target),
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
-            .id()
-    }
-
-    #[test]
-    fn arrow_damages_target_then_is_cleaned_up() {
-        let mut app = test_app();
-        let target = app
-            .world_mut()
-            .spawn((
-                Health::new(100.0),
-                Collidable,
-                HitRadius(0.8),
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
-            .id();
-        let arrow = app
-            .world_mut()
-            .spawn((
-                Velocity(Vec3::ZERO),
-                Projectile::default(),
-                HitRadius(0.2),
-                PhysicalDamage(10.0),
-                Transform::from_xyz(0.5, 0.0, 0.0),
-            ))
-            .id();
-
-        app.update(); // 碰撞挂标记
-        app.update(); // 伤害 → 命中结束 → 清理
-
-        let world = app.world_mut();
-        assert!(
-            world.get_entity(arrow).is_err(),
-            "普通射弹（穿透 1）命中后应被清理"
-        );
-        let hp = world.query::<&Health>().get(world, target).unwrap();
-        assert_eq!(hp.current, 90.0, "10 点物理伤害应扣减 10 点生命");
-    }
-
-    #[test]
-    fn armor_reduces_physical_damage() {
-        let mut app = test_app();
-        let target = app
-            .world_mut()
-            .spawn((
-                Health::new(100.0),
-                Collidable,
-                HitRadius(0.8),
-                Armor(3.0),
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
-            .id();
-        app.world_mut().spawn((
-            Velocity(Vec3::ZERO),
-            Projectile::default(),
-            HitRadius(0.2),
-            PhysicalDamage(10.0),
-            Transform::from_xyz(0.5, 0.0, 0.0),
-        ));
-
-        app.update();
-        app.update();
-
-        let world = app.world_mut();
-        let hp = world.query::<&Health>().get(world, target).unwrap();
-        assert_eq!(hp.current, 93.0, "10 点物理伤害应被 3 点护甲减免");
-    }
-
-    #[test]
-    fn lethal_damage_triggers_despawn() {
-        let mut app = test_app();
-        let target = app
-            .world_mut()
-            .spawn((
-                Health::new(5.0),
-                Collidable,
-                HitRadius(0.8),
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
-            .id();
-        app.world_mut().spawn((
-            Velocity(Vec3::ZERO),
-            Projectile::default(),
-            HitRadius(0.2),
-            PhysicalDamage(10.0),
-            Transform::from_xyz(0.5, 0.0, 0.0),
-        ));
-
-        app.update();
-        app.update();
-
-        assert!(
-            app.world_mut().get_entity(target).is_err(),
-            "致命伤害应触发 DeathEvent 并销毁目标"
-        );
-    }
-
-    /// 测试用单位：玩家 + 速度 + 格子 + 精力 + **就绪**（能立刻决策）。
-    ///
-    /// 零件要与 [`crate::spawn::unit_scene`] 对齐——少一个 `Stamina`，
-    /// 所有「按阵营挑玩家」的查询就都匹配不到它。
-    fn spawn_ready_unit(app: &mut App, cell: Cell, world: Vec3) -> Entity {
-        app.world_mut()
-            .spawn((
-                Faction::Player,
-                Health::new(50.0),
-                Collidable,
-                HitRadius(0.8),
-                Velocity(Vec3::ZERO),
-                MoveSpeed(5.0),
-                Stamina::default(),
-                cell,
-                Ready,
-                Transform::from_translation(world),
-            ))
-            .id()
+    fn slot_of(app: &App, entity: Entity) -> DecisionSlot {
+        app.world()
+            .get::<DecisionSlot>(entity)
+            .copied()
+            .expect("单位应当有决策槽")
     }
 
     /// 按下一个键（走 Bevy 真正的输入管线）。
@@ -391,32 +266,169 @@ mod tests {
             });
     }
 
-    /// 无回合模型：按一次 W 走**一格**，走到格中心自动停下并更新 `Cell`。
+    /// 玩家单位：零件与 [`crate::spawn::player_scene`] 对齐。
     ///
-    /// 时长为 100ms/帧：声明 → (下一帧) 升为 Pending → 前摇 0.15s 到点 → 位移 1 格。
+    /// 少了 `InputDriven`，时间线就当场上没有玩家——世界不会为谁停下来，
+    /// 反应系统也不知道该保护谁。
+    fn spawn_player(app: &mut App, cell: Cell, world: Vec3) -> Entity {
+        app.world_mut()
+            .spawn((
+                Faction::Player,
+                Health::new(50),
+                Collidable,
+                HitRadius(0.8),
+                Velocity(Vec3::ZERO),
+                MoveSpeed(5.0),
+                Stamina::default(),
+                cell,
+                DecisionSlot::Empty,
+                InputDriven,
+                Transform::from_translation(world),
+            ))
+            .id()
+    }
+
+    /// 敌人单位：同样的骨架，但没有 `InputDriven`（时间线不为它停表）。
+    fn spawn_enemy(app: &mut App, cell: Cell, world: Vec3) -> Entity {
+        app.world_mut()
+            .spawn((
+                Faction::Enemy,
+                Health::new(50),
+                Collidable,
+                HitRadius(0.8),
+                Velocity(Vec3::ZERO),
+                MoveSpeed(2.0),
+                Stamina::default(),
+                cell,
+                DecisionSlot::Empty,
+                Transform::from_translation(world),
+            ))
+            .id()
+    }
+
+    #[test]
+    fn arrow_damages_target_then_is_cleaned_up() {
+        let mut app = test_app();
+        let target = app
+            .world_mut()
+            .spawn((
+                Health::new(100),
+                Collidable,
+                HitRadius(0.8),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+        let arrow = app
+            .world_mut()
+            .spawn((
+                Velocity(Vec3::ZERO),
+                Projectile::default(),
+                HitRadius(0.2),
+                PhysicalDamage(10),
+                Transform::from_xyz(0.5, 0.0, 0.0),
+            ))
+            .id();
+
+        app.update(); // 碰撞挂标记 → 命中结算
+        app.update(); // 清理
+
+        let world = app.world_mut();
+        assert!(
+            world.get_entity(arrow).is_err(),
+            "普通射弹（穿透 1）命中后应被清理"
+        );
+        let hp = world.query::<&Health>().get(world, target).unwrap();
+        assert_eq!(hp.current, 90, "10 点物理伤害应扣减 10 点生命");
+    }
+
+    #[test]
+    fn armor_reduces_physical_damage() {
+        let mut app = test_app();
+        let target = app
+            .world_mut()
+            .spawn((
+                Health::new(100),
+                Collidable,
+                HitRadius(0.8),
+                Armor(3),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+        app.world_mut().spawn((
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.2),
+            PhysicalDamage(10),
+            Transform::from_xyz(0.5, 0.0, 0.0),
+        ));
+
+        app.update();
+        app.update();
+
+        let world = app.world_mut();
+        let hp = world.query::<&Health>().get(world, target).unwrap();
+        assert_eq!(hp.current, 93, "10 点物理伤害应被 3 点护甲减免");
+    }
+
+    #[test]
+    fn lethal_damage_triggers_despawn() {
+        let mut app = test_app();
+        let target = app
+            .world_mut()
+            .spawn((
+                Health::new(5),
+                Collidable,
+                HitRadius(0.8),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+        app.world_mut().spawn((
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.2),
+            PhysicalDamage(10),
+            Transform::from_xyz(0.5, 0.0, 0.0),
+        ));
+
+        app.update();
+        app.update();
+
+        assert!(
+            app.world_mut().get_entity(target).is_err(),
+            "致命伤害应触发 DeathEvent 并销毁目标"
+        );
+    }
+
+    /// 无回合模型：按一次方向键走**一格**，走到格中心自动停下并更新 `Cell`。
+    ///
+    /// 节奏（100ms/帧）：声明 → 前摇 0.15s → 位移 0.4s → 后摇走完清空决策槽。
     #[test]
     fn pressing_walks_exactly_one_cell_and_stops_at_its_center() {
         let mut app = test_app();
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
 
         press(&mut app, KeyCode::ArrowUp);
-        app.update(); // 声明移动：产生 Declared 草案 + 玩家失去 Ready
-        app.update(); // 提交桥：Declared → Pending
-        assert_eq!(pending_actions(&mut app), 1, "W 应当产生一条待执行移动");
+        app.update(); // 声明：行动实体 + 决策槽 Filled
+        assert_eq!(actions::<MoveAction>(&mut app), 1, "按一次应当产生一条移动");
+        assert_eq!(
+            slot_of(&app, player),
+            DecisionSlot::Filled,
+            "声明之后决策槽被占住"
+        );
         assert_eq!(
             velocity_of(&mut app, player),
             Vec3::ZERO,
             "前摇未到时不该有速度"
         );
 
-        for _ in 0..6 {
+        for _ in 0..12 {
             app.update();
         }
 
         assert_eq!(
             app.world().get::<Cell>(player).copied(),
             Some(Cell::new(0, 1)),
-            "W 应当走一格到 +Z 方向的邻格"
+            "方向键应当走一格到 +Z 方向的邻格"
         );
         // 目标格 (0,1) 的中心 = 世界 (1, 3)；`y` 由地形决定（停下时贴地）
         let terrain = *app.world().resource::<TerrainConfig>();
@@ -438,24 +450,47 @@ mod tests {
         );
     }
 
+    /// **没有「确认」这一步**：声明即生效，不需要按 Enter。
     #[test]
     fn fast_mode_applies_input_without_enter() {
         let mut app = test_app();
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
 
         press(&mut app, KeyCode::ArrowUp);
-        for _ in 0..7 {
+        for _ in 0..12 {
             app.update();
         }
 
         assert_eq!(
             app.world().get::<Cell>(player).copied(),
             Some(Cell::new(0, 1)),
-            "没有按 Enter，W 也应当直接走一格"
+            "没有按 Enter，方向键也应当直接走一格"
         );
     }
 
-    /// 整机回归：用真实斜视角机位跑一次决策，按 W 必须贴地走到**相邻格中心**，
+    /// 后摇走完：决策槽清空、`Busy` 摘掉，又能声明下一手。
+    #[test]
+    fn recovery_restores_the_ability_to_decide() {
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+
+        press(&mut app, KeyCode::ArrowUp);
+        for _ in 0..20 {
+            app.update();
+        }
+
+        assert_eq!(
+            slot_of(&app, player),
+            DecisionSlot::Empty,
+            "后摇结束应当清空决策槽"
+        );
+        assert!(
+            app.world().get::<Busy>(player).is_none(),
+            "`Busy` 应当被摘掉，而不是留成幽灵状态"
+        );
+    }
+
+    /// 整机回归：用真实斜视角机位跑一次决策，按方向键必须贴地走到**相邻格中心**，
     /// 而不是飞上天，也不该停在格角上。
     #[test]
     fn move_stays_on_the_ground_and_follows_the_camera() {
@@ -481,9 +516,9 @@ mod tests {
             (transform.rotation * Vec3::NEG_Z).with_y(0.0).normalize()
         };
 
-        // 按 W（屏幕向上）：一次决策走一格，方向 = 相机前方（远离相机）
+        // 按上（屏幕向上）：一次决策走一格，方向 = 相机前方（远离相机）
         press(&mut app, KeyCode::ArrowUp);
-        for _ in 0..7 {
+        for _ in 0..14 {
             app.update();
         }
 
@@ -493,241 +528,19 @@ mod tests {
             .get::<Cell>(player)
             .copied()
             .expect("应当有格子");
-        // 贴地：结束位置的高度必须是**脚下那格的地表高度**（而不是"高度永远不变"）
+        // 贴地：结束位置的高度必须是**脚下那格**的地表高度
         let terrain = *app.world().resource::<TerrainConfig>();
         let ground = ground_position(&terrain, end.x, end.z).y;
+        assert_eq!(end.y, ground, "走完应当贴着地面");
+        let moved = (end - start).with_y(0.0);
         assert!(
-            (end.y - ground).abs() < 1e-3,
-            "移动结束必须站在地表上：y = {}, 地表 = {ground}（起点 y = {}）",
-            end.y,
-            start.y
+            moved.dot(camera_forward) > 0.0,
+            "方向键应当朝相机前方走，实际位移 {moved:?}"
         );
-        // 决策按格：一次决策的落点是**相邻格的中心**，由 `step_from_axis`
-        // 从相机前方吸附出正交方向。因此这里比对的是「同一套吸附规则推出的格」，
-        // 而不是相机前方本身。
-        let forward = Vec2::new(camera_forward.x, camera_forward.z).normalize();
-        let (dx, dz) = crate::movement::step_from_axis(forward);
-        assert_ne!((dx, dz), (0, 0), "W 应当推出一个正交步伐，而不是零步");
-        let start_cell = Cell::from_world(start);
-        assert_eq!(
-            cell,
-            Cell::new(start_cell.x + dx, start_cell.z + dz),
-            "W 应当走到 step_from_axis(相机前方) 指出的相邻格"
-        );
-        assert_eq!(
-            end.xz(),
-            cell.center(),
-            "走到格中心后，世界坐标应当与决策层格子一致"
-        );
+        let center = cell.center();
         assert!(
-            (end - start).length() <= CELL_SIZE * 1.5,
-            "一格位移不该跑出 1.5 格：{end:?} vs {start:?}"
-        );
-    }
-
-    /// 一次决策 = 一个意图：**新意图会打断尚未结算的旧意图**（前摇窗口内）。
-    ///
-    /// 这是无回合模型"随时可以改主意"的落点；打断的代价由旧行动自己声明
-    /// （火球 2 点精力，见 `CancelCost`）。
-    #[test]
-    fn a_new_intent_interrupts_the_unresolved_action() {
-        let mut app = test_app();
-        spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
-
-        press(&mut app, KeyCode::KeyQ);
-        app.update(); // 声明火球 → 失去 Ready
-        // 声明当帧行动还是 `Declared`（提交桥下一帧才升 `Pending`），所以直接数行动实体
-        assert_eq!(
-            app.world_mut()
-                .query_filtered::<Entity, With<crate::timeline::ScheduledAction>>()
-                .iter(app.world())
-                .count(),
-            1,
-            "Q 应当声明一条火球行动"
-        );
-
-        // 前摇里按方向键：打断火球，换成移动
-        press(&mut app, KeyCode::ArrowUp);
-        app.update();
-        assert_eq!(
-            app.world_mut()
-                .query_filtered::<Entity, With<crate::movement::MoveAction>>()
-                .iter(app.world())
-                .count(),
-            1,
-            "新意图应当顶掉旧行动、换成移动"
-        );
-        assert_eq!(fireballs(&mut app), 0, "被打断的火球不该真的发射出去");
-    }
-
-    /// 整机链路：被拒的输入要**看得见**——声明系统写 `ActionBlocked`、HUD 消费并弹出提示。
-    ///
-    /// 这条守的是「消息有没有真的接上」：单看两边的单测都过，中间少注册一条消息
-    /// 或系统顺序接错，玩家感受到的就是"按了没反应、也没人告诉我为什么"。
-    ///
-    #[test]
-    fn a_blocked_input_makes_the_hud_say_so() {
-        use crate::presentation::hud::ActionHint;
-
-        let mut app = crate::test_support::headless_app();
-        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-            100,
-        )));
-        app.update(); // Startup：组装单位 + HUD
-
-        // 先打一发火球：执行后玩家进入**不可打断**的后摇窗口（火球后摇 0.5s）
-        press(&mut app, KeyCode::KeyQ);
-        for _ in 0..5 {
-            app.update();
-        }
-
-        // 后摇里按方向键：撤不掉（行动已经结算）、也声明不了 → 应当弹出提示
-        press(&mut app, KeyCode::ArrowLeft);
-        app.update();
-
-        let mut query = app.world_mut().query_filtered::<&Node, With<ActionHint>>();
-        let hint = query.iter(app.world()).next().expect("HUD 应当有提示条");
-        assert_eq!(
-            hint.display,
-            Display::Flex,
-            "被拒的输入应当让 HUD 提示一句，而不是静默丢弃"
-        );
-    }
-
-    /// 后摇走完会恢复 `Ready`，此时按 W 能正常走一格。
-    ///
-    /// 下面两条是「鼠标路径」的整机验收：点地板跨多格走、右键撤销退资源。
-    #[test]
-    fn clicking_a_far_cell_walks_more_than_one_cell() {
-        let mut app = test_app();
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
-        let target = Cell::new(3, 0);
-
-        app.world_mut()
-            .write_message(crate::movement::MoveToCommand { cell: target });
-        // 前摇 0.15 + 直线约 7.1 / 速度 5.0 ≈ 1.4s，再加后摇，跑到 2s 足够
-        for _ in 0..20 {
-            app.update();
-        }
-
-        assert_eq!(
-            app.world().get::<Cell>(player).copied(),
-            Some(target),
-            "一次点击应当走到目标格（跨多格）"
-        );
-        assert!(
-            app.world().get::<Ready>(player).is_some(),
-            "走到位并走完后摇之后应当重新可决策"
-        );
-    }
-
-    /// 右键撤销：草案被销毁、精力退回来、玩家重新可决策。
-    #[test]
-    fn undo_cancels_the_draft_and_refunds_stamina() {
-        let mut app = test_app();
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
-
-        press(&mut app, KeyCode::KeyQ); // 火球：声明时先扣 2 精力
-        app.update();
-
-        let stamina = |app: &App| app.world().get::<Stamina>(player).unwrap().current;
-        assert_eq!(stamina(&app), 3, "火球声明时应当先扣 2 点精力");
-        assert_eq!(pending_actions(&mut app), 0, "预演态下还没有提交");
-        assert!(
-            app.world().resource::<Timeline>().has_draft(),
-            "应当有一条待确认的草案"
-        );
-
-        app.world_mut().write_message(crate::timeline::UndoCommand);
-        app.update();
-
-        // 火球声明时扣 2；取消时退 2 但**收 2 点取消代价**（CancelCost）→ 净剩 3
-        assert_eq!(stamina(&app), 3, "取消大招要付代价：不能白打断");
-        assert!(
-            app.world().get::<Ready>(player).is_some(),
-            "撤销之后玩家重新可决策"
-        );
-        assert!(
-            !app.world().resource::<Timeline>().has_draft(),
-            "草案记录要清干净"
-        );
-        assert_eq!(
-            app.world_mut()
-                .query_filtered::<Entity, With<crate::timeline::ScheduledAction>>()
-                .iter(app.world())
-                .count(),
-            0,
-            "行动实体应当被销毁"
-        );
-        assert_eq!(fireballs(&mut app), 0, "撤销后不该留下飞行中的火球");
-    }
-
-    #[test]
-    fn recovery_restores_the_ability_to_decide() {
-        let mut app = test_app();
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
-
-        press(&mut app, KeyCode::KeyQ); // 火球：前摇 0.30 + 后摇 0.50
-        for _ in 0..12 {
-            app.update();
-        }
-        assert!(
-            app.world().get::<Ready>(player).is_some(),
-            "后摇结束应当恢复 Ready"
-        );
-
-        // 方向没变过，但上一次决策已经消耗掉了；重新按 W 应当能再声明
-        press(&mut app, KeyCode::ArrowUp);
-        for _ in 0..7 {
-            app.update();
-        }
-        assert_eq!(
-            app.world().get::<Cell>(player).copied(),
-            Some(Cell::new(0, 1)),
-            "恢复 Ready 之后应当能走一格"
-        );
-    }
-
-    /// 空格声明跳跃：到点后离地，并落回起跳高度。
-    #[test]
-    fn space_declares_a_jump_that_leaves_and_returns_to_the_ground() {
-        let mut app = test_app();
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
-
-        press(&mut app, KeyCode::KeyC);
-        app.update();
-        assert_eq!(
-            app.world_mut()
-                .query_filtered::<Entity, With<crate::movement::JumpAction>>()
-                .iter(app.world())
-                .count(),
-            1,
-            "空格应当声明一条跳跃"
-        );
-
-        let mut peak = 0.0f32;
-        for _ in 0..5 {
-            app.update();
-            peak = peak.max(app.world().get::<Transform>(player).unwrap().translation.y);
-        }
-        assert!(peak > 0.3, "跳跃应当离地，实际最高 {peak}");
-
-        for _ in 0..6 {
-            app.update();
-        }
-        // 单位没动过位置，所以落地高度就是它脚下那一格的地表高度
-        let terrain = *app.world().resource::<TerrainConfig>();
-        let ground = ground_position(&terrain, 0.0, 0.0).y;
-        assert_eq!(
-            app.world().get::<Transform>(player).unwrap().translation.y,
-            ground,
-            "应当落回起跳高度（也就是脚下的地面）"
-        );
-        assert!(
-            app.world()
-                .get::<crate::movement::Jumping>(player)
-                .is_none(),
-            "落地后应当移除跳跃状态"
+            (end.x - center.x).abs() < 1e-3 && (end.z - center.y).abs() < 1e-3,
+            "应当停在格子中心，实际 {end:?} vs 格 {center:?}"
         );
     }
 
@@ -738,7 +551,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Faction::Enemy,
-                Health::new(50.0),
+                Health::new(50),
                 Collidable,
                 HitRadius(0.8),
                 Transform::from_xyz(0.0, 0.0, 0.0),
@@ -748,7 +561,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Faction::Player,
-                PhysicalDamage(15.0),
+                PhysicalDamage(15),
                 MeleeShape::default(),
                 HitOnce::default(),
                 Lifetime::default(),
@@ -760,7 +573,7 @@ mod tests {
 
         let world = app.world_mut();
         let hp = world.query::<&Health>().get(world, enemy).unwrap();
-        assert_eq!(hp.current, 35.0, "近战 15 点伤害只应结算一次");
+        assert_eq!(hp.current, 35, "近战 15 点伤害只应结算一次");
 
         // 直接让计时器到期，验证 Lifetime 销毁（避免依赖测试时间推进）
         app.world_mut()
@@ -781,25 +594,11 @@ mod tests {
     #[test]
     fn roll_spends_stamina_and_grants_invulnerability() {
         let mut app = test_app();
-        let player = app
-            .world_mut()
-            .spawn((
-                Faction::Player,
-                Velocity(Vec3::ZERO),
-                MoveSpeed(5.0),
-                Stamina::new(3),
-                Cell::new(0, 0),
-                Ready,
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
-            .id();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        app.world_mut().get_mut::<Stamina>(player).unwrap().current = 3;
+        assert_eq!(ROLL_COST, 1, "这条测试按 1 点精力写着");
         // 威胁在东侧：翻滚应当朝西退（-X）
-        app.world_mut().spawn((
-            Faction::Enemy,
-            Health::new(50.0),
-            Cell::new(5, 0),
-            Transform::from_xyz(10.0, 0.0, 0.0),
-        ));
+        spawn_enemy(&mut app, Cell::new(5, 0), Vec3::new(10.0, 0.0, 0.0));
 
         app.world_mut().write_message(RollCommand);
         // 翻滚落地那一帧：精力被扣掉，且**还没**开始回复。
@@ -807,7 +606,7 @@ mod tests {
         // 必须在这一刻观测：`recovery_system` 会在后摇结束时回 1 点精力
         // （`ROLL.recovery = 0.30`），再往后看就分不清「没扣」和「扣了又回了」。
         let mut spent_on_arrival = None;
-        for _ in 0..6 {
+        for _ in 0..8 {
             app.update();
             if app.world().get::<Dodging>(player).is_some() {
                 spent_on_arrival = app.world().get::<Stamina>(player).map(|s| s.current);
@@ -825,7 +624,7 @@ mod tests {
             "翻滚落地时应当从 3 点精力里扣掉 1 点"
         );
         // 后摇走完：精力回到上限（每次重新可决策回复 1 点）
-        for _ in 0..6 {
+        for _ in 0..12 {
             app.update();
         }
         assert_eq!(
@@ -845,12 +644,11 @@ mod tests {
             .world_mut()
             .spawn((
                 Faction::Player,
-                Health::new(50.0),
+                Health::new(50),
                 Collidable,
                 HitRadius(0.8),
                 Stamina::new(3),
                 Cell::new(0, 0),
-                Ready,
                 Transform::from_xyz(0.0, 0.0, 0.0),
             ))
             .id();
@@ -858,10 +656,8 @@ mod tests {
             .world_mut()
             .spawn((
                 Faction::Enemy,
-                Health::new(50.0),
-                PhysicalDamage(15.0),
-                AttackFrame(5),
-                Impact(3),
+                Health::new(50),
+                PhysicalDamage(15),
                 MeleeShape::default(),
                 HitOnce::default(),
                 Lifetime::default(),
@@ -877,12 +673,12 @@ mod tests {
 
         assert_eq!(
             app.world().get::<Health>(player).unwrap().current,
-            50.0,
+            50,
             "招架应当完全免伤"
         );
         assert_eq!(
             app.world().get::<Health>(attacker).unwrap().current,
-            42.0,
+            42,
             "招架应当把 15 点的一半（向上取整）反制回去"
         );
     }
@@ -895,7 +691,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Faction::Player,
-                Health::new(50.0),
+                Health::new(50),
                 Collidable,
                 HitRadius(0.8),
                 Cell::new(0, 0),
@@ -905,7 +701,7 @@ mod tests {
         // 先验证无敌帧还在时：20 点伤害应当被完全闪开
         app.world_mut().spawn((
             Faction::Enemy,
-            PhysicalDamage(20.0),
+            PhysicalDamage(20),
             MeleeShape::default(),
             HitOnce::default(),
             Lifetime::default(),
@@ -918,7 +714,7 @@ mod tests {
         app.update();
         assert_eq!(
             app.world().get::<Health>(player).unwrap().current,
-            50.0,
+            50,
             "无敌帧内应当完全闪开"
         );
 
@@ -930,7 +726,7 @@ mod tests {
             .expires_at = 0.0;
         app.world_mut().spawn((
             Faction::Enemy,
-            PhysicalDamage(20.0),
+            PhysicalDamage(20),
             MeleeShape::default(),
             HitOnce::default(),
             Lifetime::default(),
@@ -939,24 +735,22 @@ mod tests {
         app.update();
         assert_eq!(
             app.world().get::<Health>(player).unwrap().current,
-            30.0,
+            30,
             "无敌帧过期后应当照常吃伤害"
         );
     }
 
-    /// 跳跃（旧名保留的回归）：空中的单位不会因为 `MoveGoal` 逻辑而卡住。
+    /// 跳跃：弹道结束后落回起跳高度，不会卡在空中。
     #[test]
     fn jump_does_not_get_stuck_in_the_air() {
         let mut app = test_app();
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
         press(&mut app, KeyCode::KeyC);
         for _ in 0..12 {
             app.update();
         }
         assert!(
-            app.world()
-                .get::<crate::movement::Jumping>(player)
-                .is_none(),
+            app.world().get::<Jumping>(player).is_none(),
             "跳跃应当落地并清掉状态"
         );
     }
@@ -965,73 +759,42 @@ mod tests {
     #[test]
     fn fireball_flies_to_the_locked_cell_and_explodes() {
         let mut app = test_app();
-        app.world_mut().spawn((
-            Faction::Player,
-            Health::new(50.0),
-            Collidable,
-            HitRadius(0.8),
-            Velocity(Vec3::ZERO),
-            MoveSpeed(5.0),
-            // 火球要花 2 点精力，声明系统把 `Stamina` 写进了查询 ——
-            // 少了它，`declare_fireball_system` 直接匹配不到玩家，什么都不会发生
-            Stamina::default(),
-            Cell::new(0, 0),
-            Ready,
-            Transform::from_xyz(1.0, 0.0, 1.0),
-        ));
+        spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
         // 目标格 (2,0) 的中心 = (5, 0, 1)：火球应当飞到那里再炸
-        let enemy = app
-            .world_mut()
-            .spawn((
-                Faction::Enemy,
-                Health::new(50.0),
-                Collidable,
-                HitRadius(0.8),
-                Cell::new(2, 0),
-                Transform::from_xyz(5.0, 0.0, 1.0),
-            ))
-            .id();
+        let enemy = spawn_enemy(&mut app, Cell::new(2, 0), Vec3::new(5.0, 0.0, 1.0));
 
         press(&mut app, KeyCode::KeyQ);
-        for _ in 0..14 {
+        for _ in 0..18 {
             app.update();
         }
 
         assert_eq!(
             app.world().get::<Health>(enemy).unwrap().current,
-            38.0,
+            38,
             "火球应当在锁定的格子上炸到敌人（12 点伤害）"
         );
     }
 
     /// 远程火球：飞行时间比后摇长时，行动者必须**忙到落地**。
     ///
-    /// 修复前：后摇 0.50s 一结束玩家就恢复 `Ready`，`timeline_gate_system`
-    /// 立刻冻结虚拟时间——1.5s 的飞行被截断，火球悬在半空、敌人一点血不掉。
-    /// 实机上这就是"按了 3 没放出去，但精力已经扣了"。
+    /// 否则后摇一结束行动者就重新可决策，时间线立刻冻结虚拟时间——
+    /// 飞行被截断，火球悬在半空、敌人一点血不掉。
     #[test]
     fn a_long_shot_keeps_the_shooter_busy_until_impact() {
         let mut app = test_app();
-        let player = spawn_ready_unit(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
         // 6 格之外：飞 12 米要 1.5s，远超 0.50s 的后摇
-        let enemy = app
-            .world_mut()
-            .spawn((
-                Faction::Enemy,
-                Health::new(50.0),
-                Cell::new(6, 0),
-                Transform::from_xyz(13.0, 0.0, 1.0),
-            ))
-            .id();
+        let enemy = spawn_enemy(&mut app, Cell::new(6, 0), Vec3::new(13.0, 0.0, 1.0));
 
         press(&mut app, KeyCode::KeyQ);
         // 12 帧 = 1.2s：后摇早在 0.8s 就过完了，此刻火球还在飞
         for _ in 0..12 {
             app.update();
         }
-        assert!(
-            app.world().get::<Ready>(player).is_none(),
-            "火球还在飞的时候射手不该拿到决策权，否则门控会把球冻在半空"
+        assert_eq!(
+            slot_of(&app, player),
+            DecisionSlot::Filled,
+            "火球还在飞的时候射手不该拿到决策权，否则时间线会把球冻在半空"
         );
 
         for _ in 0..14 {
@@ -1039,242 +802,383 @@ mod tests {
         }
         assert_eq!(
             app.world().get::<Health>(enemy).unwrap().current,
-            38.0,
-            "1.8s 之后火球应当已经落地并炸掉 12 点血（全程不手动解冻虚拟时间）"
+            38,
+            "1.8s 之后火球应当已经落地并炸掉 12 点血"
         );
     }
 
     /// 火球打空地：落点范围内没有单位时完全落空，也不留残留实体。
     ///
-    /// 这里只验证**整机路径**会把火球送到落点并清理掉；「谁被炸到」的判据
-    /// （阵营过滤 + 真实距离）在 `combat::skills::explosion` 的整机用例里，
-    /// 因为无回合模型的时间只在玩家「刚决策完、正在后摇」时流动，
-    /// 单测里很难让一发远程火球飞完而不冻表。
+    /// 玩家自己的火球不构成威胁（反应系统只看敌对来源），因此这一发不会被
+    /// 「威胁冻结」半路截住——射手会一直忙到球落地。
     #[test]
     fn fireball_whiffs_on_empty_ground() {
         let mut app = test_app();
-        app.world_mut().spawn((
-            Faction::Player,
-            Health::new(50.0),
-            Collidable,
-            HitRadius(0.8),
-            Velocity(Vec3::ZERO),
-            MoveSpeed(5.0),
-            Stamina::default(),
-            Cell::new(0, 0),
-            Ready,
-            Transform::from_xyz(1.0, 0.0, 1.0),
-        ));
+        spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
 
         // 手边没有敌人：落点退回玩家自己的格 (0,0)，中心就在脚下
         press(&mut app, KeyCode::KeyQ);
         app.update();
-        assert_eq!(fireballs(&mut app), 1, "Q 应当先放出一发火球");
+        assert_eq!(
+            actions::<FireballAction>(&mut app),
+            1,
+            "Q 应当先放出一发火球"
+        );
 
-        // 火球飞行的同时让时间继续走：每帧都补一次输入，玩家因此一直有活干，
-        // `timeline_gate_system` 不会把虚拟时间冻在「等玩家决策」上。
         let mut frames = 0;
-        while app
-            .world_mut()
-            .query_filtered::<Entity, With<crate::combat::Fireball>>()
-            .iter(app.world())
-            .count()
-            > 0
-            && frames < 40
-        {
-            // 保持世界流动：直接给虚拟时钟解冻（**不按键**——按 Q 会打断自己的火球）
-            app.world_mut().resource_mut::<Time<Virtual>>().unpause();
+        while actions::<Fireball>(&mut app) > 0 && frames < 40 {
+            app.update();
             frames += 1;
         }
 
-        let leftovers = app
-            .world_mut()
-            .query_filtered::<Entity, With<crate::combat::Fireball>>()
-            .iter(app.world())
-            .count();
         assert_eq!(
-            leftovers, 0,
+            actions::<Fireball>(&mut app),
+            0,
             "火球到达落点后应当自行爆炸并销毁（跑完 {frames} 帧仍未销毁）"
         );
     }
 
-    /// 领域层三层裁决（从 B 迁入的纯逻辑）：帧 → 距离 → 破势。
+    /// 撤销：行动实体销毁、决策槽立刻清空、花掉的钱按 `Cancellable` 退回。
+    ///
+    /// 火球是「声明扣 2、撤销退 2 但收 2 的取消代价」→ 净额不变（3 点进 3 点出）。
     #[test]
-    fn domain_arbitration_orders_by_frame_then_range_then_poise() {
-        let fast = AttackStats::new(4, 3.0, 1, 10.0);
-        let slow = AttackStats::new(7, 3.0, 9, 10.0);
-        assert_eq!(
-            resolve_combat(&fast, &slow, 2.0).order,
-            HitOrder::AttackerFirst,
-            "L1：帧小者先"
-        );
+    fn undo_refunds_the_declared_cost_and_frees_the_slot() {
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        spawn_enemy(&mut app, Cell::new(2, 0), Vec3::new(5.0, 0.0, 1.0));
+        app.world_mut().get_mut::<Stamina>(player).unwrap().current = 3;
 
-        let long = AttackStats::new(5, 6.0, 1, 10.0);
-        let short = AttackStats::new(5, 3.0, 9, 10.0);
+        press(&mut app, KeyCode::KeyQ);
+        app.update();
         assert_eq!(
-            resolve_combat(&long, &short, 2.0).order,
-            HitOrder::AttackerFirst,
-            "L2：同帧时长兵器先"
+            app.world().get::<Stamina>(player).unwrap().current,
+            1,
+            "声明火球时先扣掉 2 点精力"
         );
+        assert_eq!(slot_of(&app, player), DecisionSlot::Filled);
 
-        let heavy = AttackStats::new(5, 3.0, 9, 10.0);
-        let light = AttackStats::new(5, 3.0, 2, 10.0);
-        let verdict = resolve_combat(&heavy, &light, 2.0);
-        assert_eq!(verdict.order, HitOrder::Simultaneous);
+        app.world_mut().write_message(UndoCommand);
+        app.update();
+
+        assert_eq!(actions::<FireballAction>(&mut app), 0, "行动实体应当被销毁");
         assert_eq!(
-            verdict.interrupted,
-            Some(Side::Defender),
-            "L3：全同时由破势打断"
+            slot_of(&app, player),
+            DecisionSlot::Empty,
+            "撤销之后立刻能改主意"
+        );
+        assert_eq!(
+            app.world().get::<Stamina>(player).unwrap().current,
+            1,
+            "退 2 收 2：撤销一次的净额不变"
         );
     }
 
-    /// 阶段 1 只读：裁决跑完不改变任何实体的血量 / 命中计数（快照一致性的保证）。
+    /// Focus：`Shift` + 决策键 = 花 1 点把这一手的前摇归零（下一帧就落地）。
     #[test]
-    fn phase1_arbitration_does_not_mutate_any_component() {
+    fn focus_spend_zeroes_the_windup_of_the_action() {
         let mut app = test_app();
-        let target = app
-            .world_mut()
-            .spawn((
-                Faction::Enemy,
-                Health::new(50.0),
-                Collidable,
-                HitRadius(0.8),
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
-            .id();
-        let attack = spawn_melee_attack(&mut app, target, Faction::Player);
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
 
-        app.update(); // 一轮完整流水线：裁决 + 落地
+        press(&mut app, KeyCode::ShiftLeft);
+        press(&mut app, KeyCode::ArrowUp);
+        app.update();
 
         assert_eq!(
-            app.world().get::<Health>(target).unwrap().current,
-            35.0,
-            "落地阶段应当扣掉近战的 15 点"
+            app.world().resource::<Focus>().current,
+            FOCUS_MAX - 1,
+            "用掉 1 点 Focus"
+        );
+        let action = {
+            let mut query = app.world_mut().query_filtered::<Entity, With<MoveAction>>();
+            query.iter(app.world()).next().expect("应当声明出一条移动")
+        };
+        let schedule = *app.world().get::<ScheduledAction>(action).unwrap();
+        assert_eq!(
+            schedule.execute_at, schedule.declared_at,
+            "前摇归零 = 执行时刻就是声明时刻"
+        );
+
+        // 下一帧就落地：速度出现、指针进入后摇（语义上它不属于前摇）
+        //
+        // 跑两帧是为了让时间线先把「玩家刚声明过、不必再等他」这件事落下去——
+        // 声明那一帧时钟还停在"等输入"的状态里（暂停在帧末才生效 / 撤销）。
+        app.update();
+        app.update();
+        assert_ne!(
+            velocity_of(&mut app, player),
+            Vec3::ZERO,
+            "零前摇的行动下一帧就该动起来"
+        );
+        assert!(app.world().get::<Busy>(player).is_some());
+    }
+
+    /// 没有 Focus 时退回普通前摇（不会扣成负数，也不会偷偷瞬发）。
+    #[test]
+    fn focus_is_not_spent_when_the_pool_is_empty() {
+        let mut app = test_app();
+        spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        app.world_mut().resource_mut::<Focus>().current = 0;
+
+        press(&mut app, KeyCode::ShiftLeft);
+        press(&mut app, KeyCode::ArrowUp);
+        app.update();
+
+        assert_eq!(app.world().resource::<Focus>().current, 0);
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&ScheduledAction, With<MoveAction>>();
+        let schedule = *query.iter(app.world()).next().expect("应当有移动行动");
+        assert_eq!(
+            schedule.windup(),
+            timing::MOVE.windup,
+            "没有余量就只能排前摇"
+        );
+    }
+
+    /// 反应系统：敌对威胁瞄向玩家 → 世界冻结；玩家换一手 → 解冻继续打。
+    #[test]
+    fn a_threat_freezes_the_world_until_the_player_answers() {
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
+        // 敌人正在前摇、且瞄着玩家脚下的格
+        app.world_mut().spawn((
+            ScheduledAction::declared_at(enemy, timing::SHOOT, 0.0),
+            Threatens {
+                cells: vec![Cell::new(0, 0)],
+            },
+        ));
+
+        app.update();
+        assert!(
+            app.world().resource::<PauseReasons>().contains(THREAT),
+            "威胁出现 → 世界冻住等玩家反应"
+        );
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+
+        // 玩家换一手：按下一个新意图（打断系统会先撤掉旧的未执行行动）
+        press(&mut app, KeyCode::ArrowUp);
+        for _ in 0..4 {
+            app.update();
+        }
+
+        assert!(
+            !app.world().resource::<PauseReasons>().contains(THREAT),
+            "玩家表态之后威胁暂停应当撤销"
         );
         assert!(
-            app.world()
-                .get::<crate::combat::CollisionTarget>(attack)
-                .is_none(),
-            "临时标记应当被清掉"
+            !app.world().resource::<Time<Virtual>>().is_paused(),
+            "世界该继续跑：那一击该来就来"
         );
         assert_eq!(
-            app.world().get::<Health>(target).unwrap().current,
-            35.0,
-            "同一帧内不该被重复结算"
+            slot_of(&app, player),
+            DecisionSlot::Filled,
+            "玩家那一手应当已经声明出去"
         );
     }
 
-    /// 招架在**阶段 1** 就把最终伤害判成 0，落地阶段只负责反制。
+    /// 打断：命中打向一个**正在前摇**的单位 → 那一手被打掉，决策槽立刻清空。
     #[test]
-    fn parry_result_is_decided_in_phase_one() {
+    fn a_landed_hit_interrupts_the_targets_windup() {
         let mut app = test_app();
-        let target = app
+        let enemy = spawn_enemy(&mut app, Cell::new(0, 0), Vec3::new(0.0, 0.0, 0.0));
+        let action = app
             .world_mut()
-            .spawn((
-                Faction::Enemy,
-                Health::new(50.0),
-                Collidable,
-                HitRadius(0.8),
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
+            .spawn(ScheduledAction::declared_at(enemy, timing::SHOOT, 0.0))
             .id();
-        let attack = spawn_melee_attack(&mut app, target, Faction::Player);
-        // 攻击实体也需要有生命值才能吃到反制伤害
-        app.world_mut().entity_mut(attack).insert(Health::new(50.0));
-        app.world_mut().entity_mut(target).insert(Parrying {
-            target_attack: attack,
-            expires_at: 999.0,
-        });
-
-        app.update();
-
-        assert_eq!(
-            app.world().get::<Health>(target).unwrap().current,
-            50.0,
-            "招架方免伤"
-        );
-        assert_eq!(
-            app.world().get::<Health>(attack).unwrap().current,
-            42.0,
-            "攻击方吃 15 的一半（向上取整 = 8）反制"
-        );
-    }
-
-    /// 未被招架的普通命中：反制为 0，目标正常掉血。
-    #[test]
-    fn a_landed_hit_carries_no_counter() {
-        let mut app = test_app();
-        let target = app
-            .world_mut()
-            .spawn((
-                Faction::Enemy,
-                Health::new(50.0),
-                Collidable,
-                HitRadius(0.8),
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
-            .id();
-        spawn_melee_attack(&mut app, target, Faction::Player);
-
-        app.update();
-
-        assert_eq!(
-            app.world().get::<Health>(target).unwrap().current,
-            35.0,
-            "普通命中扣近战的 15 点，且没有反制"
-        );
-    }
-
-    /// AI 意图循环：威胁优先于贪刀——有攻击正打向自己时选择闪避。
-    #[test]
-    fn enemy_intent_prioritises_dodging_an_incoming_attack() {
-        use crate::ai::{Intent, decide_intent_system};
-
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .add_systems(Update, decide_intent_system);
-        app.world_mut()
-            .insert_resource(ButtonInput::<KeyCode>::default());
-
-        let player = app
-            .world_mut()
-            .spawn((
-                Faction::Player,
-                Health::new(50.0),
-                Transform::from_xyz(2.0, 0.0, 0.0),
-            ))
-            .id();
-        let enemy = app
-            .world_mut()
-            .spawn((
-                Faction::Enemy,
-                Health::new(50.0),
-                crate::combat::AttackRange::MELEE,
-                crate::ai::EnemyBrain::default(),
-                Intent::default(),
-                Ready,
-                Transform::from_xyz(0.0, 0.0, 0.0),
-            ))
-            .id();
-
-        // 一发「正在前摇」的攻击瞄准了敌人
+        // 玩家抡过来的横扫：力度 100 → 掷骰对抗必赢
         app.world_mut().spawn((
             Faction::Player,
-            crate::combat::PhysicalDamage(10.0),
-            crate::combat::CollisionTarget(enemy),
-            crate::timeline::ScheduledAction::declared_at(
-                player,
-                crate::timeline::timing::MELEE,
-                0.0,
-            ),
+            PhysicalDamage(15),
+            InterruptPower(100),
+            MeleeShape::default(),
+            HitOnce::default(),
+            Lifetime::default(),
+            Transform::from_xyz(0.0, 0.0, 0.0),
         ));
 
         app.update();
 
-        assert_eq!(
-            app.world().get::<Intent>(enemy).copied(),
-            Some(Intent::Dodge),
-            "有攻击正在前摇打向自己时应当选择闪避"
+        assert!(
+            app.world().get_entity(action).is_err(),
+            "被打断的行动应当消失"
         );
+        assert_eq!(
+            slot_of(&app, enemy),
+            DecisionSlot::Empty,
+            "被打断的人立刻拿回决策槽"
+        );
+        assert_eq!(
+            app.world().get::<Health>(enemy).unwrap().current,
+            35,
+            "打断与伤害同时发生（命中就是命中）"
+        );
+    }
+
+    /// 打断只打**还没到点**的行动：已经到点的那一手谁也拦不住。
+    #[test]
+    fn an_action_that_came_due_is_not_interruptible() {
+        let mut app = test_app();
+        let target = spawn_enemy(&mut app, Cell::new(0, 0), Vec3::new(0.0, 0.0, 0.0));
+        // 声明于 -1.0s 的行动：它在「现在」早就到点了
+        let schedule = ScheduledAction::declared_at(target, timing::MOVE, -1.0);
+        assert!(!schedule.pending(0.0), "这条行动应当已经到点");
+        let action = app
+            .world_mut()
+            .spawn((schedule, MoveAction::default()))
+            .id();
+        let source = app.world_mut().spawn_empty().id();
+
+        app.world_mut().trigger(InterruptEvent {
+            entity: target,
+            source,
+            power: 100,
+        });
+
+        assert!(
+            app.world().get_entity(action).is_ok(),
+            "到点的行动打不断（它已经出去了）"
+        );
+    }
+
+    /// 击杀链路：火球还在飞的时候杀了施法者——死亡走通用链路，
+    /// 投射物照常落地结算，不留残留实体，也不 panic。
+    #[test]
+    fn a_fireball_still_lands_after_its_caster_dies() {
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        let enemy = spawn_enemy(&mut app, Cell::new(4, 0), Vec3::new(9.0, 0.0, 1.0));
+
+        // 一条「立刻落地」的火球行动：射手这一帧就出手
+        let schedule = ScheduledAction::declared_at(player, timing::SHOOT, 0.0).with_zero_windup();
+        let _ = app.world_mut().spawn_scene(fireball_action_scene(
+            Cell::new(0, 0),
+            Cell::new(4, 0),
+            schedule,
+        ));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(DecisionSlot::Filled);
+        app.update(); // 声明这一帧：零前摇的行动还不该落地
+        app.update(); // 执行器发射投射物
+        assert_eq!(actions::<Fireball>(&mut app), 1, "火球应当在飞行中");
+
+        // 施法者被击杀：写一条足以致命的伤害，走通用死亡链路
+        app.world_mut().write_message(DamageEvent {
+            source: None,
+            target: player,
+            amount: 999,
+        });
+        app.update();
+        assert!(
+            app.world().get_entity(player).is_err(),
+            "施法者应当死亡并被销毁"
+        );
+
+        // 场上没有玩家了 → 时间线不停表，火球照常飞完并结算
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(actions::<Fireball>(&mut app), 0, "火球应当已经炸掉");
+        assert_eq!(
+            app.world().get::<Health>(enemy).unwrap().current,
+            38,
+            "施法者死了，飞出去的球照样落地（12 点伤害）"
+        );
+    }
+
+    /// 阵亡走通用链路：血归零 → `DeathEvent` → 帧末销毁；尸体再挨打也不重复报丧。
+    #[test]
+    fn death_is_reported_once_and_the_entity_is_cleaned_up() {
+        let mut app = test_app();
+        let victim = spawn_enemy(&mut app, Cell::new(0, 0), Vec3::ZERO);
+
+        for _ in 0..3 {
+            app.world_mut().write_message(DamageEvent {
+                source: None,
+                target: victim,
+                amount: 999,
+            });
+            app.update();
+        }
+
+        assert!(
+            app.world().get_entity(victim).is_err(),
+            "生命归零的实体应当被销毁"
+        );
+    }
+
+    /// 整机装配冒烟：跨领域流水线（含帧末时钟）跑得起来，资源都在位。
+    #[test]
+    fn the_pipeline_runs_with_every_domain_installed() {
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        for _ in 0..5 {
+            app.update();
+        }
+        assert!(
+            app.world().get_resource::<PauseReasons>().is_some(),
+            "时间线资源应当在整机里就位"
+        );
+        assert!(
+            app.world().get_resource::<Focus>().is_some(),
+            "反应资源 Focus 应当在整机里就位"
+        );
+    }
+
+    /// 整机推进：玩家一直有活干时，敌人也必须真的在动。
+    ///
+    /// 这条测的是**没有死锁**：反应系统一旦写错（比如"玩家一表态就解冻"那条规则漏了），
+    /// 世界会停在"双方都动不了"的状态里，而单测各自看都是绿的。
+    #[test]
+    fn the_world_keeps_making_progress() {
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        app.update(); // Startup：组装玩家 + 敌人
+
+        let (player, enemy, start) = {
+            let mut query = app.world_mut().query::<(Entity, &Faction, &Cell)>();
+            let units: Vec<(Entity, Faction, Cell)> = query
+                .iter(app.world())
+                .map(|(entity, faction, cell)| (entity, *faction, *cell))
+                .collect();
+            let find = |wanted: Faction| {
+                units
+                    .iter()
+                    .find(|(_, faction, _)| *faction == wanted)
+                    .map(|(entity, _, cell)| (*entity, *cell))
+                    .expect("应当有单位")
+            };
+            let (player, _) = find(Faction::Player);
+            let (enemy, enemy_cell) = find(Faction::Enemy);
+            (player, enemy, enemy_cell)
+        };
+
+        // 交替按两个方向键：方向变一次就声明一手，玩家因此长期处于"忙"的状态，
+        // 世界（含敌人的 AI 与位移）就有时间流动
+        for frame in 0..80 {
+            if frame % 6 == 0 {
+                let key = if (frame / 6) % 2 == 0 {
+                    KeyCode::ArrowUp
+                } else {
+                    KeyCode::ArrowLeft
+                };
+                press(&mut app, key);
+            }
+            app.update();
+        }
+
+        let player_cell = app.world().get::<Cell>(player).copied();
+        let enemy_cell = app.world().get::<Cell>(enemy).copied();
+        assert_ne!(
+            enemy_cell,
+            Some(start),
+            "玩家一直在动的时候，敌人应当走过来（否则就是死锁了）"
+        );
+        assert_ne!(player_cell, Some(Cell::new(1, 0)), "玩家也应当动过");
     }
 }

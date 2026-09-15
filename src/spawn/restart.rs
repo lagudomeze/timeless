@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::combat::{Collidable, Faction, Projectile};
 use crate::presentation::UnitSprites;
-use crate::timeline::{ScheduledAction, Timeline};
+use crate::timeline::ScheduledAction;
 use crate::world::TerrainConfig;
 
 use super::enemy::enemy_scene;
@@ -46,14 +46,13 @@ type ResetQuery<'w, 's> = Query<
 
 /// 清掉所有单位与攻击实体，再用同一组工厂重建：状态自然回到初始值。
 ///
-/// 无回合模型下不需要「回到规划阶段」——重建出来的单位自带 `Ready`，
-/// 时间线的门控下一帧自会重新判断该不该停表；这里只把草案记录清干净。
+/// 无回合模型下不需要「回到规划阶段」——重建出来的单位决策槽是空的，
+/// 时间线的计算系统下一帧自会重新判断该不该停表。
 pub fn reset_battle_system(
     mut reset_requests: MessageReader<ResetBattle>,
     mut commands: Commands,
     terrain: Res<TerrainConfig>,
     sprites: Res<UnitSprites>,
-    mut timeline: ResMut<Timeline>,
     entities: ResetQuery<'_, '_>,
 ) {
     if reset_requests.read().next().is_none() {
@@ -62,7 +61,6 @@ pub fn reset_battle_system(
     for entity in &entities {
         commands.entity(entity).despawn();
     }
-    timeline.set_draft(None);
     commands.spawn_scene(player_scene(&terrain, &sprites));
     commands.spawn_scene(enemy_scene(&terrain, &sprites));
     info!("🔄 战斗已重置");

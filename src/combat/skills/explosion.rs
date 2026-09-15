@@ -6,7 +6,6 @@
 use bevy::prelude::*;
 
 use crate::combat::formula::DamageEvent;
-use crate::combat::formula::types::DamageType;
 use crate::combat::{Faction, Health};
 
 use super::fireball::ProjectileArrived;
@@ -36,7 +35,8 @@ pub fn radial_damage_units(
     hits
 }
 
-/// 爆炸：消费 [`ProjectileArrived`]，对半径内的敌对单位广播 [`DamageEvent`]，并销毁投射物。
+/// 爆炸：消费 [`ProjectileArrived`]，对半径内的敌对单位广播 [`DamageEvent`]，
+/// 并销毁投射物。
 ///
 /// 范围内**没有单位就是打空了**（不产生任何事件，也不留残留实体）。
 pub fn explosion_system(
@@ -55,9 +55,9 @@ pub fn explosion_system(
         for (target, distance) in &hits {
             debug!("💥 爆炸命中 {:?}（距离 {distance:.2}）", target);
             damage_events.write(DamageEvent {
+                source: Some(blast.projectile),
                 target: *target,
                 amount: blast.damage,
-                kind: DamageType::Physical,
             });
         }
         if hits.is_empty() {
@@ -108,14 +108,10 @@ mod tests {
     }
 
     /// 整机（最小 App）：爆炸**只**结算敌对单位，并且一定会销毁投射物。
-    ///
-    /// 这是「锁格 + 真实距离」的收口处：落点由 `ProjectileArrived` 给出，
-    /// 伤害候选必须按阵营过滤（否则火球会炸到自己人），
-    /// 而投射物无论打中还是打空都必须消失（否则留在场上永远飞）。
     #[test]
     fn explosion_hits_only_hostiles_and_always_despawns_the_shell() {
         #[derive(Resource, Default)]
-        struct Caught(Vec<(Entity, f32)>);
+        struct Caught(Vec<(Entity, i32)>);
 
         fn collect(mut events: MessageReader<DamageEvent>, mut caught: ResMut<Caught>) {
             for event in events.read() {
@@ -134,20 +130,20 @@ mod tests {
         // 友方 + 半径外的敌人：只是"不该被结算"的背景，断言只看 `caught` 里有什么
         app.world_mut().spawn((
             Faction::Player,
-            Health::new(50.0),
+            Health::new(50),
             Transform::from_translation(origin),
         ));
         let enemy = app
             .world_mut()
             .spawn((
                 Faction::Enemy,
-                Health::new(50.0),
+                Health::new(50),
                 Transform::from_translation(origin + Vec3::new(2.0, 0.0, 0.0)),
             ))
             .id();
         app.world_mut().spawn((
             Faction::Enemy,
-            Health::new(50.0),
+            Health::new(50),
             Transform::from_translation(origin + Vec3::new(0.0, 0.0, 9.0)),
         ));
         let shell = app.world_mut().spawn_empty().id();

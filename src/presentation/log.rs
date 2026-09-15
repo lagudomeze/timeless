@@ -49,11 +49,9 @@ pub fn battle_log_system(
             .get(damage.target)
             .map(faction_label)
             .unwrap_or("单位");
-        let text = format!(
-            "{who} 受到 {:.0} 点{}伤害",
-            damage.amount,
-            damage.kind.label()
-        );
+        // 伤害类型不再是一个中心枚举：每种伤害有各自的组件与系统，
+        // 日志因此只说"扣了多少"（要写类型就在各自的系统里补一条消息）
+        let text = format!("{who} 受到 {} 点伤害", damage.amount);
         log.push(&text);
         info!("[{text}]");
     }

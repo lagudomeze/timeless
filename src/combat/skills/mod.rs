@@ -1,6 +1,6 @@
 //! 攻击生成：把「技能」表达成**技能行动**（载荷 + 工厂 + 执行器）。
 //!
-//! 玩家 / AI 只**声明**（由 [`crate::timeline`] 调度），到点后执行器生成攻击实体
+//! 玩家 / AI 只**声明**（调度与到点判定见 [`crate::timeline`]），到点后执行器生成攻击实体
 //! （[`arrow_scene`] / [`melee_scene`] / [`fireball_scene`]）；生成只负责
 //! 「摆实体 + 挂组件」，命中与结算完全交给战斗流水线。
 //!
@@ -21,19 +21,19 @@ pub mod menu;
 pub mod registry;
 
 pub use actions::{
-    MeleeAction, ShootAction, declare_skill_system, melee_action_executor_system,
+    MeleeAction, ShootAction, declare_melee_at, declare_skill_system, melee_action_executor_system,
     melee_action_scene, shoot_action_executor_system, shoot_action_scene,
 };
-pub use arrow::arrow_scene;
+pub use arrow::{ARROW_SPEED, arrow_scene};
 pub use events::{FireCommand, MeleeCommand};
 pub use explosion::{explosion_system, radial_damage_units};
 pub use fireball::{
-    ARRIVAL_TOLERANCE, FIREBALL_COST, FIREBALL_DAMAGE, FIREBALL_RADIUS, FIREBALL_SPEED, Fireball,
-    FireballAction, ProjectileArrived, declare_fireball_at, declare_fireball_system,
-    declare_melee_system, fireball_action_executor_system, fireball_action_scene, fireball_scene,
-    projectile_arrival_system,
+    ARRIVAL_TOLERANCE, FIREBALL_COST, FIREBALL_DAMAGE, FIREBALL_POWER, FIREBALL_RADIUS,
+    FIREBALL_SPEED, Fireball, FireballAction, ProjectileArrived, declare_fireball_at,
+    declare_fireball_system, declare_melee_system, fireball_action_executor_system,
+    fireball_action_scene, fireball_scene, projectile_arrival_system,
 };
-pub use melee::{MELEE_DAMAGE, MELEE_FRAME, MELEE_IMPACT, melee_scene};
+pub use melee::{MELEE_DAMAGE, MELEE_FRAME, MELEE_POWER, melee_scene};
 pub use menu::{
     CycleSkill, MELEE_REACH, MenuSelection, SelectSkill, UseSelectedSkill, cycle_skill_system,
     select_skill_system, skill_line, use_selected_skill_system,

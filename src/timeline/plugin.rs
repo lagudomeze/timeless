@@ -1,15 +1,22 @@
-//! 时间线插件：注册资源、消息与「门控 → 提交 → 调度 → 后摇恢复」系统链。
+//! 时间线插件：注册资源、消息与观察者，并声明两段系统链。
+//!
+//! ```text
+//! TimelineSet（帧中）：算暂停原因（手动 / 空槽）→ 记 Focus 意图
+//!                     → 打断 → 撤销 → 后摇恢复 → Focus 回复
+//! ClockSet  （帧末）：暂停请求 → 原因集合 → apply_clock（唯一的时钟写入）
+//! ```
 
 use bevy::prelude::*;
 
+use super::ClockSet;
 use super::TimelineSet;
 use super::events::{
-    ActionBlocked, ActionCancelled, CycleReactionWindow, TogglePause, UndoCommand,
+    ActionBlocked, ActionCancelled, PauseRequest, TogglePause, UndoCommand, UseFocus,
 };
-use super::resources::{Timeline, TimelineConfig};
+use super::resources::{Focus, FocusIntent, ManualPause, PauseReasons};
 use super::systems::{
-    commit_bridge_system, cycle_reaction_window_system, interrupt_system, pause_toggle_system,
-    recovery_system, scheduler_system, timeline_gate_system, undo_system,
+    apply_clock, compute_manual_pause, compute_player_awaiting_system, interrupt_observer,
+    interrupt_system, process_pause_requests, recover_focus_system, recovery_system, undo_system,
 };
 
 /// 无回合时间线插件。
@@ -18,35 +25,46 @@ pub struct TimelinePlugin;
 
 impl Plugin for TimelinePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Timeline>()
-            .init_resource::<TimelineConfig>()
-            // 空格 = 暂停 / 继续；F2 = 反应窗口松紧
+        app.init_resource::<PauseReasons>()
+            .init_resource::<ManualPause>()
+            .init_resource::<Focus>()
+            .init_resource::<FocusIntent>()
+            // 空格 = 暂停 / 继续（只写消息 + 记开关，不碰时钟）
             .add_message::<TogglePause>()
-            .add_message::<CycleReactionWindow>()
+            // 暂停原因：写方是本域的计算系统与 combat 的威胁检测，消费方是本域
+            .add_message::<PauseRequest>()
+            // Focus 换前摇：写方是 input（Shift + 决策键），消费方是本域
+            .add_message::<UseFocus>()
             // 提示消息：写方是各声明系统，消费方是 HUD
             .add_message::<ActionBlocked>()
             .add_message::<UndoCommand>()
             // 撤销的退款广播：写方是本域，消费方是资源所属领域（combat::defense）
             .add_message::<ActionCancelled>()
+            // 打断：命中结算触发 EntityEvent，本域的 Observer 当场处理
+            .add_observer(interrupt_observer)
             .add_systems(
                 Update,
                 (
-                    // 门控先算：本帧该不该停表，后面所有领域都靠它
-                    timeline_gate_system,
-                    // 空格 / F2 是纯时间与配置控制，紧跟在门控之后
-                    (pause_toggle_system, cycle_reaction_window_system),
-                    // 打断：本帧有新意图就先撤掉旧的（可取消的）行动
+                    // 暂停原因先算：后面的声明系统不需要知道冻结与否
+                    (compute_manual_pause, compute_player_awaiting_system),
+                    // Focus 意图只在本帧有效，慢一拍就会扣错账
+                    super::systems::track_focus_intent_system,
+                    // 打断 = 写一条撤销请求，紧跟其后的撤销系统接手
                     interrupt_system,
-                    commit_bridge_system,
-                    // 撤销插在提交/调度之前：撤销的消息只在玩家按右键的那一帧存在
                     undo_system,
-                    scheduler_system,
                     // 后摇恢复放最后：本帧执行器刚挂上的后摇不会被立刻摘掉
-                    // （`ready_at` 严格大于落地时刻，恢复最早也要下一帧）
                     recovery_system,
+                    recover_focus_system,
                 )
                     .chain()
                     .in_set(TimelineSet),
+            )
+            .add_systems(
+                Update,
+                // 帧末结算钟表：这一帧所有系统看到的是同一个冻结状态
+                (process_pause_requests, apply_clock)
+                    .chain()
+                    .in_set(ClockSet),
             );
     }
 }

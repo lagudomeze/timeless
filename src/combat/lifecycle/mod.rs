@@ -4,6 +4,4 @@ pub mod components;
 pub mod systems;
 
 pub use components::{HitOnce, Lifetime, Projectile};
-pub use systems::{
-    cleanup_finished_attacks_system, expire_attack_entities_system, manage_projectile_hits_system,
-};
+pub use systems::{cleanup_finished_attacks_system, expire_attack_entities_system};

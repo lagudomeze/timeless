@@ -48,7 +48,7 @@ pub struct SkillDef {
     /// 动作节奏（前摇 / 后摇），HUD 展示用
     pub timing: timing::ActionTiming,
     /// 大致威力（展示用；实际伤害在各自的载荷里）
-    pub power: f32,
+    pub power: i32,
 }
 
 /// 技能表（顺序 = 菜单顺序 = 数字键 `1`~`5`）。
@@ -79,7 +79,7 @@ pub const SKILLS: [SkillDef; 4] = [
         label: "roll",
         cost: ROLL_COST,
         timing: timing::ROLL,
-        power: 0.0,
+        power: 0,
     },
 ];
 
@@ -110,7 +110,7 @@ pub fn affordable_indices(stamina_current: u32) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::skills::melee::{MELEE_FRAME, MELEE_IMPACT};
+    use crate::combat::skills::melee::{MELEE_FRAME, MELEE_POWER};
 
     #[test]
     fn attack_and_melee_share_the_frame_of_their_payload() {
@@ -121,7 +121,7 @@ mod tests {
         assert_eq!(melee.power, MELEE_DAMAGE);
         assert_eq!(melee.timing, timing::MELEE);
         assert_eq!(MELEE_FRAME, 5, "注册表与载荷的帧数约定要保持一致");
-        assert_eq!(MELEE_IMPACT, 3, "破势要与三层裁决的 L3 约定一致");
+        assert_eq!(MELEE_POWER, 3, "打断力度要与载荷约定一致");
     }
 
     #[test]

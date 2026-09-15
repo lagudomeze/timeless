@@ -23,7 +23,7 @@ L6 表现与交互    CameraRig / UnitSprite / HUD 标记 / HoveredCell / 预演
 L5 行动载荷      MoveAction / JumpAction / RollAction / MeleeAction / ShootAction
                  FireballAction / ParryAction / Fireball
 L4 战斗零件      Health / Faction / Collidable / 属性 / 防御标记 / 攻击实体生命周期
-L3 时间线调度    Ready / ScheduledAction / Declared-Pending-Committed / BusyRecovery
+L3 时间线调度    DecisionSlot / InputDriven / ScheduledAction / Busy / Cancellable
 L2 决策与位移    Cell / MoveGoal / Velocity / MoveSpeed / Jumping / DodgingOnArrival
 L1 体素数据域    Chunk / ChunkPos / ChunkLoader / ChunkPinned / Voxel + 区块消息
 L0 引擎零件      Transform / Visibility / Children / Mesh3d / Node / Text / Camera3d
@@ -90,11 +90,11 @@ ChunkUnloadEvent -> despawn_chunk_surfaces_system（清理网格）
 
 | 组件 | 定义于 | 创建 | 读 | 写 / 生命周期 |
 | :--- | :--- | :--- | :--- | :--- |
-| `Cell { x, z }` | `movement/cell.rs` | `unit_scene`（`Cell::from_world(出生位置)`） | **决策系统的通用语言**：movement 的声明系统（`ReadyPlayer`）、`move_action_executor_system`、`ai::enemy_declare_system`、`combat::defense::declare_roll_system`、`interaction`（悬停色 / 点击判定）、`presentation::hud::panels` | **只有 `move_entities_system` 写**（吸附到格中心那一刻） |
+| `Cell { x, z }` | `movement/cell.rs` | `unit_scene`（`Cell::from_world(出生位置)`） | **决策系统的通用语言**：movement 的声明系统、`move_action_executor_system`、`ai::enemy_declare_system`、`combat::defense::declare_roll_system`、`combat::reaction`（威胁按格声明、玩家站在哪格）、`interaction`（悬停色 / 点击判定）、`presentation::hud::panels` | **只有 `move_entities_system` 写**（吸附到格中心那一刻） |
 | `MoveGoal { cell }` | 同上 | `move_action_executor_system`、`roll_executor_system` | `move_entities_system` | 到格中心时 remove |
-| `Velocity(Vec3)` | `movement/components.rs` | `unit_scene`（零）、`arrow_scene`、`fireball_scene` | `move_entities_system`、`combat::defense` 的攻击探针、`phase2_apply_system` | `move_action_executor_system` / `roll_executor_system`（起步）、`move_entities_system`（每帧位移）、`projectile_arrival_system` / `phase2_apply_system`（归零） |
+| `Velocity(Vec3)` | `movement/components.rs` | `unit_scene`（零）、`arrow_scene`、`fireball_scene` | `move_entities_system`、`combat::defense` 的攻击探针 | `move_action_executor_system` / `roll_executor_system`（起步）、`move_entities_system`（每帧位移）、`apply_physical_hits_system`（命中后归零）、`projectile_arrival_system`（到达归零） |
 | `MoveSpeed(f32)` | 同上 | `player_scene`(5.0) / `enemy_scene`(2.0) | `move_action_executor_system`（算 `Velocity` 与 `busy_until`） | 不变 |
-| `Jumping { ground_y, velocity }` | `movement/actions.rs` | `jump_action_executor_system` | `jump_motion_system`、`follow_terrain_system`（过滤）、`timeline_gate_system`（空中不冻结）、HUD 面板（状态行） | `jump_motion_system` 落地时 remove |
+| `Jumping { ground_y, velocity }` | `movement/actions.rs` | `jump_action_executor_system` | `jump_motion_system`、`follow_terrain_system`（过滤）、HUD 面板（状态行） | `jump_motion_system` 落地时 remove |
 | `DodgingOnArrival { expires_at }` | `movement/systems.rs` | `roll_executor_system` | `move_entities_system` | 到位那一刻**换成 `Dodging`** 并 remove |
 
 **为什么 `DodgingOnArrival` 要单独存在**：无敌帧必须和位移**同时**生效。
@@ -107,38 +107,40 @@ ChunkUnloadEvent -> despawn_chunk_surfaces_system（清理网格）
 
 | 组件 | 挂在哪 | 创建 | 读 | 写 / 生命周期 |
 | :--- | :--- | :--- | :--- | :--- |
-| `Ready` | 单位 | `unit_scene` | `timeline_gate_system`、movement / combat / defense / skills 的**所有**声明系统、`ai` 两个系统、`menu` 的循环与派发、HUD（面板状态行、时间轴候场区） | `begin_action` remove；`recovery_system` / `undo_system` insert |
-| `BusyRecovery { executed_at, ready_at }` | 单位 | `end_action_until`（各执行器收尾） | `recovery_system` | 到点 remove 并 insert `Ready` |
-| `ScheduledAction` | 行动实体 | 所有行动场景工厂（`declared_at`） | `scheduler_system`、各执行器、`declare_parry_system`（找威胁）、`ai::decide_intent_system`（威胁）、HUD 时间轴 / 行动行、`reset_battle_system`（清场目标） | 不变（行动实体销毁即消失） |
-| `Declared` | 行动实体 | 所有行动场景工厂 | `commit_bridge_system`、`declare_parry_system`（`With<Declared>`）、HUD（`Has<Declared>`：草案半透明） | `commit_bridge_system` remove（只活一帧） |
-| `Pending` | 行动实体 | `commit_bridge_system` | `scheduler_system` | 到点时 remove 并 insert `Committed` |
-| `Committed` | 行动实体 | `scheduler_system` | 所有执行器（`With<Committed>`）、`undo_system`（`Has<Committed>` 判断来不及撤） | `end_action_until` remove + despawn 行动实体 |
-| `ActionCost(u32)` | 行动实体 | `declare_fireball_system`（声明时已扣费的动作） | `undo_system` | 行动实体销毁即消失 |
-| `CancelCost(u32)` | 行动实体 | `fireball_action_scene`(2)、`melee_action_scene`(1) | `undo_system` | 同上 |
-| `Uncancellable` | 行动实体 | `jump_action_scene` | `undo_system` | 同上 |
+| `DecisionSlot`（`Empty` / `Filled`） | 单位 | `unit_scene`（`Empty`） | movement / combat / defense / skills 的**所有**声明系统、`ai` 两个系统、`menu` 的循环与派发、`compute_player_awaiting_system`（世界要不要停）、`combat::reaction`（玩家表态了没有）、HUD（面板状态行、时间轴候场区） | 声明时 `Filled`；`recovery_system` / `undo_system` / `interrupt_observer` 置 `Empty` |
+| `InputDriven` | 单位 | `player_scene` | `compute_player_awaiting_system`（停下等谁）、`combat::reaction`（谁被威胁 / 谁在表态）、`undo_system`（只撤玩家的行动）、各玩家声明系统（认人不认阵营） | 不变 |
+| `Busy { until }` | 单位 | 各执行器收尾（`Busy::after`） | `recovery_system` | 到点 remove 并把决策槽置 `Empty`（顺带回 1 精力） |
+| `ScheduledAction { actor, declared_at, execute_at, recovery, interrupt_resist }` | 行动实体 | 所有行动场景工厂（`declared_at` / `with_focus`） | 各执行器（`due`）、`undo_system` / `interrupt_observer`（`pending`）、`ai::decide_intent_system`（威胁）、HUD 时间轴 / 行动行、`reset_battle_system`（清场目标） | 不变（行动实体销毁即消失） |
+| `Cancellable`（`Free` / `Cost` / `Never`） | 行动实体 | 各行动场景工厂 | `undo_system`（退多少、能不能撤） | 行动实体销毁即消失 |
 
 ### 4.2 资源
 
 | 资源 | 写 | 读 |
 | :--- | :--- | :--- |
-| `Timeline { waiting_for_input, draft }` | `timeline_gate_system`（waiting）、`begin_action` / `commit_bridge_system` / `undo_system` / `reset_battle_system`（draft） | HUD 时间轴（状态行 + 草案判定） |
-| `TimelineConfig { reaction }` | `cycle_reaction_window_system` | `timeline_gate_system` |
+| `PauseReasons(HashSet<String>)` | `process_pause_requests`（帧末） | `apply_clock`（唯一的停表判据）、HUD 时间轴（冻结原因） |
+| `ManualPause(bool)` | `compute_manual_pause` | 同系统（决定要不要写 `"manual"` 原因） |
+| `Focus { current, max }` | `recover_focus_system`（+1）、各玩家声明系统（花 1 点换零前摇） | 同左 |
+| `FocusIntent(bool)` | `track_focus_intent_system` | 各玩家声明系统（本帧要不要用 Focus） |
 
 ### 4.3 系统链（顺序即语义）
 
 ```text
-timeline_gate_system         唯一的暂停点：写 Time<Virtual>
-pause_toggle_system          空格：手动暂停 / 继续
-cycle_reaction_window_system F2：Loose -> Strict -> Off
-interrupt_system             本帧有玩家新意图 -> 写 UndoCommand
-commit_bridge_system         Declared -> Pending（声明即生效）+ 清 draft
-undo_system                  右键 / 打断：销毁未结算的玩家行动 + 恢复 Ready + 广播退款
-scheduler_system             Pending 且 now >= execute_at -> Committed
-recovery_system              BusyRecovery 到点 -> 恢复 Ready + 回 1 精力
+compute_manual_pause           空格 -> 手动暂停原因（边沿触发）
+compute_player_awaiting_system 玩家决策槽空着 -> "slot_empty" 原因
+track_focus_intent_system      Shift + 决策键 -> FocusIntent（只在本帧有效）
+interrupt_system               本帧有玩家新意图 -> 写 UndoCommand
+undo_system                    右键 / 打断：销毁还没到点的玩家行动 + 清空决策槽 + 广播退款
+recovery_system                Busy 到点 -> 清空决策槽 + 回 1 精力
+recover_focus_system           每 10 虚拟秒回 1 点 Focus
+
+（帧末 ClockSet）process_pause_requests -> apply_clock：**唯一**写 Time<Virtual> 的地方
 ```
 
-`begin_action` / `end_action` / `end_action_until` / `insert_on_actor` 是**被各领域调用的公共函数**，
-不是系统；它们是「行动实体化」的收口处（见 [timeline.md](timeline.md) 第三节）。
+`interrupt_observer` 不在系统链里：它是 `InterruptEvent`（`EntityEvent`）的 Observer，
+命中结算当场触发、当场决定那条行动还在不在（见 [timeline.md](timeline.md) 第五节）。
+
+**没有集中式收尾函数**：每个执行器自己判 `if !schedule.due(now) { continue; }`、
+自己销毁行动实体、自己挂 `Busy`（往可能已经阵亡的行动者上写命令要先 `get_entity` 守卫）。
 
 ## 五、L4 战斗零件（`combat`）
 
@@ -146,59 +148,63 @@ recovery_system              BusyRecovery 到点 -> 恢复 Ready + 回 1 精力
 
 | 组件 | 创建 | 读 | 写 |
 | :--- | :--- | :--- | :--- |
-| `Faction` | `unit_scene` | 几乎所有战斗系统（目标过滤）、`ai`、`timeline`（找玩家 / 限制撤销）、`presentation`（立绘、面板、日志、相机跟随） | 不变 |
+| `Faction` | `unit_scene` | 几乎所有战斗系统（目标过滤 / 敌我判定）、`ai`、`combat::reaction`（威胁必须来自敌对阵营）、`presentation`（立绘、面板、日志、相机跟随） | 不变 |
 | `Collidable` | `unit_scene` | `detect_collisions_system`、`detect_melee_system`、`reset_battle_system` | 不变 |
-| `Health` | `unit_scene`(50) | `ai::decide_intent_system`（血量比例）、`explosion_system`（`With<Health>` 过滤）、HUD 面板 | `apply_damage`（唯一扣血入口） |
+| `Health { current, max }`（整数） | `unit_scene`(50) | `ai::decide_intent_system`（血量比例）、`explosion_system`（`With<Health>` 过滤）、HUD 面板 | `apply_damage_system`（**唯一**扣血入口）、`despawn_dead_system`（`current <= 0` 时销毁） |
 | `Stamina` | `unit_scene`（默认 5） | `declare_roll_system` / `declare_parry_system`（够不够）、`declare_fireball_system`（够不够）、`ai::enemy_declare_system`、`menu` 的可用性判断、HUD 技能栏 / 面板 | 扣费：`roll_executor_system`(1) / `parry_executor_system`(1) / `declare_fireball_system`(2)；回复：`recovery_system`(+1)、`refund_cancelled_actions_system`(退还 − 取消代价) |
 
 ### 5.2 数值属性（`combat/attributes`）
 
 | 组件 | 谁挂 | 读 |
 | :--- | :--- | :--- |
-| `PhysicalDamage` | `melee_scene`(15) / `arrow_scene`(10) / `fireball_scene`(12) | `phase1_arbitrate_system`（组装 `AttackStats`） |
-| `AttackFrame` | 同上（5 / 4 / 7） | 同上（三层裁决 L1） |
-| `Impact` | 同上（3 / 1 / 2） | 同上（L3） |
-| `AttackRange` | `unit_scene`（`MELEE` = 1 格）；攻击实体**不挂** | `phase1_arbitrate_system`（`range.world()`，L2）、`ai::decide_intent_system`（射程内 → `Shoot`） |
+| `PhysicalDamage(i32)` | `melee_scene`(15) / `arrow_scene`(10) / `fireball_scene`(12) | `apply_physical_hits_system`（护甲减免后写成 `DamageEvent`） |
+| `AttackFrame(u32)` | 同上（5 / 4 / 7） | 暂无消费者——它是**信息层**读数（"谁先动"），见 [../TODO.md](../TODO.md) 的「洞察力」 |
+| `InterruptPower(i32)` | 同上（3 / 1 / 2） | `apply_physical_hits_system`（命中时触发 `InterruptEvent`） |
+| `AttackRange` | `unit_scene`（`MELEE` = 1 格）；攻击实体**不挂** | `ai::decide_intent_system`（射程内 → `Shoot`） |
 | `HitRadius` | `unit_scene`(0.8) / `arrow_scene`(0.2) / `fireball_scene`(0.35) | `detect_collisions_system`（距离 ≤ 两者半径之和） |
-| `Armor` | **只有测试挂**（`armor_reduces_physical_damage`）；组装层还没给任何单位护甲 | `phase1_arbitrate_system`（`physical_damage` 减免） |
+| `Armor(i32)` | **只有测试挂**（`armor_reduces_physical_damage`）；组装层还没给任何单位护甲 | `apply_physical_hits_system`（`physical_damage` 减免） |
 
 > `AttackRange` 是**声明在单位身上**的武器属性；`PhysicalDamage` / `AttackFrame` /
-> `Impact` 是**声明在攻击实体身上**的一次性数值——同一套裁决读两边的组件。
+> `InterruptPower` 是**声明在攻击实体身上**的一次性数值。
+> **伤害类型不是枚举**：加一种元素伤害 = 加一个组件 + 加一个同形的命中系统。
 
 ### 5.3 防御与攻击实体
 
 | 组件 | 创建 | 读 | 写 / 生命周期 |
 | :--- | :--- | :--- | :--- |
-| `Dodging { expires_at }` | `move_entities_system`（兑现 `DodgingOnArrival`） | `phase1_arbitrate_system`（`DefenseState`）、HUD 面板 | `expire_defense_markers_system`（虚拟时间到点 remove） |
-| `Parrying { target_attack, expires_at }` | `parry_executor_system` | `phase1_arbitrate_system`（招架判定）、HUD 面板 | `expire_defense_markers_system`（到点 **或绑定攻击消失**时 remove） |
-| `Projectile { max_hits, current_hits, finished }` | `arrow_scene`(1) / `fireball_scene`(0) | `detect_collisions_system`（`finished` 跳过）、`phase1`（同上）、`cleanup_finished_attacks_system`、防御探针 | `phase2_apply_system`（+1 命中 / 标 finished）、`projectile_arrival_system`（换成 finished） |
-| `HitOnce { spent }` | `melee_scene` | `detect_melee_system`、`phase2_apply_system` | 命中后置 `spent` |
+| `Dodging { expires_at }` | `move_entities_system`（兑现 `DodgingOnArrival`） | `apply_physical_hits_system`（`DefenseState`）、HUD 面板 | `expire_defense_markers_system`（虚拟时间到点 remove） |
+| `Parrying { target_attack, expires_at }` | `parry_executor_system` | `apply_physical_hits_system`（招架判定）、HUD 面板 | `expire_defense_markers_system`（到点 **或绑定攻击消失**时 remove） |
+| `Projectile { max_hits, current_hits, finished }` | `arrow_scene`(1) / `fireball_scene`(0) | `detect_collisions_system`（`finished` 跳过）、`apply_physical_hits_system`（同上）、`cleanup_finished_attacks_system`、防御探针 | `apply_physical_hits_system`（+1 命中 / 标 finished）、`projectile_arrival_system`（换成 finished） |
+| `HitOnce { spent }` | `melee_scene` | `detect_melee_system`、`apply_physical_hits_system` | 命中后置 `spent` |
 | `Lifetime(Timer)` | `melee_scene`（0.18s） | `expire_attack_entities_system`、防御探针 | 到期 despawn |
 | `MeleeShape { range, half_arc }` | `melee_scene`（2.5 / 60°） | `detect_melee_system`、防御探针 | 不变 |
-| `CollisionTarget(Entity)` | `detect_collisions_system` / `detect_melee_system` | `phase1_arbitrate_system`、`timeline_gate_system`（威胁）、`ai::decide_intent_system`（威胁） | 每帧先清 stale（碰撞检测里）、结算后 `phase2_apply_system` remove |
+| `CollisionTarget(Entity)` | `detect_collisions_system` / `detect_melee_system` | `apply_physical_hits_system`、`declare_parry_system`（找"正打向我的那次攻击"） | 每帧先清 stale（碰撞检测里）、结算后 `apply_physical_hits_system` remove |
+| `Threatens { cells }` | `fireball_action_scene`（飞行路径）/ `melee_action_scene`（正前方 + 两侧） | `detect_threat_system`（威胁是否压在玩家格上）、`ai::decide_intent_system`（是否压在自己格上） | 行动实体销毁即消失 |
+| `TargetCell(Cell)` | `fireball_scene`（飞行中的投射物） | `projectile_arrival_system`（到达判定）、`detect_threat_system`（飞行中也是威胁） | 到达时 remove（它不再是威胁） |
 
 ### 5.4 战斗资源
 
 | 资源 | 写 | 读 |
 | :--- | :--- | :--- |
-| `Arbitration { results, snapshot }` | `phase1_arbitrate_system`（清 + 填）、`phase2_apply_system`（drain） | 两个系统自己 |
+| `ThreatWindow { threatening, opening_action, answered }` | `detect_threat_system` | 同系统（一次威胁只开一个窗口） |
 | `MenuSelection { index }` | `select_skill_system` / `cycle_skill_system` | `use_selected_skill_system`、`interaction`（预演指示器）、HUD 技能栏 |
 
 ### 5.5 `CombatSet` 内部链
 
 ```text
+detect_threat_system              敌对威胁压在玩家格上 -> 请求冻结（本帧末生效）
 expire_defense_markers_system     本帧到期的无敌帧不该再生效
 refund_cancelled_actions_system   退还上一帧撤销的行动花费
 select_skill_system / cycle_skill_system
 use_selected_skill_system         按选择派发成 FireCommand / MeleeCommand / RollCommand
 declare_fireball_system / declare_melee_system / declare_roll_system / declare_parry_system
-melee / fireball / roll / parry 执行器    到点落地 -> end_action(_until)
+melee / fireball / roll / parry 执行器    到点落地 -> 销毁行动实体 + 挂 Busy（各自收尾）
 projectile_arrival_system -> explosion_system
 detect_collisions_system / detect_melee_system    挂 CollisionTarget
-phase1_arbitrate_system           只读裁决（快照 + 三层 + 防御）
-phase2_apply_system               统一落地（伤害 / 反制 / 命中计数 / 清标记）
-request_damage_system -> apply_damage -> despawn_dead_system
+apply_physical_hits_system        防御判定 + 护甲 + 打断触发 + 命中计数
+apply_damage_system               唯一扣血点（死亡只报一次）
 cleanup_finished_attacks_system / expire_attack_entities_system
+despawn_dead_system               帧末：Health <= 0 的实体销毁
 ```
 
 ## 六、L5 行动载荷（载荷 + 工厂 + 执行器）
@@ -215,7 +221,7 @@ cleanup_finished_attacks_system / expire_attack_entities_system
 | `ShootAction` | 同上 | `shoot_action_scene` | **未注册**（`declare_skill_system` 不在插件里） | `shoot_action_executor_system` | 生成 `arrow_scene` 箭矢（保留为单体狙击的参考实现） |
 | `FireballAction { target_cell }` | `combat/skills/fireball.rs` | `fireball_action_scene` | `FireCommand`（`Q` / 菜单派发）、`ai::declare_fireball_at` | `fireball_action_executor_system` | 从当前站位生成 `fireball_scene` 投射物；忙到飞行结束 |
 | `ParryAction { target_attack }` | `combat/defense/components.rs` | `parry_action_scene` | `ParryCommand`（`R`） | `parry_executor_system` | 扣 1 精力 + 挂 `Parrying` |
-| `Fireball { target_cell, speed, amount, radius }` | `combat/skills/fireball.rs` | `fireball_scene` | 火球执行器 | （数据 + `projectile_arrival_system`） | 到格 → 广播 `ProjectileArrived` |
+| `Fireball { speed, amount, radius }` | `combat/skills/fireball.rs` | `fireball_scene` | 火球执行器 | （数据 + `projectile_arrival_system`） | 到格 → 广播 `ProjectileArrived`（目标格住在 `TargetCell` 上） |
 
 **非载荷但同属这一层的状态**：`Jumping`（弹道，`jump_motion_system`）、
 `DodgingOnArrival`（到位兑现）、`Fireball`（投射物数据）。
@@ -255,8 +261,8 @@ HUD 标记组件（`HudRoot` / `PanelBar` / `PanelText` / `ActionLabel` / `Skill
 `setup_hud` 及各 `spawn_*` 创建，各自的更新系统只改 `Node` / `Text` / `BackgroundColor`。
 
 HUD 只读游戏状态：`update_unit_panels_system` 读 `Health` / `Stamina` / `Cell` /
-`Ready` / `Dodging` / `Parrying` / `Jumping` / `Intent`；
-`update_timeline_system` 读 `ScheduledAction` / `Declared` / `Ready` / `Faction` / `Timeline`；
+`DecisionSlot` / `Dodging` / `Parrying` / `Jumping` / `Intent`；
+`update_timeline_system` 读 `ScheduledAction` / `DecisionSlot` / `Faction` / `PauseReasons`；
 `update_action_labels_system` 读七种载荷组件（判断「当前行动是什么」）；
 `update_skill_bar_system` 读 `MenuSelection` 与玩家 `Stamina`。
 
@@ -276,7 +282,7 @@ HUD 只读游戏状态：`update_unit_panels_system` 读 `Health` / `Stamina` / 
 ```text
 unit_scene(faction, position, sprites)                    <- 共用零件
 |-- Faction / Health(50) / HitRadius(0.8) / AttackRange::MELEE / Collidable
-|-- Velocity(ZERO) / Ready / Stamina(default 5) / Cell::from_world(position)
+|-- Velocity(ZERO) / DecisionSlot::Empty / Stamina(default 5) / Cell::from_world(position)
 |-- Transform { translation: position }   <- 脚底、无旋转、无缩放
 |-- Visibility                            <- 子节点带可见性，父节点必须有同名组件（否则 B0004）
 `-- Children
@@ -284,7 +290,7 @@ unit_scene(faction, position, sprites)                    <- 共用零件
     `-- UnitShadow + Mesh3d(1.9^2) + 半透明黑 + 绕 X 转 -90°（平铺）
 
 player_scene(terrain, sprites) = unit_scene(Player, 格 (1,0) 中心)
-                               + MoveSpeed(5.0) + ChunkLoader
+                               + InputDriven（输入归属）+ MoveSpeed(5.0) + ChunkLoader
 enemy_scene(terrain, sprites)  = unit_scene(Enemy, 格 (3,3) 中心)
                                + MoveSpeed(2.0) + EnemyBrain（-> #[require(Intent)]）
 ```
@@ -312,51 +318,52 @@ TerrainConfig --> cell_ground --> player_scene / enemy_scene
 UnitSprites   --> unit_scene  --^
                         |
                         v
-                  Ready（能决策）+ Cell（决策坐标）+ Faction（身份）
+              DecisionSlot（能不能决策）+ Cell（决策坐标）+ Faction（身份）
+              InputDriven（决策来自玩家输入，只有玩家有）
                         |
       +-----------------+----------------------+
       v                 v                      v
-  input/ai 声明行动   时间线调度            HUD / 相机只读
+  input/ai 声明行动   时间线：决策槽 / Busy / 暂停原因      HUD / 相机只读
       |                 |
-      `-> 行动实体（载荷 + ScheduledAction + Declared）-> 执行器 -> 攻击实体
+      `-> 行动实体（载荷 + ScheduledAction + Cancellable）-> 执行器 -> 攻击实体
                                                                      |
-                                                 targeting -> 两阶段结算 -> health
+                              targeting -> apply_physical_hits -> apply_damage -> despawn_dead
 ```
 
 ## 九、系统 × 组件反查（按系统集）
 
 | 系统 | 读 | 写 |
 | :--- | :--- | :--- |
-| `timeline_gate_system` | `Ready`、`Faction`、`Jumping`、`CollisionTarget` | `Time<Virtual>`、`Timeline.waiting_for_input` |
-| `pause_toggle_system` / `cycle_reaction_window_system` | `TimelineConfig` | `Time<Virtual>` / `TimelineConfig` |
+| `compute_manual_pause` / `compute_player_awaiting_system` | `TogglePause`、`ManualPause`、`DecisionSlot`、`InputDriven` | `PauseRequest` |
+| `track_focus_intent_system` | `UseFocus` | `FocusIntent` |
 | `interrupt_system` | 六条玩家意图消息 | `UndoCommand` |
-| `commit_bridge_system` | `Declared` | `Pending`、`Timeline.draft` |
-| `undo_system` | `UndoCommand`、`ScheduledAction`、`ActionCost`、`CancelCost`、`Uncancellable`、`Committed`、`Faction` | 销毁行动实体、`Ready`、`Timeline.draft`、`ActionCancelled` |
-| `scheduler_system` | `ScheduledAction`、`Pending`、`Time<Virtual>` | `Committed` |
-| `recovery_system` | `BusyRecovery`、`Time<Virtual>`、`Stamina` | `Ready`、`Stamina` |
-| `declare_move_system` / `declare_move_to_system` | 命令消息、`Ready`、`Cell`、`Faction`、`Time<Virtual>` | 行动实体、`Ready`(remove)、`Timeline.draft`、`ActionBlocked` |
-| `declare_jump_system` | `JumpCommand`、`Ready`、`Faction` | 同上 |
-| `move_action_executor_system` | `MoveAction`、`ScheduledAction`、`Committed`、`Cell`、`MoveSpeed`、`Transform` | `Velocity`、`MoveGoal`、`BusyRecovery`、销毁行动实体 |
+| `undo_system` | `UndoCommand`、`ScheduledAction`（`pending`）、`Cancellable`、`InputDriven` | 销毁行动实体、`DecisionSlot::Empty`、`ActionCancelled` |
+| `recovery_system` | `Busy`、`Time<Virtual>`、`Stamina` | `DecisionSlot::Empty`、`Stamina`、remove `Busy` |
+| `recover_focus_system` | `Time<Virtual>` | `Focus` |
+| `process_pause_requests` / `apply_clock` | `PauseRequest` / `PauseReasons` | `PauseReasons` / `Time<Virtual>`（**唯一**写时钟的地方） |
+| `interrupt_observer` | `InterruptEvent`、`ScheduledAction`（`pending`）、`Time<Virtual>` | 销毁行动实体、`DecisionSlot::Empty` |
+| `declare_move_system` / `declare_move_to_system` / `declare_jump_system` | 命令消息、`InputDriven`、`DecisionSlot`、`Cell`、`Focus`、`FocusIntent`、`Time<Virtual>` | 行动实体、`DecisionSlot::Filled`、`ActionBlocked` |
+| `move_action_executor_system` | `MoveAction`、`ScheduledAction`（`due`）、`Cell`、`MoveSpeed`、`Transform` | `Velocity`、`MoveGoal`、`Busy`、销毁行动实体 |
 | `move_entities_system` | `Transform`、`Velocity`、`MoveGoal`、`DodgingOnArrival`、`Time`、`TerrainConfig` | `Transform`、`Velocity`、`Cell`、`Dodging`、`MoveGoal`(remove) |
 | `follow_terrain_system` | `Transform`、`Cell`、`Jumping`(排除)、`TerrainConfig` | `Transform.y` |
 | `jump_motion_system` | `Jumping`、`Time` | `Transform.y`、`Jumping`(remove) |
-| `decide_intent_system` | `Transform`、`Faction`、`Health`、`AttackRange`、`EnemyBrain`、`CollisionTarget`、`Ready` | `Intent` |
-| `enemy_declare_system` | `Intent`、`Ready`、`Cell`、`Faction`、`Stamina`、`Transform` | 行动实体、`Ready`(remove) |
-| `select_skill_system` / `cycle_skill_system` | `SelectSkill` / `CycleSkill`、`Stamina`、`Ready` | `MenuSelection` |
-| `use_selected_skill_system` | `UseSelectedSkill`、`MenuSelection`、`Stamina`、`Ready`、`Transform`、`Faction` | `FireCommand` / `MeleeCommand` / `RollCommand`、`ActionBlocked` |
-| `declare_fireball_system` | `FireCommand`、`Ready`、`Cell`、`Stamina`、`Transform`、`Faction` | 行动实体、`ActionCost`、`Stamina`、`Ready`(remove) |
-| `declare_melee_system` / `declare_roll_system` / `declare_parry_system` | 对应命令、`Ready`、`Cell`/`Stamina`/`Transform`/`Faction`、`ScheduledAction`(招架找威胁) | 行动实体、`Ready`(remove)、`Stamina`(仅在执行时) |
-| `fireball_action_executor_system` | `FireballAction`、`ScheduledAction`、`Committed`、`Transform`、`Faction` | 火球实体、`BusyRecovery` |
-| `roll_executor_system` | `RollAction`、`ScheduledAction`、`Committed`、`Velocity`、`Stamina`、`Transform` | `Velocity`、`Stamina`、`MoveGoal`、`DodgingOnArrival`、`BusyRecovery` |
-| `parry_executor_system` | `ParryAction`、`ScheduledAction`、`Committed`、`Stamina` | `Parrying`、`Stamina`、`BusyRecovery` |
-| `melee_action_executor_system` | `MeleeAction`、`ScheduledAction`、`Committed`、`Transform`、`Faction` | 近战攻击实体、`BusyRecovery` |
-| `projectile_arrival_system` | `Fireball`、`Transform`、`Velocity`、`Faction` | `Transform`、`Velocity`、`Projectile`、`ProjectileArrived` |
+| `decide_intent_system` | `Transform`、`Cell`、`Faction`、`Health`、`AttackRange`、`EnemyBrain`、`DecisionSlot`、`Threatens` | `Intent` |
+| `enemy_declare_system` | `Intent`、`DecisionSlot`、`Cell`、`Faction`、`Stamina`、`Transform` | 行动实体、`DecisionSlot::Filled` |
+| `select_skill_system` / `cycle_skill_system` | `SelectSkill` / `CycleSkill`、`Stamina`（`InputDriven`）、`DecisionSlot` | `MenuSelection` |
+| `use_selected_skill_system` | `UseSelectedSkill`、`MenuSelection`、`Stamina`、`DecisionSlot`、`InputDriven`、`Transform`、`Faction` | `FireCommand` / `MeleeCommand` / `RollCommand`、`ActionBlocked` |
+| `declare_fireball_system` | `FireCommand`、`InputDriven`、`DecisionSlot`、`Cell`、`Stamina`、`Transform`、`Faction`、`Focus`、`FocusIntent` | 行动实体（带 `Threatens`）、`Stamina`、`DecisionSlot::Filled` |
+| `declare_melee_system` / `declare_roll_system` / `declare_parry_system` | 对应命令、`InputDriven`、`DecisionSlot`、`Cell`/`Stamina`/`Transform`/`Faction`、`Focus`、`FocusIntent`、`CollisionTarget`(招架找威胁) | 行动实体、`DecisionSlot::Filled`、`Stamina`(仅在执行时) |
+| `fireball_action_executor_system` | `FireballAction`、`ScheduledAction`（`due`）、`Transform`、`Faction` | 火球实体、`Busy`、销毁行动实体 |
+| `roll_executor_system` | `RollAction`、`ScheduledAction`（`due`）、`Velocity`、`Stamina`、`Transform` | `Velocity`、`Stamina`、`MoveGoal`、`DodgingOnArrival`、`Busy` |
+| `parry_executor_system` | `ParryAction`、`ScheduledAction`（`due`）、`Stamina` | `Parrying`、`Stamina`、`Busy` |
+| `melee_action_executor_system` | `MeleeAction`、`ScheduledAction`（`due`）、`Transform`、`Faction` | 近战攻击实体、`Busy` |
+| `detect_threat_system` | `ScheduledAction`（`pending`）、`Threatens`、`TargetCell`、`Cell`、`Faction`、`InputDriven`、`Time<Virtual>` | `ThreatWindow`、`PauseRequest` |
+| `projectile_arrival_system` | `Fireball`、`TargetCell`、`Transform`、`Velocity`、`Faction` | `Transform`、`Velocity`、`Projectile`、`ProjectileArrived`、remove `TargetCell`/`Fireball` |
 | `explosion_system` | `ProjectileArrived`、`Transform`、`Faction`、`Health` | `DamageEvent`、销毁投射物 |
 | `detect_collisions_system` | `CollisionTarget`、`Transform`、`HitRadius`、`Projectile`、`Faction`、`Collidable` | `CollisionTarget`（先清后挂） |
 | `detect_melee_system` | `Transform`、`Faction`、`MeleeShape`、`HitOnce`、`Collidable` | `CollisionTarget`、`HitOnce.spent` |
-| `phase1_arbitrate_system` | `PhysicalDamage`、`CollisionTarget`、`AttackFrame`、`AttackRange`、`Impact`、`Projectile`、`Transform`、`Dodging`、`Parrying`、`Armor` | `Arbitration` |
-| `phase2_apply_system` | `Arbitration` | `AttackResolved`、`DamageEvent`、`Projectile`、`HitOnce`、`Velocity`、`CollisionTarget`(remove) |
-| `request_damage_system` / `apply_damage` / `despawn_dead_system` | `DamageEvent` / `ModifyHealthEvent` / `DeathEvent`、`Health` | `ModifyHealthEvent` / `DeathEvent` / 销毁实体 |
+| `apply_physical_hits_system` | `PhysicalDamage`、`CollisionTarget`、`InterruptPower`、`Armor`、`Dodging`、`Parrying`、`Projectile`、`HitOnce` | `DamageEvent`、`InterruptEvent`（trigger）、`Projectile`、`HitOnce`、remove `CollisionTarget` |
+| `apply_damage_system` / `despawn_dead_system` | `DamageEvent` / `Health` | `Health`、`DeathEvent` / 销毁实体 |
 | `expire_defense_markers_system` | `Dodging`、`Parrying`、攻击探针（`Projectile`/`Velocity`/`MeleeShape`/`Lifetime`）、`Time<Virtual>` | 移除到期标记 |
 | `refund_cancelled_actions_system` | `ActionCancelled` | `Stamina` |
 | `cleanup_finished_attacks_system` / `expire_attack_entities_system` | `Projectile` / `Lifetime`、`Time` | 销毁攻击实体 |
@@ -375,45 +382,46 @@ UnitSprites   --> unit_scene  --^
 
 这些是读码时发现的**结构性问题**，不是 bug 报告；每条给出落点与影响。
 
-### 10.1 玩家身份散落在 10+ 个查询里
+### 10.1 玩家身份：`InputDriven` 收口（本次已落地）
 
-「谁是玩家」现在的写法是**到处 `find(|faction| faction == Faction::Player)`**，
-分布在整个 7 个领域、约 17 处：`movement` 3 处、`combat::skills` 4 处
-（含 1 处在未注册的 `declare_skill_system` 里）、`combat::defense` 2 处、
-`timeline` 3 处（门控 / 撤销）、`interaction` 2 处、`presentation` 3 处
-（相机跟随、HUD 面板、技能栏）。
+「谁是玩家」现在是**一个标记组件** [`InputDriven`](timeline.md)（组装层挂在玩家身上）。
+所有声明系统、时间线与反应系统都认它，不再满世界
+`find(|faction| *faction == Faction::Player)`：
 
-- 风险：漏写过滤 = 玩家的键挂到敌人身上（`RollCommand` 的历史 bug 就是这样）；
-- 影响面：每个新动作都要再抄一遍；
-- 备选：加一个 `Player` 标记组件（组装层挂），或一个 `PlayerEntity` 资源在
-  `setup_scene` / `reset_battle_system` 里维护。`Faction` 仍然管战斗目标过滤，
-  `Player` 只管「输入归属」——两者语义不同，不冲突。
+- `Faction` 管**战斗目标过滤**（谁能打谁、谁被谁威胁）；
+- `InputDriven` 管**输入归属**（世界停下来等谁、谁能撤销、谁被保护）。
+
+两者语义不同、互不替代：将来加「第二个玩家」「被 AI 接管的角色」时，
+换的只是驱动源那一个组件。仍按 `Faction::Player` 找人的地方只剩下
+**表现层**（面板 / 头像 / 相机跟随），它们看的是"哪个阵营的单位"，不是"谁在输入"。
 
 ### 10.2 重复实现与无人消费的出口
 
 | 现象 | 位置 | 说明 |
 | :--- | :--- | :--- |
-| `expire_defense_markers_system` 有两份 | `defense/systems.rs`（**注册的是这份**）与 `defense/actions.rs`（未注册） | 两份的攻击探针判据不同（前者探测 `Projectile`/`Velocity`/`MeleeShape`/`Lifetime`，后者只探测 `ScheduledAction`）。未注册的那份是死代码，容易误改 |
-| `manage_projectile_hits_system` | `lifecycle/systems.rs` | 未注册；职责已被 `phase2_apply_system` 接管 |
-| `declare_skill_system` / `shoot_action_*` / `arrow_scene` | `skills/actions.rs`、`skills/arrow.rs` | 未注册，只被测试使用（「单体狙击」的预留实现） |
-| `AttackResolved` | `defense/components.rs` | 阶段 2 每帧写，**没有任何消费方**；日志读的是 `DamageEvent` |
+| `declare_skill_system` / `shoot_action_*` / `arrow_scene` | `skills/actions.rs`、`skills/arrow.rs` | 未注册，只被测试使用（「单体狙击」的预留实现）。箭矢的收尾已经和火球对齐（忙到落地），接输入即可用 |
+| `AttackFrame` | `combat/attributes` | 有生产者（攻击实体都挂）、没有消费者：它是**信息层**读数（"谁先动"），等「洞察力」面板来接 |
 | `Voxel` / `VoxelPos` / `ChunkPinned` | `world` | 有类型、有文档、没有生产者 |
 
-处理建议：要么接上（箭矢接输入、`AttackResolved` 给日志 / 复盘），
-要么删掉（重复的过期系统、未注册的陈旧实现），不要让「看起来在用」的代码留在树里。
+处理建议：要么接上（箭矢接输入、`AttackFrame` 给洞察力面板），要么删掉，
+不要让「看起来在用」的代码留在树里。
 
-### 10.3 文档与代码不一致的地方（本次已修正）
+> 本轮重构**已删除**：`expire_defense_markers_system` 的重复实现、
+> `manage_projectile_hits_system`、`AttackResolved`（三者都是"写了没人读"的死代码）。
+
+### 10.3 文档与代码不一致的地方（历次已修正）
 
 重写文档时发现旧文档里的下列描述**与代码不符**，新文档已按代码改正：
 
 | 旧文档的说法 | 代码实际 |
 | :--- | :--- |
-| `TimelineConfig { require_commit }`、`Declared` 等 `Enter` 确认 | 字段是 `reaction`（反应窗口）；声明即生效 |
+| 「等 `Enter` 确认 / `require_commit`」 | 声明即生效（`ScheduledAction` 只认时间戳）；反悔走撤销 / 打断 |
 | 火球「投射物在声明时就生成」 | 执行器发射时生成（撤销不会留下半空火球） |
-| `Declared` 的草案会冻结世界 | 门控只看 `Ready` / 空中 / 威胁，**没有**读 `Timeline.draft` |
+| 前摇中的行动会冻结世界 | 冻结只看 `PauseReasons`（等输入 / 手动 / 威胁），**没有**读某条行动的状态 |
 | AI 的 `Dodge` 写玩家的 `RollCommand` | AI 直接 `declare_roll`，`RollCommand` 只属于 PC |
 | `ChunkLoader` 玩家半径是 3×3 区块 | 默认 `radius = (0,1,0)`：XZ 只加载 1×1 区块 |
 | HUD 缓存文档里的「WeGo 冻结」 | 无回合模型（措辞遗留，不影响行为） |
+| 时间线三层状态机（`Declared`/`Pending`/`Committed`）、`Arbitration` 两阶段结算 | 全部删除，改为「时间戳 + 事件」模型（见 [timeline.md](timeline.md)） |
 
 ### 10.4 值得保留的设计（别在重构时弄丢）
 
@@ -421,19 +429,18 @@ UnitSprites   --> unit_scene  --^
    这个「一个系统管一类实体的位移」让移动 / 投射物 / 跳跃不会互相争抢。
 2. **`DodgingOnArrival` 把「无敌帧」和「位移到位」绑在一起**——
    它用一个短命组件换掉了「在哪一帧挂标记」的隐式约定。
-3. **`end_action_until` 把「忙到效果发生」变成显式参数**——
-   这是「按了技能没放出去」这类 bug 的通用解法，新动作要照抄。
-4. **`Arbitration` 资源而不是 `Local`**——两个阶段的缓冲必须共享，
-   这个选择让「同刻互击」在语义上成立。
+3. **`Busy::after(schedule, executed_at, busy_until)` 把「忙到效果发生」变成显式参数**——
+   这是「按了技能没放出去」这类 bug 的通用解法，新动作要照抄
+   （移动忙到走到格中心、火球忙到落地、箭矢忙到命中）。
+4. **暂停用「原因集合」而不是一个布尔**——`"manual"` / `"slot_empty"` / `"threat"`
+   可以叠加，谁也不覆盖谁；唯一写时钟的地方是帧末的 `apply_clock`。
 5. **`world` 完全不引用渲染类型**——它换来了「数据域可以 `MinimalPlugins` 单测」
    这一条硬约束，也让地形高度变成纯函数。
 
 ### 10.5 已知问题（与代码结构相关，待决策）
 
-- **`Space` 手动暂停实际只前进一帧**：`timeline_gate_system` 先按「玩家就绪」暂停，
-  `pause_toggle_system` 紧接着 unpause，下一帧门控又 pause。
-  修法：给 `Timeline` 加一个手动暂停标志，让门控尊重它。
-- **箭矢的收尾还用 `end_action`**：箭速 12、0.8s 只飞 9.6 米，超距的箭会被冻在半空
-  （与火球修复前同样的问题）。接输入前需要先改成 `end_action_until`。
 - **`Armor` 没有生产者**：公式支持护甲，但组装层没给任何单位挂 `Armor`，
   目前只有测试覆盖。
+- **反应窗口的粒度是"一次威胁"**：威胁持续期间玩家只被问一次（换过手就不再打断他）。
+  多段攻击（连续三刀）目前只会开一次窗，将来要按"来源"分别开窗。
+- **AI 不会用 Focus**：`Focus` 只挂在玩家侧，敌人声明行动时固定排前摇。

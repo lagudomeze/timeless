@@ -5,61 +5,116 @@ use bevy::prelude::*;
 use crate::combat::formula::DamageEvent;
 
 use super::components::Health;
-use super::events::{DeathEvent, ModifyHealthEvent};
+use super::events::DeathEvent;
 
-/// 伤害 → 扣血请求：把 [`DamageEvent`] 翻译成负向 [`ModifyHealthEvent`]。
+/// **唯一的扣血点**：把 [`DamageEvent`] 落到 `Health` 上，并在首次归零时发
+/// [`DeathEvent`]。
 ///
-/// 生命值只认自己的消息入口，治疗 / 中毒 / 再生等其它来源也走同一条路；
-/// 伤害公式因此完全不认识 `Health`，两边各自演化。
-pub fn request_damage_system(
+/// 两条规则：
+///
+/// 1. **不提前终止**：扣到负数继续扣（`current -= amount`），因此不存在
+///    "最后一下只扣到 0"的账面误差；
+/// 2. **只发一次死亡消息**：判据是 `was_alive && now_dead`，同一帧的多段伤害
+///    也只会有一条 `DeathEvent`。
+pub fn apply_damage_system(
     mut damages: MessageReader<DamageEvent>,
-    mut modify_events: MessageWriter<ModifyHealthEvent>,
+    mut deaths: MessageWriter<DeathEvent>,
+    mut healths: Query<&mut Health>,
 ) {
     for damage in damages.read() {
-        modify_events.write(ModifyHealthEvent {
-            target: damage.target,
-            amount: -damage.amount,
-        });
-    }
-}
-
-/// 扣血 / 治疗：对每条 [`ModifyHealthEvent`] 改目标血量，归零时发 [`DeathEvent`]。
-///
-/// 目标不存在或已死亡时跳过，避免重复发死亡消息。
-pub fn apply_damage(
-    mut modify_events: MessageReader<ModifyHealthEvent>,
-    mut deaths: MessageWriter<DeathEvent>,
-    mut health_q: Query<&mut Health>,
-) {
-    for event in modify_events.read() {
-        let Ok(mut health) = health_q.get_mut(event.target) else {
-            continue; // 目标已不存在
+        let Ok(mut health) = healths.get_mut(damage.target) else {
+            continue; // 目标已不存在（同帧被打死过）
         };
-        if !health.is_alive() {
-            continue;
-        }
-        health.current = (health.current + event.amount).max(0.0);
-        if !health.is_alive() {
-            info!("☠ {:?} 生命归零，发出 DeathEvent", event.target);
+        let was_alive = health.is_alive();
+        health.current -= damage.amount;
+        if was_alive && !health.is_alive() {
+            info!("☠ {:?} 生命归零，发出 DeathEvent", damage.target);
             deaths.write(DeathEvent {
-                entity: event.target,
+                entity: damage.target,
+                killer: damage.source,
             });
         }
     }
 }
 
-/// 死亡销毁：消费 [`DeathEvent`]，把对应实体从世界移除。
+/// 死亡销毁（帧末）：生命值 ≤ 0 的实体从世界移除。
 ///
-/// 消息与消费系统同属生命值子域；实体已不存在时跳过。
-pub fn despawn_dead_system(
-    mut commands: Commands,
-    mut deaths: MessageReader<DeathEvent>,
-    alive: Query<()>,
-) {
-    for death in deaths.read() {
-        if alive.get(death.entity).is_ok() {
-            info!("🗑 销毁死亡实体 {:?}", death.entity);
-            commands.entity(death.entity).despawn();
+/// 直接看 `Health` 而不是消费 [`DeathEvent`]：任何把血扣到 ≤ 0 的路径
+/// （伤害、将来的中毒 / 献祭）都被同一条规则收口，不需要各自记得发消息。
+pub fn despawn_dead_system(mut commands: Commands, dead: Query<(Entity, &Health)>) {
+    for (entity, health) in &dead {
+        if health.is_alive() {
+            continue;
         }
+        info!("🗑 销毁死亡实体 {entity:?}");
+        commands.entity(entity).despawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::combat::formula::DamageEvent;
+
+    fn damage_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_message::<DamageEvent>()
+            .add_message::<DeathEvent>()
+            .add_systems(Update, (apply_damage_system, despawn_dead_system).chain());
+        app
+    }
+
+    /// 致命伤：扣到负数、只发一条死亡消息、实体在帧末被销毁。
+    #[test]
+    fn lethal_damage_kills_once_and_cleans_up() {
+        let mut app = damage_app();
+        let victim = app.world_mut().spawn(Health::new(5)).id();
+
+        app.world_mut().write_message(DamageEvent {
+            source: None,
+            target: victim,
+            amount: 12,
+        });
+        app.update();
+        app.update();
+
+        assert!(
+            app.world().get_entity(victim).is_err(),
+            "生命归零的实体应当在帧末销毁"
+        );
+    }
+
+    /// 已经死掉的实体再吃伤害：不再发第二条死亡消息（血继续往负走）。
+    #[test]
+    fn a_corpse_does_not_report_a_second_death() {
+        #[derive(Resource, Default)]
+        struct Deaths(usize);
+        fn count(mut deaths: MessageReader<DeathEvent>, mut counter: ResMut<Deaths>) {
+            counter.0 += deaths.read().count();
+        }
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Deaths>()
+            .add_message::<DamageEvent>()
+            .add_message::<DeathEvent>()
+            .add_systems(Update, (apply_damage_system, count).chain());
+        let victim = app.world_mut().spawn(Health::new(5)).id();
+
+        for _ in 0..2 {
+            app.world_mut().write_message(DamageEvent {
+                source: None,
+                target: victim,
+                amount: 12,
+            });
+            app.update();
+        }
+
+        assert_eq!(app.world().resource::<Deaths>().0, 1, "死亡只报一次");
+        assert!(
+            app.world().get::<Health>(victim).unwrap().current < 0,
+            "伤害不提前终止，血继续往负走"
+        );
     }
 }

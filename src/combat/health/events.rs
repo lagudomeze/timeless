@@ -2,22 +2,17 @@
 
 use bevy::prelude::*;
 
-/// 一次血量变化请求（负数为扣血，正数为治疗）。
+/// 目标生命归零（**同一实体只发一次**：扣血时比较扣前 / 扣后）。
 ///
-/// 写：伤害结算（[`DamageEvent`](crate::combat::DamageEvent) 之外的来源也可直接用，
-/// 例如中毒、再生）；消费：[`apply_damage`](super::systems::apply_damage)。
-#[derive(Message, Debug, Clone, Copy)]
-pub struct ModifyHealthEvent {
-    pub target: Entity,
-    pub amount: f32,
-}
-
-/// 目标生命归零。
+/// 写：[`apply_damage_system`](super::systems::apply_damage_system)；
+/// 消费：战斗日志（[`crate::presentation::BattleLog`]）。
 ///
-/// 写：[`apply_damage`](super::systems::apply_damage)；
-/// 消费：[`despawn_dead_system`](super::systems::despawn_dead_system)（销毁实体）、
-/// 战斗日志（[`crate::presentation::BattleLog`]）。
-#[derive(Message, Debug, Clone, Copy)]
+/// 销毁不由它驱动：`despawn_dead_system` 直接看 `Health.current <= 0`，
+/// 因此"谁把血扣成负的"都能被清理，不会漏。
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeathEvent {
+    /// 阵亡的实体
     pub entity: Entity,
+    /// 击杀者（伤害来源；环境伤害可以是 `None`）
+    pub killer: Option<Entity>,
 }

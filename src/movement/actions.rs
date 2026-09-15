@@ -1,16 +1,17 @@
 //! 移动行动：载荷 + 工厂 + 声明 / 执行系统。
 //!
-//! 载荷与它的一切都住在移动领域；时间线只负责「什么时候到点」，
+//! 载荷与它的一切都住在移动领域；时间线只负责回答「到点了没有」，
 //! 因此新增移动方式（冲刺、翻滚）只需在这里加载荷与执行器。
 //!
 //! **决策按格、表现连续**：一次移动声明走一格（[`Cell`]），执行时给一个朝格中心的
-//! 速度，到位后由 [`move_entities_system`](super::systems::move_entities_system) 吸附并停下。
+//! 速度，到位后由 [`move_entities_system`](super::systems::move_entities_system)
+//! 吸附并停下。执行器自己收尾：销毁行动实体 + 把行动者忙到**真的走到位**。
 
 use bevy::prelude::*;
 
-use crate::combat::Faction;
 use crate::timeline::{
-    ActionBlocked, Declared, Ready, ScheduledAction, Timeline, begin_action, timing,
+    ActionBlocked, Cancellable, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+    timing,
 };
 
 use super::cell::{Cell, MoveGoal};
@@ -29,7 +30,7 @@ pub struct MoveAction {
 }
 
 /// 起跳初速度（世界单位 / 秒）与重力（单位 / 秒²）。
-/// 6 与 -20 → 最高约 0.9 格、约 0.6 秒落地。
+/// 6 与 -20 → 最高约 0.9 格、约 0.6 秒落地（正好等于 `timing::JUMP.recovery`）。
 const JUMP_SPEED: f32 = 6.0;
 const JUMP_GRAVITY: f32 = -20.0;
 
@@ -48,13 +49,12 @@ pub fn step_from_axis(axis: Vec2) -> (i32, i32) {
     }
 }
 
-/// 行动实体工厂：载荷 + 调度数据 + 草案标记（由 `commit_bridge_system` 升为 `Pending`）。
-pub fn move_action_scene(actor: Entity, from_cell: Cell, to_cell: Cell, now: f32) -> impl Scene {
-    let schedule = ScheduledAction::declared_at(actor, timing::MOVE, now);
+/// 移动行动工厂：载荷 + 调度数据 + 可取消规则（移动随时可以改主意，撤销免费）。
+pub fn move_action_scene(from_cell: Cell, to_cell: Cell, schedule: ScheduledAction) -> impl Scene {
     bsn! {
         MoveAction { from_cell: {from_cell}, to_cell: {to_cell} }
         template_value(schedule)
-        Declared
+        template_value(Cancellable::Free)
     }
 }
 
@@ -73,25 +73,22 @@ pub struct RollAction {
     pub to_cell: Cell,
 }
 
-/// 翻滚行动工厂。
-pub fn roll_action_scene(actor: Entity, from_cell: Cell, to_cell: Cell, now: f32) -> impl Scene {
-    let schedule = ScheduledAction::declared_at(actor, timing::ROLL, now);
+/// 翻滚行动工厂：精力在执行时才扣，因此撤销不退款也不收费。
+pub fn roll_action_scene(from_cell: Cell, to_cell: Cell, schedule: ScheduledAction) -> impl Scene {
     bsn! {
         RollAction { from_cell: {from_cell}, to_cell: {to_cell} }
         template_value(schedule)
-        Declared
+        template_value(Cancellable::Free)
     }
 }
 
 /// 跳跃行动工厂。
-pub fn jump_action_scene(actor: Entity, now: f32) -> impl Scene {
-    let schedule = ScheduledAction::declared_at(actor, timing::JUMP, now);
+pub fn jump_action_scene(schedule: ScheduledAction) -> impl Scene {
     bsn! {
         JumpAction
         template_value(schedule)
         // 起跳就谁都别想插队：跳跃**不给取消**（前摇里也撤不掉）
-        template_value(crate::timeline::Uncancellable)
-        Declared
+        template_value(Cancellable::Never)
     }
 }
 
@@ -104,24 +101,18 @@ pub struct Jumping {
     pub velocity: f32,
 }
 
-/// 就绪的玩家查询：**必须按阵营过滤**。
-///
-/// 无回合模型下「就绪的单位」包含敌人，`single()` / 不加过滤的 `find()`
-/// 会把玩家的动作挂到敌人身上。
-type ReadyPlayer<'w, 's> =
-    Query<'w, 's, (Entity, &'static Cell, &'static Faction), (With<Faction>, With<Ready>)>;
-
 /// 声明移动：`MoveCommand` → 朝该方向走一格的行动实体。
 ///
-/// 只在玩家有 [`Ready`] 时接受；输入是**按下的一次**（见 [`crate::input`] 的
+/// 只在玩家的决策槽是 `Empty` 时接受；输入是**按下的一次**（见 [`crate::input`] 的
 /// `just_pressed` 语义），因此「按住 W」就是按一次走一格，不会和技能键互相覆盖。
 pub fn declare_move_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    mut timeline: ResMut<Timeline>,
+    time: Res<Time<Virtual>>,
+    mut focus: ResMut<Focus>,
+    intent: Res<FocusIntent>,
     mut requests: MessageReader<MoveCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
-    players: ReadyPlayer<'_, '_>,
+    players: Query<(Entity, &Cell, &DecisionSlot), With<InputDriven>>,
 ) {
     let Some(axis) = requests.read().last().map(|command| command.axis) else {
         return;
@@ -130,47 +121,42 @@ pub fn declare_move_system(
     if (dx, dz) == (0, 0) {
         return;
     }
-    let Ok((player, cell, _)) = players
+    let Some((player, cell, _)) = players
         .iter()
-        .find(|(_, _, faction)| **faction == Faction::Player)
-        .ok_or(())
+        .find(|(_, _, slot)| **slot == DecisionSlot::Empty)
     else {
         // 静默丢弃是最差的手感：告诉 HUD"现在还动不了"
         blocked.write(ActionBlocked::BUSY);
-        return; // 忙（正在前摇 / 后摇）或没有玩家
+        return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
 
     let to_cell = Cell::new(cell.x + dx, cell.z + dz);
-    let draft = commands
-        .spawn_scene(move_action_scene(
-            player,
-            *cell,
-            to_cell,
-            now.elapsed_secs(),
-        ))
-        .id();
-    begin_action(&mut commands, &mut timeline, player, draft);
+    let now = time.elapsed_secs();
+    let schedule = ScheduledAction::with_focus(player, timing::MOVE, now, &mut focus, intent.0);
+    commands.spawn_scene(move_action_scene(*cell, to_cell, schedule));
+    commands.entity(player).insert(DecisionSlot::Filled);
 }
 
 /// 声明移动（点地板）：`MoveToCommand` → 朝目标格走**一条直线**的行动。
 ///
 /// 多格与单格走的是**同一个载荷与执行器**（`MoveAction { from_cell, to_cell }`）：
 /// 执行器本来就是"朝目标格中心设速度"，所以跨几格天然成立；忙多久也按
-/// `距离 / 速度` 自动变长（见 `end_action_until`）。
+/// `距离 / 速度` 自动变长。
 pub fn declare_move_to_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    mut timeline: ResMut<Timeline>,
+    time: Res<Time<Virtual>>,
+    mut focus: ResMut<Focus>,
+    intent: Res<FocusIntent>,
     mut requests: MessageReader<MoveToCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
-    players: ReadyPlayer<'_, '_>,
+    players: Query<(Entity, &Cell, &DecisionSlot), With<InputDriven>>,
 ) {
     let Some(target) = requests.read().last().map(|request| request.cell) else {
         return;
     };
     let Some((player, cell, _)) = players
         .iter()
-        .find(|(_, _, faction)| **faction == Faction::Player)
+        .find(|(_, _, slot)| **slot == DecisionSlot::Empty)
     else {
         blocked.write(ActionBlocked::BUSY);
         return;
@@ -178,98 +164,95 @@ pub fn declare_move_to_system(
     if *cell == target {
         return; // 点自己脚下：不浪费一次决策
     }
-    let draft = commands
-        .spawn_scene(move_action_scene(player, *cell, target, now.elapsed_secs()))
-        .id();
-    begin_action(&mut commands, &mut timeline, player, draft);
+    let now = time.elapsed_secs();
+    let schedule = ScheduledAction::with_focus(player, timing::MOVE, now, &mut focus, intent.0);
+    commands.spawn_scene(move_action_scene(*cell, target, schedule));
+    commands.entity(player).insert(DecisionSlot::Filled);
 }
 
 /// 执行：到点的移动行动 → 朝**目标格中心**设速度，到位后由 `move_entities_system` 停下。
+///
+/// 收尾：行动者要忙到「人真的走到目标格」为止，而不是只忙一个后摇——
+/// `Cell` 只在到位时更新，半路恢复决策槽会让下一手声明拿旧格当起点
+/// （反复按 A/D 时表现为掉头 / 回弹）。
 pub fn move_action_executor_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    actions: Query<(Entity, &MoveAction, &ScheduledAction), With<crate::timeline::Committed>>,
+    time: Res<Time<Virtual>>,
+    actions: Query<(Entity, &MoveAction, &ScheduledAction)>,
     mut actors: Query<(&Cell, &MoveSpeed, &mut Velocity, &Transform)>,
 ) {
+    let now = time.elapsed_secs();
     for (entity, action, schedule) in &actions {
-        let executed_at = now.elapsed_secs();
-        // 忙到"人真的走到目标格"为止，而不是只忙一个后摇：
-        // `Cell` 只在到位时更新，半路恢复 Ready 会让下一手声明用旧格当起点。
-        let mut busy_until = executed_at;
+        if !schedule.due(now) {
+            continue;
+        }
+        let mut busy_until = now;
         if let Ok((_, speed, mut velocity, transform)) = actors.get_mut(schedule.actor) {
             let to_goal = action.to_cell.center() - transform.translation.xz();
             velocity.0 = ground_direction(to_goal) * speed.0;
-            busy_until = executed_at + to_goal.length() / speed.0.max(f32::EPSILON);
-            crate::timeline::insert_on_actor(
-                &mut commands,
-                schedule.actor,
-                MoveGoal {
-                    cell: action.to_cell,
-                },
-            );
+            busy_until = now + to_goal.length() / speed.0.max(f32::EPSILON);
+            commands.entity(schedule.actor).insert(MoveGoal {
+                cell: action.to_cell,
+            });
         }
-        crate::timeline::end_action_until(
-            &mut commands,
-            entity,
-            schedule.actor,
-            schedule,
-            executed_at,
-            busy_until,
-        );
+        let busy = crate::timeline::Busy::after(schedule, now, busy_until);
+        commands.entity(entity).despawn();
+        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
+            actor.insert(busy);
+        }
     }
 }
 
-/// 声明跳跃：`JumpCommand` → 一条跳跃行动。
+/// 声明跳跃：`JumpCommand` → 一条跳跃行动（不可取消）。
 pub fn declare_jump_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    mut timeline: ResMut<Timeline>,
+    time: Res<Time<Virtual>>,
+    mut focus: ResMut<Focus>,
+    intent: Res<FocusIntent>,
     mut requests: MessageReader<JumpCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
-    players: Query<(Entity, &Faction), With<Ready>>,
+    players: Query<(Entity, &DecisionSlot), With<InputDriven>>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    let player = players
+    let Some((player, _)) = players
         .iter()
-        .find(|(_, faction)| **faction == Faction::Player)
-        .map(|(entity, _)| entity);
-    let Some(player) = player else {
+        .find(|(_, slot)| **slot == DecisionSlot::Empty)
+    else {
         blocked.write(ActionBlocked::BUSY);
-        return; // 忙（前摇 / 后摇中）或没有玩家
+        return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
-    let draft = commands
-        .spawn_scene(jump_action_scene(player, now.elapsed_secs()))
-        .id();
-    begin_action(&mut commands, &mut timeline, player, draft);
+    let now = time.elapsed_secs();
+    let schedule = ScheduledAction::with_focus(player, timing::JUMP, now, &mut focus, intent.0);
+    commands.spawn_scene(jump_action_scene(schedule));
+    commands.entity(player).insert(DecisionSlot::Filled);
 }
 
 /// 执行：到点后给行动者一个向上初速度，剩下交给 [`jump_motion_system`]。
 pub fn jump_action_executor_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &JumpAction), With<crate::timeline::Committed>>,
+    time: Res<Time<Virtual>>,
+    actions: Query<(Entity, &ScheduledAction, &JumpAction)>,
     actors: Query<&Transform>,
 ) {
+    let now = time.elapsed_secs();
     for (entity, schedule, _) in &actions {
-        if let Ok(transform) = actors.get(schedule.actor) {
-            crate::timeline::insert_on_actor(
-                &mut commands,
-                schedule.actor,
-                Jumping {
-                    ground_y: transform.translation.y,
-                    velocity: JUMP_SPEED,
-                },
-            );
+        if !schedule.due(now) {
+            continue;
         }
-        finish(
-            &mut commands,
-            entity,
-            schedule.actor,
-            schedule,
-            now.elapsed_secs(),
-        );
+        if let Ok(transform) = actors.get(schedule.actor) {
+            commands.entity(schedule.actor).insert(Jumping {
+                ground_y: transform.translation.y,
+                velocity: JUMP_SPEED,
+            });
+        }
+        // 后摇（0.60s）覆盖整条弹道：落地那一刻才重新可决策
+        let busy = crate::timeline::Busy::after(schedule, now, now);
+        commands.entity(entity).despawn();
+        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
+            actor.insert(busy);
+        }
     }
 }
 
@@ -297,21 +280,10 @@ pub fn ground_direction(axis: Vec2) -> Vec3 {
     Vec3::new(axis.x, 0.0, axis.y)
 }
 
-/// 执行器收尾：交给时间线的公共收尾（摘 `Committed` + 销毁行动实体 + 挂后摇）。
-fn finish(
-    commands: &mut Commands,
-    action: Entity,
-    actor: Entity,
-    schedule: &ScheduledAction,
-    executed_at: f32,
-) {
-    crate::timeline::end_action(commands, action, actor, schedule, executed_at);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::BusyRecovery;
+    use crate::timeline::Busy;
 
     #[test]
     fn step_from_axis_snaps_to_one_orthogonal_cell() {
@@ -361,7 +333,7 @@ mod tests {
     /// 移动要忙到「人真的到位」，而不是只忙一个后摇。
     ///
     /// 一格 2.0 / 玩家速度 5.0 = 0.4s，而 MOVE 的后摇只有 0.10s。若只按后摇恢复
-    /// `Ready`，玩家会在滑行途中拿到决策权，而 `Cell` 还是旧格——下一手声明
+    /// 决策槽，玩家会在滑行途中拿到决策权，而 `Cell` 还是旧格——下一手声明
     /// 就用旧格当起点（反复按 A/D 时表现为掉头 / 回弹）。
     #[test]
     fn move_action_keeps_the_actor_busy_until_arrival() {
@@ -382,24 +354,46 @@ mod tests {
                 from_cell: Cell::new(0, 0),
                 to_cell: Cell::new(0, 1),
             },
-            ScheduledAction::declared_at(actor, timing::MOVE, 0.0),
-            crate::timeline::Committed,
+            // 声明于 -1s：这条行动在"现在"已经到点了，执行器这一帧就该处理它
+            ScheduledAction::declared_at(actor, timing::MOVE, -1.0),
         ));
 
         app.update();
 
-        let recovery = *app
-            .world()
-            .get::<BusyRecovery>(actor)
-            .expect("执行完应当进入后摇");
-        let busy = recovery.ready_at - recovery.executed_at;
+        let busy = *app.world().get::<Busy>(actor).expect("执行完应当进入后摇");
         assert!(
-            (busy - 0.4).abs() < 1e-3,
-            "忙时间应当是「走到目标格」的 0.4s，实际 {busy}"
+            (busy.until - 0.4).abs() < 1e-3,
+            "忙到「走到目标格」为止的 0.4s，实际 {}",
+            busy.until
         );
         assert!(
-            busy > timing::MOVE.recovery,
-            "必须比单纯的后摇更久，否则会半路恢复 Ready"
+            busy.until > timing::MOVE.recovery,
+            "必须比单纯的后摇更久，否则会半路恢复决策槽"
+        );
+    }
+
+    /// 同帧阵亡的行动者：收尾不能 panic（历史 bug：命令应用阶段直接崩进程）。
+    #[test]
+    fn finishing_an_action_for_a_dead_actor_is_safe() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_systems(Update, move_action_executor_system);
+        let actor = app.world_mut().spawn_empty().id();
+        let action = app
+            .world_mut()
+            .spawn((
+                MoveAction::default(),
+                // 声明于 -1s：立刻可执行（这条测试只关心收尾窗口有多长）
+                ScheduledAction::declared_at(actor, timing::MOVE, -1.0),
+            ))
+            .id();
+        app.world_mut().entity_mut(actor).despawn();
+
+        app.update(); // 没守住 `get_entity` 的话，这一步就 panic
+
+        assert!(
+            app.world().get_entity(action).is_err(),
+            "行动实体照常销毁，行动者没了也不该崩"
         );
     }
 }

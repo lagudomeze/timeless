@@ -8,7 +8,7 @@
 //! 键盘 ─▶ input（翻译） ─▶ MoveCommand / MoveToCommand ─▶ movement 消费（声明移动）
 //!      │                ─▶ SelectSkill / UseSelectedSkill ─▶ combat::skills 消费
 //!      │                ─▶ ParryCommand / RollCommand ─────▶ combat::defense 消费
-//!      │                ─▶ TogglePause / CycleReactionWindow ─▶ timeline 消费
+//!      │                ─▶ TogglePause / UseFocus ───────────────▶ timeline 消费
 //!      └ 鼠标 ─▶ input（翻译） ─▶ PointerCommand ─▶ interaction 消费（解释成移动 / 技能 / 撤销）
 //!                            ─▶ ZoomCamera / PanCamera ─▶ presentation 消费
 //! ```
@@ -23,8 +23,8 @@ pub mod plugin;
 pub mod pointer;
 
 pub use keyboard::{
-    HotkeyAction, HotkeyBinds, pause_input_system, player_help_input_system,
-    player_move_input_system, player_skill_input_system, reaction_window_input_system,
+    HotkeyAction, HotkeyBinds, focus_intent_input_system, pause_input_system,
+    player_help_input_system, player_move_input_system, player_skill_input_system,
     skill_menu_input_system, skill_use_input_system,
 };
 pub use plugin::InputPlugin;

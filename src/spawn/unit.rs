@@ -8,14 +8,14 @@ use crate::movement::{Cell, Velocity};
 use crate::presentation::unit_sprite::{
     SHADOW_DIAMETER, SHADOW_OFFSET, SPRITE_SIZE, UnitShadow, UnitSprite, UnitSprites,
 };
-use crate::timeline::Ready;
+use crate::timeline::DecisionSlot;
 
 /// 单位骨架：逻辑组件 + 2D 精灵纸片 + 贴地阴影。
 ///
 /// 「玩家」和「怪物」都从这里出发，只在各自的工厂里追加**驱动源**
 /// （输入 / AI）与特质（区块加载器 / 攻击范围）——零件共用，驱动不同。
 ///
-/// 带 [`Ready`] 出生：开局第一帧谁都可以决策（无回合模型没有「先规划」这一步）。
+/// 带**空决策槽**出生：开局第一帧谁都可以决策（无回合模型没有「先规划」这一步）。
 ///
 /// 根节点永远是**脚底**：`translation` 落在 [`crate::world`] 给的地表高度上，旋转与
 /// 缩放保持默认——纸片与阴影是它的子节点，靠这一点用局部坐标直接表达世界偏移
@@ -27,12 +27,12 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
     let shadow = sprites.shadow();
     bsn! {
         template_value(faction)
-        template_value(Health::new(50.0))
+        template_value(Health::new(50))
         HitRadius(0.8)
         AttackRange::MELEE
         Collidable
         template_value(Velocity(Vec3::ZERO))
-        template_value(Ready)
+        template_value(DecisionSlot::Empty)
         template_value(stamina)
         template_value(cell)
         Transform {

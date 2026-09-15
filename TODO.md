@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 154 通过（152 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 169 通过（167 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -25,10 +25,11 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - `movement` `Cell` + `MoveGoal` 格子决策、`Transform` + `Velocity` 连续位移、
   移动 / 跳跃 / 翻滚载荷与执行器
 - `combat` 生命 / 护甲公式 / 碰撞与近战扇形 / 攻击实体生命周期 / 箭矢与横扫 /
-  火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 / 招架反制 / 两阶段结算 /
+  火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 / 招架反制 / 威胁检测（反应系统）/
   `SKILLS` 注册表与技能菜单
-- `timeline` **无回合**调度：`Ready` 决定谁能决策，`ActionTiming` 决定前摇 + 后摇，
-  仅在玩家等输入时冻结 `Time<Virtual>`
+- `timeline` **无回合**调度：`DecisionSlot` 决定谁能决策，`ScheduledAction` 的时间戳
+  决定前摇 + 后摇，`PauseReasons` 决定什么时候冻结 `Time<Virtual>`（唯一写时钟的是
+  帧末的 `apply_clock`）；`Focus` 让玩家把一次前摇买掉
 - `ai` 六种意图（含威胁预判）+ 声明行动
 - `input` 只翻译 · `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
 - `presentation` 相机 / 单位纸片与贴地阴影 / 装饰 / 中文日志 / 英文 HUD
@@ -81,6 +82,19 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `ActionCost` / `CancelCost` / `Uncancellable`。
 - [x] **M15 同帧阵亡崩溃 + 远射被冻在半路**：收尾全程走 `Commands::get_entity` 守卫；
       火球用 `end_action_until(.., flight_time)` 忙到落地。
+- [x] **M16 时间戳 + 事件模型（本次重构）**：删掉 `Ready` / `BusyRecovery` /
+      `Declared` / `Pending` / `Committed` / `ActionCost` / `CancelCost` /
+      `Uncancellable` / `Impact` 与 `Arbitration` 两阶段结算，改为
+      「`DecisionSlot` + `ScheduledAction.execute_at` + `Busy` + `Cancellable`」：
+      执行器自己判 `due()`、自己销毁行动实体、自己挂 `Busy`（无 `scheduler_system`、
+      无 `begin_action` / `end_action`）。暂停改成**原因集合**（`"manual"` /
+      `"slot_empty"` / `"threat"`，唯一的时钟写入点是 `apply_clock`，空格不再只前进一帧）；
+      新增**反应系统**（`Threatens` / `TargetCell` → `detect_threat_system` → 冻结等玩家表态）
+      与 **Focus**（Shift + 决策键：扣 1 点把前摇归零）；打断改成
+      `InterruptEvent`（EntityEvent + Observer，掷骰对抗打掉**还没到点**的行动）；
+      伤害压成一条链（`DamageEvent` → `apply_damage_system` → `DeathEvent` →
+      `despawn_dead_system`，血量改整数、扣到负数继续扣、死亡只报一次）。
+      验收：169 测试全绿 / clippy 零警告 / `rg "ResMut<Time<Virtual>>" src` 只命中 `apply_clock`。
 - [x] **CJK 字体**：`assets/fonts/NotoSansSC-Regular.otf`（OFL-1.1），
       HUD 显式指定，战斗日志中文不再显示成豆腐块。
 - [x] **文档整合**：文档收敛为「入口 + 架构 + 时间线 + 组件对照 + 设计 + 素材 +
@@ -93,18 +107,24 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **动作数值外置**：`timeline::timing` 与 `SKILLS` 的数值改成 `.ron`
       （serde + ron），应用层不再硬编码技能数值；顺带做 `ActionRegistry` 资源，
       让 HUD / 菜单从注册表读选项与消耗。
-- [ ] **死代码清理**（见 [components.md](docs/components.md) 第 10.2 节）：
-      `defense/actions.rs` 里未注册的 `expire_defense_markers_system`、
-      `lifecycle::manage_projectile_hits_system`、写而无消费的 `AttackResolved`、
-      没有生产者的 `Voxel` / `VoxelPos` / `ChunkPinned`——接上或删掉。
-- [ ] **`Space` 手动暂停不起作用**：`timeline_gate_system` 先按「玩家就绪」暂停，
-      `pause_toggle_system` 紧接着 unpause，下一帧门控又 pause——净效果是只前进一帧。
-      修法：给 `Timeline` 加手动暂停标志，让门控尊重它（**待用户确认后动手**）。
-- [ ] **箭矢的收尾方式**：`shoot_action_executor_system` 用 `end_action`，
-      箭速 12、0.8s 只飞 9.6 米，超距的箭会被冻在半空。改法与火球相同
-      （`end_action_until`，**待确认**）。
-- [ ] **玩家身份收口**：加 `Player` 标记组件或 `PlayerEntity` 资源，
-      取代散落在 10+ 个查询里的「按 `Faction` 找玩家」（见 components.md 10.1）。
+- [x] **死代码清理**：删除 `defense/actions.rs` 里重复且未注册的
+      `expire_defense_markers_system`、`lifecycle::manage_projectile_hits_system`、
+      写而无消费的 `AttackResolved`。剩下的 `declare_skill_system` / `arrow_scene`
+      是「单体狙击」的预留实现（收尾已与火球对齐），接输入即可用。
+- [x] **`Space` 手动暂停只前进一帧**：改成暂停原因集合，手动暂停一直有效直到再按一次
+      （见 M16）。
+- [x] **箭矢的收尾方式**：`shoot_action_executor_system` 现在忙到
+      `距离 / ARROW_SPEED`（与火球共用 `Busy::after`）。
+- [x] **玩家身份收口**：新增 `timeline::InputDriven` 标记（组装层挂在玩家身上），
+      时间线 / 反应系统 / 撤销 / 各玩家声明系统都认它，不再满世界找 `Faction::Player`。
+      表现层仍按 `Faction` 找单位——它看的是阵营，不是输入归属。
+- [ ] **反应窗口的粒度**：现在是"一次威胁一个窗口"，多段攻击（连续三刀）只会问玩家一次。
+      将来按威胁**来源**分别开窗（`ThreatWindow` 存集合而不是一个 `Option`）。
+- [ ] **AI 不会用 Focus**：`Focus` 只在玩家侧，敌人声明固定排前摇。
+      要让精英怪也会抢先手，得给 AI 一套"什么时候值得花资源"的策略。
+- [ ] **`AttackFrame` 没有消费者**：攻击实体都挂着它，但没有系统读——
+      它是「洞察力」面板的读数（"谁先动"），接上或删掉。
+- [ ] **没有生产者的预留类型**：`Voxel` / `VoxelPos` / `ChunkPinned`——接上或删掉。
 - [ ] **开发热重载**：启用 `file_watcher`（dev profile）。
 
 ### 玩法与表现
@@ -140,7 +160,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 ### 策略深度（目标形态，未落地）
 
 - [ ] **多敌人战斗**：单例查询改多实体查询，AI 每单位独立意图与威胁排序。
-- [ ] **资源分线**：`AmmoPouch`（重击 / 射击）/ 架势槽 `Poise`（破势 / 格挡）；
+- [ ] **资源分线**：`AmmoPouch`（重击 / 射击）/ 架势槽 `Poise`（打断抗性 / 格挡）；
       平 A 免费。
 - [ ] **格挡减伤**：与现有翻滚 / 招架并列的第三条防御路径。
 - [ ] **范围攻击排程 / 冲刺（位移 2 格）**。
@@ -151,7 +171,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ### 信息层（G 层：信息即力量）
 
-- [ ] **洞察力**：查看怪物数据（帧 / 射程 / 破势 / 血量）、帧窗口细节。
+- [ ] **洞察力**：查看怪物数据（帧 / 射程 / 打断抗性 / 血量）、帧窗口细节。
 - [ ] **战斗日志回看**（历史 N 条）与**死亡复盘**（谁在哪个时刻命中了谁）。
 - [ ] 成长以知识为主：升级解锁信息权限而非纯数值。
 

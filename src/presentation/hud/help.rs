@@ -29,7 +29,7 @@ pub const HELP_LINES: &[&str] = &[
     "  G               use selected skill",
     "  C               jump (cannot be interrupted)",
     "  Space           pause / resume",
-    "  F2              reaction window: loose / strict / off",
+    "  Shift + a key   spend 1 Focus: no windup on that action",
     "  F5              reset the battle",
     "  F1              close this help",
     "MOUSE",

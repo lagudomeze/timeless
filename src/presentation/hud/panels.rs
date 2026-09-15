@@ -8,7 +8,7 @@ use crate::ai::Intent;
 use crate::combat::defense::{Dodging, Parrying, Stamina};
 use crate::combat::{Faction, Health};
 use crate::movement::{Cell, Jumping};
-use crate::timeline::Ready;
+use crate::timeline::DecisionSlot;
 
 use super::actions::ActionLabel;
 use super::{
@@ -209,7 +209,8 @@ struct UnitRow {
     stamina: Option<Stamina>,
     cell: Cell,
     position: Vec3,
-    ready: bool,
+    /// 决策槽：`Empty` = 现在能决策（面板显示 `ready`）
+    slot: DecisionSlot,
     dodging: bool,
     parrying: bool,
     airborne: bool,
@@ -262,7 +263,7 @@ impl UnitRow {
             "dodging"
         } else if self.parrying {
             "parrying"
-        } else if self.ready {
+        } else if self.slot == DecisionSlot::Empty {
             "ready"
         } else {
             "busy"
@@ -304,7 +305,8 @@ pub fn update_unit_panels_system(
     mut cache: ResMut<HudCache>,
     mut bars: Query<(&PanelBar, &mut Node)>,
     mut texts: Query<(&PanelText, &mut Text)>,
-    ready: Query<(), With<Ready>>,
+    // 决策槽：面板只读它，不写
+    slots: Query<&DecisionSlot>,
     dodging: Query<(), With<Dodging>>,
     parrying: Query<(), With<Parrying>>,
     airborne: Query<(), With<Jumping>>,
@@ -319,7 +321,7 @@ pub fn update_unit_panels_system(
                 stamina: stamina.copied(),
                 cell: *cell,
                 position: transform.translation,
-                ready: ready.get(entity).is_ok(),
+                slot: slots.get(entity).copied().unwrap_or_default(),
                 dodging: dodging.get(entity).is_ok(),
                 parrying: parrying.get(entity).is_ok(),
                 airborne: airborne.get(entity).is_ok(),
@@ -347,7 +349,7 @@ pub fn update_unit_panels_system(
     for (bar, mut node) in &mut bars {
         let percent = match bar {
             PanelBar::Hp(faction) => row_of(*faction)
-                .map(|row| bar_percent(row.health.current, row.health.max))
+                .map(|row| bar_percent(row.health.current as f32, row.health.max as f32))
                 .unwrap_or(Val::Percent(0.0)),
             PanelBar::En(faction) => row_of(*faction)
                 .and_then(|row| row.stamina)
@@ -360,7 +362,7 @@ pub fn update_unit_panels_system(
     for (label, mut text) in &mut texts {
         let new = match label {
             PanelText::Hp(faction) => row_of(*faction)
-                .map(|row| format!("HP {:.0} / {:.0}", row.health.current, row.health.max)),
+                .map(|row| format!("HP {} / {}", row.health.current, row.health.max)),
             PanelText::En(faction) => row_of(*faction).map(|row| match row.stamina {
                 Some(stamina) => format!("EN {} / {}", stamina.current, stamina.max),
                 None => "EN -".to_string(),
@@ -393,11 +395,11 @@ mod tests {
     fn state_line_carries_defense_and_intent() {
         let row = UnitRow {
             faction: Faction::Enemy,
-            health: Health::new(50.0),
+            health: Health::new(50),
             stamina: None,
             cell: Cell::new(3, 3),
             position: Vec3::ZERO,
-            ready: false,
+            slot: DecisionSlot::Filled,
             dodging: true,
             parrying: false,
             airborne: false,
@@ -425,7 +427,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Faction::Player,
-                Health::new(50.0),
+                Health::new(50),
                 Cell::new(1, 1),
                 Transform::from_xyz(3.0, 0.0, 3.0),
                 Stamina::new(5),
@@ -457,7 +459,7 @@ mod tests {
         );
 
         // 掉一半血：文本与条宽都要跟上
-        app.world_mut().get_mut::<Health>(player).unwrap().current = 25.0;
+        app.world_mut().get_mut::<Health>(player).unwrap().current = 25;
         app.update();
         assert_eq!(app.world().get::<Text>(hp_text).unwrap().0, "HP 25 / 50");
         assert_eq!(

@@ -2,6 +2,9 @@
 //!
 //! 调度器按设计不感知载荷（见 [`crate::timeline`]），所以这里由表现层代它读一次
 //! 载荷标记，只把「这条行动是什么」翻成人话——HUD 依然只读游戏状态。
+//!
+//! 「前摇中」额外标注 `(windup)`：那正是**还撤得掉**的那段时间窗口
+//! （`now < execute_at`），玩家据此决定要不要右键改主意。
 
 use bevy::prelude::*;
 
@@ -9,7 +12,7 @@ use crate::combat::Faction;
 use crate::combat::defense::ParryAction;
 use crate::combat::skills::{FireballAction, MeleeAction, ShootAction};
 use crate::movement::{JumpAction, MoveAction, RollAction};
-use crate::timeline::{Declared, ScheduledAction};
+use crate::timeline::ScheduledAction;
 
 use super::HudCache;
 
@@ -37,8 +40,9 @@ fn slot(faction: Faction) -> usize {
 /// 把「这个单位现在挂着的行动」写进文本。
 #[allow(clippy::too_many_arguments)]
 pub fn update_action_labels_system(
+    now: Res<Time<Virtual>>,
     units: Query<(Entity, &Faction)>,
-    actions: Query<(Entity, &ScheduledAction, Has<Declared>)>,
+    actions: Query<(Entity, &ScheduledAction)>,
     movements: Query<&MoveAction>,
     jumps: Query<&JumpAction>,
     rolls: Query<&RollAction>,
@@ -49,11 +53,13 @@ pub fn update_action_labels_system(
     mut cache: ResMut<HudCache>,
     mut labels: Query<(&ActionLabel, &mut Text)>,
 ) {
+    let now_seconds = now.elapsed_secs();
     // 先算快照（纯读），再决定要不要写
     let mut snapshot = cache.actions.labels.clone();
     for (label, _) in &labels {
         snapshot[slot(label.faction)] = action_text(
             label.faction,
+            now_seconds,
             &units,
             &actions,
             &movements,
@@ -79,8 +85,9 @@ pub fn update_action_labels_system(
 #[allow(clippy::too_many_arguments)]
 fn action_text(
     faction: Faction,
+    now: f32,
     units: &Query<(Entity, &Faction)>,
-    actions: &Query<(Entity, &ScheduledAction, Has<Declared>)>,
+    actions: &Query<(Entity, &ScheduledAction)>,
     movements: &Query<&MoveAction>,
     jumps: &Query<&JumpAction>,
     rolls: &Query<&RollAction>,
@@ -96,18 +103,15 @@ fn action_text(
     else {
         return "down".to_string();
     };
-    let Some((action, draft)) = actions
-        .iter()
-        .find(|(_, schedule, _)| schedule.actor == actor)
-        .map(|(entity, _, draft)| (entity, draft))
+    let Some((action, schedule)) = actions.iter().find(|(_, schedule)| schedule.actor == actor)
     else {
         return "act: -".to_string();
     };
     let name = payload_name(
         action, movements, jumps, rolls, parries, shoots, fireballs, melees,
     );
-    if draft {
-        format!("act: {name} (draft)")
+    if schedule.pending(now) {
+        format!("act: {name} (windup)")
     } else {
         format!("act: {name}")
     }
@@ -147,7 +151,7 @@ fn payload_name(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::{Pending, timing};
+    use crate::timeline::timing;
 
     fn label_app() -> App {
         let mut app = App::new();
@@ -183,35 +187,30 @@ mod tests {
         assert_eq!(text_of(&app, label), "act: -");
     }
 
-    /// 挂着移动行动时显示载荷名；草案额外标注 draft。
+    /// 挂着行动时显示载荷名；**前摇中**额外标注 `(windup)`（那正是还能撤的窗口）。
     #[test]
-    fn pending_action_is_named_and_drafts_are_marked() {
+    fn pending_action_is_named_and_windups_are_marked() {
         let mut app = label_app();
         let player = spawn_unit(&mut app, Faction::Player);
         let label = spawn_label(&mut app, Faction::Player);
-        app.world_mut().spawn((
-            MoveAction::default(),
-            ScheduledAction::declared_at(player, timing::MOVE, 0.0),
-            Pending,
-        ));
+        let action = app
+            .world_mut()
+            .spawn((
+                MoveAction::default(),
+                ScheduledAction::declared_at(player, timing::MOVE, 0.0),
+            ))
+            .id();
 
+        app.update();
+        assert_eq!(text_of(&app, label), "act: move (windup)");
+
+        // 世界走过前摇：这条行动已经落地（等执行器收拾），不再标注 windup
+        app.world_mut()
+            .resource_mut::<Time<Virtual>>()
+            .advance_by(std::time::Duration::from_secs(1));
         app.update();
         assert_eq!(text_of(&app, label), "act: move");
-
-        // 同一份载荷换成草案：文案要告诉玩家「还没提交」
-        let pending: Vec<Entity> = app
-            .world_mut()
-            .query_filtered::<Entity, With<Pending>>()
-            .iter(app.world())
-            .collect();
-        for action in pending {
-            app.world_mut()
-                .entity_mut(action)
-                .remove::<Pending>()
-                .insert(Declared);
-        }
-        app.update();
-        assert_eq!(text_of(&app, label), "act: move (draft)");
+        assert!(app.world().get_entity(action).is_ok());
     }
 
     /// 单位阵亡（实体没了）时显示 `down`，不留下过期的行动名。
@@ -246,9 +245,12 @@ mod tests {
         app.world_mut().spawn((
             JumpAction,
             ScheduledAction::declared_at(player, timing::JUMP, 0.0),
-            Pending,
         ));
         app.update();
-        assert_eq!(text_of(&app, label), "act: jump", "换了行动就必须重写");
+        assert_eq!(
+            text_of(&app, label),
+            "act: jump (windup)",
+            "换了行动就必须重写"
+        );
     }
 }

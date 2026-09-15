@@ -8,24 +8,25 @@
 ## 一、项目定位
 
 **无回合**战斗时间线 + 戴森球式供应链 + 「信息即力量」的 roguelike 策略游戏。
-战斗的节奏不来自回合，而来自两件事：
+战斗的节奏不来自回合，而来自三件事：
 
-1. 每个单位自己的 `Ready`——**能决策就决策**；
-2. 每个动作自带的**前摇 + 后摇**。
+1. 每个单位自己的 `DecisionSlot`——**决策槽空着就能决策**；
+2. 每个动作自带的**前摇 + 后摇**（`ScheduledAction` 的时间戳）；
+3. **暂停原因集合**——玩家等输入、手动暂停、威胁逼近都只是往集合里加一条原因。
 
-世界只在**玩家就绪、等着按键**时冻结。详见 [timeline.md](timeline.md)。
+详见 [timeline.md](timeline.md)。
 
 ## 二、分层与铁律
 
 | 层 | 载体 | 职责 | 约束 |
 | :--- | :--- | :--- | :--- |
-| 领域层 | 纯 Rust，零 Bevy | 战斗裁决（帧 → 距离 → 破势）、防御判定、反制 | **零 Bevy 依赖**，可脱离渲染单测 |
+| 领域层 | 纯 Rust，零 Bevy | 防御判定、招架反制 | **零 Bevy 依赖**，可脱离渲染单测 |
 | 应用层 | Bevy 组件 / 系统 / 插件 | 组件、系统、消息、渲染、HUD 编排 | **不含伤害公式** |
 | 表现层 | 应用层内的 `presentation` / `voxel_render` | 相机、HUD、日志、体素网格 | **只读游戏状态**，只写表现 |
 
 领域层在代码里的落点是 `src/combat/formula/domain.rs`：
-`AttackStats` / `resolve_attack` / `resolve_combat` / `resolve_defense` / `counter_damage`，
-纯函数 + 纯数据，11 个单测。`AttackStats` 是**纯函数入参**，不是 ECS 组件。
+`DefenseState` / `resolve_defense` / `counter_damage`——纯函数 + 纯数据。
+实体身份用 `u64` 折值传进来，因此这一层完全不认识 Bevy。
 
 其余铁律（每条都有代码里的对应物，改代码前先读这张表）：
 
@@ -34,8 +35,9 @@
 | 一个领域 = 一个目录 = 一个 `Plugin` | `mod.rs` 只做 `pub mod` + `pub use` 门面 | 领域边界消失，循环依赖 |
 | 输入只翻译、不执行 | 键盘 / 鼠标只写消息，落盘由消费领域负责 | 输入系统变成上帝系统 |
 | 消息与消费系统同域 | 新增消息在**消费方**插件 `build` 里 `add_message::<T>()` | 生产者与消费者绑死 |
-| 行动实体化 | 行动 = 独立实体（载荷 + `ScheduledAction` + 状态标记） | 调度器开始认识载荷 |
-| 暂停只用 `Time<Virtual>` | 唯一的暂停点在 `timeline_gate_system` | 各领域冒出 `if paused` 分支 |
+| 行动实体化 | 行动 = 独立实体（载荷 + `ScheduledAction` + `Cancellable`） | 调度器开始认识载荷 |
+| 暂停只用 `Time<Virtual>` | 唯一写时钟的是帧末的 `apply_clock`（原因集合 `PauseReasons`） | 各领域冒出 `if paused` 分支 |
+| 状态由时间戳推导 | 前摇 / 到点 / 后摇由 `execute_at` 与 `Busy` 推出，没有三态标记 | 标记与时间戳打架（重复触发 / 忘了摘） |
 | 决策按格、结算按真实距离 | `Cell` 管决策，`Transform` 距离管命中 | 两套坐标各算一半，命中飘忽 |
 | 组装单向依赖 | `spawn` 依赖所有领域，**没有任何领域依赖 `spawn`** | 改角色配置波及战斗规则 |
 | 功能不是领域 | 只把已有系统拼一次的胶水留在调用方 | 每个功能都长出一个空领域 |
@@ -47,8 +49,8 @@
 | `world` | 体素地图**数据**：区块、地形生成、体素读写（**零渲染依赖**） | `WorldPlugin` | `WorldSet` |
 | `voxel_render` | 体素**表现**：异步网格化、材质、明暗 | `VoxelRenderPlugin` | `VoxelRenderSet` |
 | `movement` | 格子决策 + 速度位移 + 移动 / 跳跃 / 翻滚行动载荷 | `MovementPlugin` | `MovementSet` |
-| `combat` | 生命 / 伤害 / 目标获取 / 攻击生命周期 / 技能 / 精力 / 防御 / 两阶段结算 | `CombatPlugin` | `CombatSet` |
-| `timeline` | **无回合**调度：谁能决策、行动何时到点、后摇何时结束 | `TimelinePlugin` | `TimelineSet` |
+| `combat` | 生命 / 伤害 / 目标获取 / 攻击生命周期 / 技能 / 精力 / 防御 / 威胁检测 | `CombatPlugin` | `CombatSet` |
+| `timeline` | **无回合**调度：谁能决策、行动何时到点、后摇何时结束、暂停原因 | `TimelinePlugin` | `TimelineSet`、`ClockSet` |
 | `ai` | 敌人决策（选意图 + 声明行动，不碰规则） | `AiPlugin` | `AiSet` |
 | `input` | 玩家输入源：键盘 / 鼠标 → 消息（**只翻译**） | `InputPlugin` | `InputSet` |
 | `interaction` | 鼠标交互：射线拾取悬停格 → 高亮 / 预演；点击 → 各领域的消息 | `InteractionPlugin` | `InteractionSet` |
@@ -80,20 +82,21 @@ src/
 │   └── plugin.rs
 ├── combat/
 │   ├── components.rs           #   Faction / Collidable
-│   ├── attributes/components.rs#   PhysicalDamage / Armor / HitRadius / AttackRange / AttackFrame / Impact
-│   ├── health/                 #   Health + ModifyHealthEvent / DeathEvent + 扣血与死亡销毁
+│   ├── attributes/components.rs#   PhysicalDamage / Armor / HitRadius / AttackRange / AttackFrame / InterruptPower
+│   ├── health/                 #   Health + DeathEvent + 扣血与死亡销毁
 │   ├── targeting/              #   CollisionTarget / MeleeShape + 碰撞与扇形检测
 │   ├── lifecycle/              #   Projectile / HitOnce / Lifetime + 清理
-│   ├── formula/                #   domain(零 Bevy 裁决) / resolution(两阶段) / systems(护甲公式)
+│   ├── formula/                #   domain(零 Bevy 防御逻辑) / systems(护甲 + 命中) / events(DamageEvent)
 │   ├── defense/                #   Stamina / Dodging / Parrying / ParryAction + 翻滚与招架
+│   ├── reaction/               #   Threatens / TargetCell / ThreatWindow + 威胁检测
 │   ├── skills/                 #   registry / menu / melee / arrow / fireball / explosion / actions
 │   └── plugin.rs               #   CombatPlugin（战斗流水线）
 ├── timeline/
-│   ├── timing.rs               #   ActionTiming + 常量表 + CELL_SIZE
-│   ├── components.rs           #   ScheduledAction + Declared / Pending / Committed / Ready / BusyRecovery
-│   ├── resources.rs            #   Timeline / TimelineConfig
-│   ├── events.rs               #   TogglePause / CycleReactionWindow / ActionBlocked / UndoCommand / ActionCancelled
-│   ├── systems.rs              #   门控 / 提交桥 / 打断 / 撤销 / 调度 / 后摇 + begin_action / end_action
+│   ├── timing.rs               #   ActionTiming（前摇 / 后摇 / 打断抗性）+ 常量表 + CELL_SIZE
+│   ├── components.rs           #   DecisionSlot / InputDriven / ScheduledAction / Busy / Cancellable
+│   ├── resources.rs            #   PauseReasons / ManualPause / Focus / FocusIntent
+│   ├── events.rs               #   PauseRequest / TogglePause / UseFocus / ActionBlocked / UndoCommand / InterruptEvent
+│   ├── systems.rs              #   暂停原因 / Focus / 打断 / 撤销 / 后摇 / apply_clock
 │   └── plugin.rs
 ├── ai/{components,systems,plugin}.rs
 ├── input/{keyboard,pointer,plugin}.rs   # 键盘 / 鼠标 → 消息（只翻译）
@@ -111,21 +114,23 @@ src/
 ```text
 Startup:  PreloadSet ─▶ AssemblySet
 Update:   SpawnSet ─▶ InputSet ─▶ InteractionSet ─▶ TimelineSet ─▶ AiSet
-          ─▶ MovementSet ─▶ CombatSet ─▶ VoxelRenderSet ─▶ PresentationSet
+          ─▶ MovementSet ─▶ CombatSet ─▶ VoxelRenderSet ─▶ PresentationSet ─▶ ClockSet
 WorldSet ─────────────────────────▶（必须早于 VoxelRenderSet：数据先于表现）
 ```
 
 读法：谁写的消息排在谁前面。例如 `InputSet` 写 `MoveCommand`，`MovementSet` 消费它；
-`WorldSet` 生产区块数据，`VoxelRenderSet` 才网格化。
+`WorldSet` 生产区块数据，`VoxelRenderSet` 才网格化；`ClockSet` 排在帧末，
+因此「冻结 / 解冻」永远只影响下一帧（一帧之内所有领域看到同一个时钟状态）。
 
 各领域**内部**的顺序由自己的 `plugin.rs` 维护：
 
 | 系统集 | 内部链 |
 | :--- | :--- |
-| `TimelineSet` | 门控 → 暂停/反应窗口 → 打断 → 提交桥 → 撤销 → 调度 → 后摇恢复 |
+| `TimelineSet` | 暂停原因（手动 / 空决策槽）→ Focus 意图 → 打断 → 撤销 → 后摇恢复 → Focus 回复 |
+| `ClockSet`（帧末） | 暂停请求 → 原因集合 → `apply_clock`（**唯一**写 `Time<Virtual>`） |
 | `MovementSet` | 声明（移动/点地/跳跃）→ 执行器 → 位移 → 贴地 → 跳跃弹道 |
 | `AiSet` | `decide_intent_system` → `enemy_declare_system` |
-| `CombatSet` | 防御标记过期 → 退款 → 菜单 → 声明 → 执行器 → 投射物到达/爆炸 → 目标获取 → 两阶段结算 → 扣血/死亡 → 生命期清理 |
+| `CombatSet` | 威胁检测 → 防御标记过期 → 退款 → 菜单 → 声明 → 执行器 → 投射物到达/爆炸 → 目标获取 → 命中结算（防御/护甲/打断）→ 扣血 → 生命期清理 → 死亡销毁 |
 | `PresentationSet` | 相机 → 纸片/阴影 → 日志 → 各面板 → 布局缩放 |
 
 `CombatSet` 的完整链条见 [components.md](components.md) 第七节。
@@ -145,20 +150,21 @@ WorldSet ───────────────────────�
 | `RollCommand` / `ParryCommand` | `input` / `menu` 派发 | `combat::defense` 的声明系统 |
 | `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` / `interaction` | `combat::skills::menu` |
 | `PointerCommand` | `input` | `interaction::pointer_command_system` |
-| `TogglePause` / `CycleReactionWindow` / `UndoCommand` | `input` / `interaction` | `timeline` |
+| `TogglePause` / `UseFocus` / `UndoCommand` | `input` / `interaction` | `timeline` |
+| `PauseRequest` | `timeline` 的计算系统 / `combat::reaction` | `timeline::process_pause_requests` → `apply_clock` |
+| `InterruptEvent`（**EntityEvent**） | `combat::formula` 的命中系统（`commands.trigger`） | `timeline::interrupt_observer` |
 | `ActionBlocked` | 各声明系统 | HUD 提示条 |
 | `ActionCancelled` | `timeline::undo_system` | `combat::defense`（退还精力） |
 | `ProjectileArrived` | `skills::projectile_arrival_system` | `skills::explosion_system` |
-| `DamageEvent` | 两阶段结算 / 爆炸 | `health::request_damage_system`、战斗日志 |
-| `ModifyHealthEvent` | `request_damage_system` | `health::apply_damage` |
-| `DeathEvent` | `apply_damage` | `despawn_dead_system`、战斗日志 |
-| `AttackResolved` | 两阶段结算 | （暂无消费方，见 components.md 第九节） |
+| `DamageEvent` | 各伤害类型的命中系统（物理 / 爆炸） | `health::apply_damage_system`、战斗日志 |
+| `DeathEvent` | `apply_damage_system` | 战斗日志（销毁由 `despawn_dead_system` 直接看 `Health`） |
 | `PanCamera` / `ZoomCamera` / `ToggleHelp` / `PreviewReadout` | `input` / `interaction` | `presentation` |
 | `ChunkLoadEvent` / `ChunkUnloadEvent` / `ChunkDirtyEvent` | `world` | `voxel_render`（+ `world` 自身的地形生成） |
 | `ResetBattle` | `spawn::restart_input_system` | `spawn::reset_battle_system` |
 
-链式分工：`DamageEvent`（已算完护甲）→ `ModifyHealthEvent`（血量增减请求）→
-`DeathEvent`（归零）。治疗 / 中毒 / 再生复用后段，不必碰前段。
+链式分工：**每种伤害类型一个组件 + 一个命中系统**（把"打到了谁"翻译成
+`DamageEvent`）→ `apply_damage_system`（唯一扣血点）→ `DeathEvent`（首次归零）。
+加一种伤害不需要动生命值、死亡、日志、撤销中的任何一处。
 
 ## 七、数据与表现分离（`world` / `voxel_render`）
 
@@ -190,8 +196,8 @@ v0.1 只做**面剔除**（被实心邻居挡住的面不生成）；贪婪网�
 
 ```text
 unit_scene        共用零件（Faction / Health / Collidable / HitRadius / AttackRange /
-                  Velocity / Ready / Stamina / Cell + 2D 纸片 + 贴地阴影）
-├── player_scene  + MoveSpeed(5.0) + ChunkLoader
+                  Velocity / DecisionSlot / Stamina / Cell + 2D 纸片 + 贴地阴影）
+├── player_scene  + InputDriven（输入归属）+ MoveSpeed(5.0) + ChunkLoader
 └── enemy_scene   + MoveSpeed(2.0) + EnemyBrain（#[require(Intent)]）
 
 setup_scene       方向光 → 相机 → 玩家 → 敌人 → 地表装饰（Startup）
@@ -277,8 +283,9 @@ BRP 的 `world.query` 与按名截图靠它们定位实体；**加了新标记�
 | `G` | 释放选中技能（`Attack` 按真实距离派发近战 / 火球） |
 | `Q` / `W` / `E` / `R` | 技能热键，默认火球 / 近战 / 翻滚 / 招架（`HotkeyBinds`） |
 | `C` | 跳跃（弹道约 0.6s，**不可取消**） |
-| `Space` | 暂停 / 继续（只翻译成 `TogglePause`） |
-| `F1` / `F2` | 帮助面板 / 循环反应窗口（`Loose` / `Strict` / `Off`） |
+| `Space` | 暂停 / 继续（只翻译成 `TogglePause`，由暂停原因集合落地） |
+| `Shift` + 决策键 | 用 1 点 Focus 把这一手的前摇归零 |
+| `F1` | 帮助面板开合 |
 | `F5` | 重置战斗 |
 | 中键拖拽 / 滚轮 | 平移相机 / 缩放 |
 
@@ -291,12 +298,16 @@ BRP 的 `world.query` 与按名截图靠它们定位实体；**加了新标记�
 
 | 已删除 | 现在 |
 | :--- | :--- |
-| `Phase` / `RoundEnded` / `RESOLUTION_WINDOW` 阶段机 | `Ready` + 每动作的 `ActionTiming` |
+| `Phase` / `RoundEnded` / `RESOLUTION_WINDOW` 阶段机 | `DecisionSlot` + 每动作的 `ActionTiming` |
 | `ActionsCommitted` / `require_commit` / 等 `Enter` 确认 | 声明即生效；反悔走打断 / 撤销 |
 | `Position` + `GridMath`（第二套网格坐标） | `Transform` + `Cell`（分工明确） |
-| `Can*` 能力标记 | `Ready` + `SKILLS` 注册表 + `MenuSelection` |
-| `AttackCooldown` 冷却计时器 | 后摇（`BusyRecovery`）就是冷却 |
+| `Can*` 能力标记 | `DecisionSlot` + `SKILLS` 注册表 + `MenuSelection` |
+| `AttackCooldown` 冷却计时器 | 后摇（`Busy`）就是冷却 |
 | `AttackStats` 作为 ECS 组件 | 领域层的纯函数入参 |
+| `Declared` / `Pending` / `Committed` 三态标记 | `ScheduledAction.execute_at` + `due()` / `pending()` |
+| `timeline_gate_system` / `TimelineConfig` / `F2` 反应窗口 | `PauseReasons` + `PauseRequest` + 威胁检测 |
+| `Arbitration` / `phase1_arbitrate` / `phase2_apply` / 三层裁决（破势） | 单一命中系统 + `InterruptEvent`（打断的是**还没到点**的行动） |
+| `ModifyHealthEvent` / `AttackResolved` / `ActionCost` / `CancelCost` / `Uncancellable` | `DamageEvent`（一段链路）/ `Cancellable`（一个枚举） |
 | `restart` / `scene` 等领域目录 | `spawn/` 组装车间 + 功能胶水 |
 | `timeless/` workspace（代码 B） | 能力已迁入 `src/`，代码树已移除 |
 

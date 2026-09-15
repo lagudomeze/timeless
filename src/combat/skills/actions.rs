@@ -3,6 +3,9 @@
 //! 每个技能 = 一个载荷组件 + 一个行动工厂 + 一个执行器。执行器到点后生成的
 //! 攻击实体（箭矢 / 横扫）走通用战斗流水线，时间线完全不参与。
 //!
+//! 执行器**自己收尾**：`now >= execute_at` 才动手，然后销毁行动实体、
+//! 把行动者忙到效果真的发生为止（箭矢要忙到落地，否则箭会冻在半空）。
+//!
 //! ⚠️ **箭矢当前未被玩家输入触发**：玩家的远程手段是火球
 //! （[`super::fireball`]，锁格 + AoE）。这里保留箭矢作为**单体碰撞投射物**的
 //! 参考实现与测试夹具（`shoot_action_executor_system` / `arrow_scene`），
@@ -11,12 +14,14 @@
 
 use bevy::prelude::*;
 
-use crate::combat::components::Faction;
+use crate::combat::Faction;
+use crate::combat::reaction::{Threatens, melee_arc_cells};
+use crate::movement::Cell;
 use crate::timeline::{
-    Committed, Declared, Ready, ScheduledAction, Timeline, begin_action, end_action, timing,
+    Cancellable, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
 };
 
-use super::arrow::arrow_scene;
+use super::arrow::{ARROW_SPEED, arrow_scene};
 use super::events::{FireCommand, MeleeCommand};
 use super::melee::melee_scene;
 
@@ -29,126 +34,189 @@ pub struct ShootAction;
 pub struct MeleeAction;
 
 /// 射击行动工厂。
-pub fn shoot_action_scene(actor: Entity, now: f32) -> impl Scene {
-    let schedule = ScheduledAction::declared_at(actor, timing::SHOOT, now);
+pub fn shoot_action_scene(schedule: ScheduledAction) -> impl Scene {
     bsn! {
         ShootAction
         template_value(schedule)
-        Declared
+        template_value(Cancellable::Free)
     }
 }
 
-/// 近战行动工厂。
-pub fn melee_action_scene(actor: Entity, now: f32) -> impl Scene {
-    let schedule = ScheduledAction::declared_at(actor, timing::MELEE, now);
+/// 近战行动工厂：声明这一次横扫**威胁到的格**（正前方一格 + 左右各一格）。
+///
+/// 威胁格是玩家 / AI 反应系统的输入（见 [`crate::combat::reaction`]）：
+/// 一条正在前摇、且扇形压到你的横扫，就是"看得见的一刀"。
+pub fn melee_action_scene(
+    from_cell: Cell,
+    target_cell: Cell,
+    schedule: ScheduledAction,
+) -> impl Scene {
+    let threatens = Threatens {
+        cells: melee_arc_cells(from_cell, target_cell),
+    };
     bsn! {
         MeleeAction
+        template_value(threatens)
         template_value(schedule)
         // 抡出去再收招要付一点精力（比火球轻）
-        template_value(crate::timeline::CancelCost(1))
-        Declared
+        template_value(Cancellable::Cost { refund: 0, penalty: 1 })
     }
+}
+
+/// 最近的敌对单位所在的格（没有敌人时返回 `None`）。
+fn nearest_enemy_cell(
+    units: &Query<(&Transform, &Faction)>,
+    origin: Vec3,
+    faction: Faction,
+) -> Option<Cell> {
+    units
+        .iter()
+        .filter(|(_, unit_faction)| **unit_faction != faction)
+        .min_by(|(a, _), (b, _)| {
+            a.translation
+                .distance_squared(origin)
+                .total_cmp(&b.translation.distance_squared(origin))
+        })
+        .map(|(transform, _)| Cell::from_world(transform.translation))
 }
 
 /// 声明技能：`FireCommand` / `MeleeCommand` → 玩家的一条技能行动。
 ///
-/// 只在玩家有 [`Ready`] 时接受；同一帧同时按下两个键时以射击为准。
+/// **未注册**：玩家路径由 `fireball::declare_fireball_system` 与
+/// `fireball::declare_melee_system` 承担（它们按各自的技能配置扣费）。
+/// 这里保留的是"同一条声明流程、不同触发源"的参考实现。
+#[allow(clippy::too_many_arguments)]
 pub fn declare_skill_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    mut timeline: ResMut<Timeline>,
+    time: Res<Time<Virtual>>,
+    mut focus: ResMut<Focus>,
+    intent: Res<FocusIntent>,
     mut fires: MessageReader<FireCommand>,
     mut melees: MessageReader<MeleeCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    players: Query<(Entity, &Faction), With<Ready>>,
-) {
-    let fire = fires.read().last().is_some();
-    let melee = melees.read().last().is_some();
-    if !fire && !melee {
-        return;
-    }
-    let player = players
-        .iter()
-        .find(|(_, faction)| **faction == Faction::Player)
-        .map(|(entity, _)| entity);
-    let Some(player) = player else {
-        blocked.write(crate::timeline::ActionBlocked::BUSY);
-        return; // 忙（前摇 / 后摇中）或没有玩家
-    };
-
-    let now = now.elapsed_secs();
-    let draft = if fire {
-        commands.spawn_scene(shoot_action_scene(player, now)).id()
-    } else {
-        commands.spawn_scene(melee_action_scene(player, now)).id()
-    };
-    begin_action(&mut commands, &mut timeline, player, draft);
-}
-
-/// 敌对目标：离 `origin` 最近的、阵营不同的单位位置。
-fn nearest_enemy(
-    units: &Query<(&Transform, &Faction)>,
-    origin: Vec3,
-    faction: Faction,
-) -> Option<Vec3> {
-    units
-        .iter()
-        .filter(|(_, unit_faction)| **unit_faction != faction)
-        .map(|(transform, _)| transform.translation)
-        .min_by(|a, b| {
-            a.distance_squared(origin)
-                .total_cmp(&b.distance_squared(origin))
-        })
-}
-
-/// 执行射击：到点后从行动者位置朝最近敌人放箭，随后销毁行动实体。
-pub fn shoot_action_executor_system(
-    mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &ShootAction), With<Committed>>,
+    players: Query<(Entity, &Cell, &DecisionSlot, &Transform, &Faction), With<InputDriven>>,
     units: Query<(&Transform, &Faction)>,
 ) {
+    let request = fires.read().last().copied();
+    let melee = melees.read().last().is_some();
+    if request.is_none() && !melee {
+        return;
+    }
+    let Some((player, cell, _slot, transform, faction)) = players
+        .iter()
+        .find(|(_, _, slot, _, _)| **slot == DecisionSlot::Empty)
+    else {
+        blocked.write(crate::timeline::ActionBlocked::BUSY);
+        return;
+    };
+
+    let now = time.elapsed_secs();
+    let target_cell = request
+        .and_then(|request| request.target_cell)
+        .or_else(|| nearest_enemy_cell(&units, transform.translation, *faction))
+        .unwrap_or(*cell);
+    if melee {
+        let schedule = ScheduledAction::with_focus(
+            player,
+            crate::timeline::timing::MELEE,
+            now,
+            &mut focus,
+            intent.0,
+        );
+        declare_melee_at(&mut commands, player, *cell, target_cell, schedule);
+    } else {
+        crate::combat::skills::declare_fireball_at(
+            &mut commands,
+            player,
+            *cell,
+            target_cell,
+            ScheduledAction::with_focus(
+                player,
+                crate::timeline::timing::SHOOT,
+                now,
+                &mut focus,
+                intent.0,
+            ),
+        );
+    }
+}
+
+/// 声明一次近战横扫（只生成行动实体）：扣费与触发源由调用方负责。
+pub fn declare_melee_at(
+    commands: &mut Commands,
+    actor: Entity,
+    from_cell: Cell,
+    target_cell: Cell,
+    schedule: ScheduledAction,
+) -> Entity {
+    let action = commands
+        .spawn_scene(melee_action_scene(from_cell, target_cell, schedule))
+        .id();
+    commands.entity(actor).insert(DecisionSlot::Filled);
+    action
+}
+
+/// 执行射击：到点后从行动者位置朝最近敌人放箭，随后收尾。
+///
+/// 忙到**箭落地**为止：箭速 12 m/s，后摇只有 0.50s，只按后摇恢复决策槽的话，
+/// 玩家一空闲世界就冻住，超距的箭会停在半空（和火球修复前是同一个坑）。
+pub fn shoot_action_executor_system(
+    mut commands: Commands,
+    time: Res<Time<Virtual>>,
+    actions: Query<(Entity, &ScheduledAction, &ShootAction)>,
+    units: Query<(&Transform, &Faction)>,
+) {
+    let now = time.elapsed_secs();
     for (entity, schedule, _) in &actions {
+        if !schedule.due(now) {
+            continue;
+        }
+        let mut busy_until = now;
         if let Ok((transform, faction)) = units.get(schedule.actor) {
             let origin = transform.translation;
             let faction = *faction;
-            if let Some(target) = nearest_enemy(&units, origin, faction) {
-                let direction = (target - origin).normalize_or_zero();
+            if let Some(target) = nearest_enemy_cell(&units, origin, faction) {
+                let destination = target.center();
+                let to_target = Vec3::new(destination.x - origin.x, 0.0, destination.y - origin.z);
+                let direction = to_target.normalize_or_zero();
+                busy_until = now + to_target.length() / ARROW_SPEED;
                 commands.spawn_scene(arrow_scene(origin + direction * 1.2, direction, faction));
             }
         }
-        end_action(
-            &mut commands,
-            entity,
-            schedule.actor,
-            schedule,
-            now.elapsed_secs(),
-        );
+        let busy = crate::timeline::Busy::after(schedule, now, busy_until);
+        commands.entity(entity).despawn();
+        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
+            actor.insert(busy);
+        }
     }
 }
 
-/// 执行近战：到点后在行动者前方生成一次性横扫，随后销毁行动实体。
+/// 执行近战：到点后在行动者前方生成一次性横扫，随后收尾。
 pub fn melee_action_executor_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &MeleeAction), With<Committed>>,
+    time: Res<Time<Virtual>>,
+    actions: Query<(Entity, &ScheduledAction, &MeleeAction)>,
     units: Query<(&Transform, &Faction)>,
 ) {
+    let now = time.elapsed_secs();
     for (entity, schedule, _) in &actions {
+        if !schedule.due(now) {
+            continue;
+        }
         if let Ok((transform, faction)) = units.get(schedule.actor) {
             let origin = transform.translation;
             let faction = *faction;
-            if let Some(target) = nearest_enemy(&units, origin, faction) {
-                let direction = (target - origin).normalize_or_zero();
+            if let Some(target) = nearest_enemy_cell(&units, origin, faction) {
+                let destination = target.center();
+                let direction = Vec3::new(destination.x - origin.x, 0.0, destination.y - origin.z)
+                    .normalize_or_zero();
                 commands.spawn_scene(melee_scene(origin + direction * 0.6, direction, faction));
             }
         }
-        end_action(
-            &mut commands,
-            entity,
-            schedule.actor,
-            schedule,
-            now.elapsed_secs(),
-        );
+        let busy = crate::timeline::Busy::after(schedule, now, now);
+        commands.entity(entity).despawn();
+        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
+            actor.insert(busy);
+        }
     }
 }

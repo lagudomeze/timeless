@@ -1,12 +1,12 @@
 //! 敌人 AI：**能决策就决策**。
 //!
-//! 无回合模型下敌人不等任何「轮」：只要有 [`Ready`]，就立刻按优先级选一个意图并
-//! 声明行动实体；后摇结束恢复 `Ready` 后再次决策。
+//! 无回合模型下敌人不等任何「轮」：只要决策槽是空的，就立刻按优先级选一个意图并
+//! 声明行动实体；后摇结束、槽被清空后再次决策。
 //! 动作的前摇 / 后摇本身（[`crate::timeline::timing`]）就是它的决策冷却。
 //!
 //! 决策顺序（**威胁优先于贪刀**）：
 //!
-//! 1. **威胁预判**：有正在前摇、且把我当目标的攻击 → `Dodge`
+//! 1. **威胁预判**：有正在前摇的攻击覆盖了我脚下的格 → `Dodge`
 //! 2. 血少且贴脸 → `Retreat`（退开一格重新评估）
 //! 3. 目标超出 `engage_range` → `Approach`
 //! 4. 贴脸 → `Melee`
@@ -19,10 +19,11 @@
 use bevy::prelude::*;
 
 use crate::combat::defense::{ROLL_COST, Stamina, declare_roll, roll_step};
-use crate::combat::skills::{declare_fireball_at, melee_action_scene};
+use crate::combat::reaction::Threatens;
+use crate::combat::skills::{declare_fireball_at, declare_melee_at};
 use crate::combat::{AttackRange, Faction, Health};
 use crate::movement::{Cell, move_action_scene, step_from_axis};
-use crate::timeline::{CELL_SIZE, Ready, ScheduledAction, Timeline, begin_action};
+use crate::timeline::{CELL_SIZE, DecisionSlot, ScheduledAction, timing};
 
 use super::components::{EnemyBrain, Intent};
 
@@ -40,32 +41,39 @@ struct Decision {
     health_ratio: f32,
     engage_range: f32,
     cautious_ratio: f32,
-    /// 是否有攻击正在前摇打向我
+    /// 是否有攻击正覆盖我脚下的格
     in_danger: bool,
 }
 
 /// 选意图：只读规则，不生成任何实体。
 ///
-/// 威胁预判在这里做（需要「谁瞄准了我」的完整信息），且**只看不写**——
+/// 威胁预判在这里做（需要「谁瞄着我」的完整信息），且**只看不写**——
 /// 因此它是纯决策，声明与落地留给 [`enemy_declare_system`]。
+///
+/// 「瞄着我」= 有还没到点的行动把**我脚下的格**写进了 [`Threatens`]：
+/// 和玩家那边的威胁检测用的是同一份声明，因此 AI 与玩家看到的是同一张威胁图。
 #[allow(clippy::type_complexity)]
 pub fn decide_intent_system(
     mut enemies: Query<
         (
-            Entity,
             &Transform,
+            &Cell,
             &Faction,
             &Health,
             &AttackRange,
             &EnemyBrain,
+            &DecisionSlot,
             &mut Intent,
         ),
-        With<Ready>,
+        With<EnemyBrain>,
     >,
     bodies: Query<(Entity, &Transform, &Faction, &Health)>,
-    threats: Query<&crate::combat::targeting::CollisionTarget, With<ScheduledAction>>,
+    threats: Query<&Threatens>,
 ) {
-    for (entity, transform, faction, health, range, brain, mut intent) in &mut enemies {
+    for (transform, cell, faction, health, range, brain, slot, mut intent) in &mut enemies {
+        if *slot != DecisionSlot::Empty {
+            continue; // 忙（前摇 / 后摇）：这一轮不重新决策
+        }
         let distance = bodies
             .iter()
             .filter(|(_, _, other, body_health)| other != &faction && body_health.is_alive())
@@ -76,15 +84,14 @@ pub fn decide_intent_system(
         let decision = Decision {
             distance,
             range_world: range.world(),
-            health_ratio: if health.max > 0.0 {
-                health.current / health.max
+            health_ratio: if health.max > 0 {
+                health.current as f32 / health.max as f32
             } else {
                 0.0
             },
             engage_range: brain.engage_range,
             cautious_ratio: brain.cautious_health_ratio,
-            // 威胁 = 有攻击正在前摇、且把我当成目标
-            in_danger: threats.iter().any(|collider| collider.0 == entity),
+            in_danger: threats.iter().any(|threat| threat.cells.contains(cell)),
         };
         *intent = choose(&decision);
     }
@@ -117,19 +124,32 @@ fn choose(decision: &Decision) -> Intent {
 ///
 /// 威胁预判已经在 [`decide_intent_system`] 里完成，这里只负责声明。
 ///
-/// 「行动是统一实体」在两边是同一种东西：AI 直接调载荷工厂 + [`begin_action`]，
-/// 玩家则由输入消息走各自的声明系统；**唯一的区别是触发源**。
+/// 「行动是统一实体」在两边是同一种东西：AI 直接调载荷工厂，玩家则由输入消息走
+/// 各自的声明系统；**唯一的区别是触发源**（以及玩家会花 Focus / 精力）。
 #[allow(clippy::type_complexity)]
 pub fn enemy_declare_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    mut timeline: ResMut<Timeline>,
-    mut enemies: Query<(Entity, &Transform, &Cell, &Faction, &Stamina, &mut Intent), With<Ready>>,
+    time: Res<Time<Virtual>>,
+    mut enemies: Query<
+        (
+            Entity,
+            &Transform,
+            &Cell,
+            &Faction,
+            &Stamina,
+            &DecisionSlot,
+            &mut Intent,
+        ),
+        With<EnemyBrain>,
+    >,
     bodies: Query<(&Transform, &Cell, &Faction)>,
 ) {
-    let now = now.elapsed_secs();
+    let now = time.elapsed_secs();
 
-    for (entity, transform, cell, faction, stamina, mut intent) in &mut enemies {
+    for (entity, transform, cell, faction, stamina, slot, mut intent) in &mut enemies {
+        if *slot != DecisionSlot::Empty {
+            continue;
+        }
         // 精力不够时不能真的闪：降级为普通决策结果
         if *intent == Intent::Dodge && !stamina.can_afford(ROLL_COST) {
             *intent = Intent::Approach;
@@ -149,7 +169,7 @@ pub fn enemy_declare_system(
         match *intent {
             Intent::Idle => {}
             // 闪避直接生成 roll 行动：`RollCommand` 是**玩家输入消息**，AI 不该借用它
-            // （借用会让玩家的 F 键把就绪的敌人也带着滚）
+            // （借用会让玩家的按键把就绪的敌人也带着滚）
             Intent::Dodge => {
                 let (dx, dz) = roll_step(
                     transform.translation,
@@ -160,11 +180,10 @@ pub fn enemy_declare_system(
                 );
                 declare_roll(
                     &mut commands,
-                    &mut timeline,
                     entity,
                     *cell,
                     Cell::new(cell.x + dx, cell.z + dz),
-                    now,
+                    ScheduledAction::declared_at(entity, timing::ROLL, now),
                 );
             }
             Intent::Approach | Intent::Retreat => {
@@ -181,20 +200,33 @@ pub fn enemy_declare_system(
                     continue;
                 }
                 let to_cell = Cell::new(cell.x + dx, cell.z + dz);
-                let draft = commands
-                    .spawn_scene(move_action_scene(entity, *cell, to_cell, now))
-                    .id();
-                begin_action(&mut commands, &mut timeline, entity, draft);
+                commands.spawn_scene(move_action_scene(
+                    *cell,
+                    to_cell,
+                    ScheduledAction::declared_at(entity, timing::MOVE, now),
+                ));
+                commands.entity(entity).insert(DecisionSlot::Filled);
             }
             Intent::Melee => {
-                let draft = commands.spawn_scene(melee_action_scene(entity, now)).id();
-                begin_action(&mut commands, &mut timeline, entity, draft);
+                declare_melee_at(
+                    &mut commands,
+                    entity,
+                    *cell,
+                    target.map(|(_, cell)| cell).unwrap_or(*cell),
+                    ScheduledAction::declared_at(entity, timing::MELEE, now),
+                );
             }
             Intent::Shoot => {
                 let Some((_, target_cell)) = target else {
                     continue;
                 };
-                declare_fireball_at(&mut commands, &mut timeline, entity, target_cell, now);
+                declare_fireball_at(
+                    &mut commands,
+                    entity,
+                    *cell,
+                    target_cell,
+                    ScheduledAction::declared_at(entity, timing::SHOOT, now),
+                );
             }
         }
     }
@@ -213,6 +245,14 @@ mod tests {
             cautious_ratio: 0.35,
             in_danger: false,
         }
+    }
+
+    /// 与系统同一套判断，但把「威胁」也算进去。
+    fn choose_with_threat(decision: &Decision) -> Intent {
+        if decision.in_danger {
+            return Intent::Dodge;
+        }
+        choose(decision)
     }
 
     #[test]
@@ -254,21 +294,12 @@ mod tests {
         assert_eq!(choose(&decision(3.0, 4.0, 1.0)), Intent::Shoot);
     }
 
-    /// 与系统同一套判断，但把「威胁」也算进去（系统里 `in_danger` 由查询得出）。
-    fn choose_with_threat(decision: &Decision) -> Intent {
-        if decision.in_danger {
-            return Intent::Dodge;
-        }
-        choose(decision)
-    }
-
-    /// 整机：AI 的闪避**直接生成自己的 roll 行动**，不经玩家输入消息，也不碰玩家的 `Ready`。
-    ///
-    /// 「行动是统一实体」的两种触发源在这里对齐：AI 走载荷工厂 + `begin_action`，
-    /// 玩家走 `RollCommand`；区别只在触发源。曾经的实现是 AI 借用玩家的 `RollCommand`，
-    /// 于是玩家按 F 会把就绪的敌人一起带着滚。
+    /// 整机：AI 的闪避**直接生成自己的 roll 行动**，不经玩家输入消息，
+    /// 也不消耗玩家的决策槽。
     #[test]
     fn a_dodging_enemy_declares_its_own_roll() {
+        use crate::movement::RollAction;
+
         // 组装出来的敌人必须带 `Intent`，否则两个 AI 系统都匹配不到它（静默不行动）
         {
             let mut probe = crate::test_support::headless_app();
@@ -281,29 +312,28 @@ mod tests {
             );
         }
 
-        use crate::combat::{CollisionTarget, PhysicalDamage};
-        use crate::movement::RollAction;
-
         let mut app = crate::test_support::headless_app();
         app.update(); // Startup：组装玩家 + 敌人
 
-        let (player, enemy) = {
-            let mut query = app.world_mut().query::<(Entity, &Faction)>();
-            let units: Vec<(Entity, Faction)> = query
+        let (player, enemy, enemy_cell) = {
+            let mut query = app.world_mut().query::<(Entity, &Faction, &Cell)>();
+            let units: Vec<(Entity, Faction, Cell)> = query
                 .iter(app.world())
-                .map(|(entity, faction)| (entity, *faction))
+                .map(|(entity, faction, cell)| (entity, *faction, *cell))
                 .collect();
             let find = |wanted: Faction| {
                 units
                     .iter()
-                    .find(|(_, faction)| *faction == wanted)
-                    .map(|(entity, _)| *entity)
+                    .find(|(_, faction, _)| *faction == wanted)
+                    .map(|(entity, _, cell)| (*entity, *cell))
                     .expect("应当有单位")
             };
-            (find(Faction::Player), find(Faction::Enemy))
+            let (player, _) = find(Faction::Player);
+            let (enemy, cell) = find(Faction::Enemy);
+            (player, enemy, cell)
         };
 
-        // 让敌人重新可决策：首帧 AI 可能已经替它声明了一个移动（本测试只关心"闪避由谁触发"）
+        // 清掉首帧 AI 已经声明的行动，并把敌人的决策槽清空
         let stale: Vec<Entity> = app
             .world_mut()
             .query_filtered::<Entity, With<ScheduledAction>>()
@@ -312,14 +342,16 @@ mod tests {
         for action in stale {
             app.world_mut().entity_mut(action).despawn();
         }
-        app.world_mut().entity_mut(enemy).insert(Ready);
+        app.world_mut()
+            .entity_mut(enemy)
+            .insert(DecisionSlot::Empty);
 
-        // 一发「正在前摇」的攻击瞄准敌人 → 意图变成 Dodge
+        // 一发「正在前摇」的攻击把敌人脚下的格写进威胁 → 意图变成 Dodge
         app.world_mut().spawn((
-            Faction::Player,
-            PhysicalDamage(10.0),
-            CollisionTarget(enemy),
-            ScheduledAction::declared_at(player, crate::timeline::timing::MELEE, 0.0),
+            ScheduledAction::declared_at(player, timing::MELEE, 0.0),
+            Threatens {
+                cells: vec![enemy_cell],
+            },
         ));
         app.update();
 
@@ -334,9 +366,10 @@ mod tests {
             enemy,
             "行动必须挂在敌人自己身上"
         );
-        assert!(
-            app.world().get::<Ready>(player).is_some(),
-            "玩家的 Ready 不该被 AI 的行动消耗掉"
+        assert_eq!(
+            app.world().get::<DecisionSlot>(player).copied(),
+            Some(DecisionSlot::Empty),
+            "玩家的决策槽不该被 AI 的行动消耗掉"
         );
     }
 }

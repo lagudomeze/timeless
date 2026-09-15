@@ -327,7 +327,7 @@ pub fn update_preview_readout_system(
                 .map(|def| def.power)
                 .unwrap_or_default();
             Some(format!(
-                "{} · cell ({},{}) · dist {distance:.1} · dmg {power:.0}",
+                "{} · cell ({},{}) · dist {distance:.1} · dmg {power}",
                 effective.label().to_uppercase(),
                 cell.x,
                 cell.z

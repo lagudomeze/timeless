@@ -1,8 +1,8 @@
 # 仓库指南（Repository Guidelines）
 
 Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法是**无回合**的战斗
-时间线：谁能决策由各自的 `Ready` 决定，每个动作自带前摇 + 后摇，只在玩家等待输入时
-冻结世界（`Time<Virtual>`）。
+时间线：谁能决策由各自的 `DecisionSlot` 决定，每个动作自带前摇 + 后摇，
+世界在**暂停原因集合非空**时冻结（`Time<Virtual>`）：等玩家输入、手动暂停、威胁逼近。
 
 代码在仓库根目录 `src/`（package `app`）。文档入口见 [`docs/index.md`](docs/index.md)，
 进度与 backlog 只有一处：[`TODO.md`](TODO.md)。
@@ -31,7 +31,7 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 154 通过（152 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 169 通过（167 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check                           # 格式校验
 ```
@@ -51,10 +51,11 @@ cargo fmt --check                           # 格式校验
 - **高内聚低耦合**：每个领域文件只装自己的组件 / 消息 / 系统。移动领域只含
   格子坐标、位移行动与投射物飞行；火球 / 爆炸等战斗内容归 `combat`，
   通过 `ProjectileArrived` 衔接。
-- **动作实体化**：行动 = 独立实体（载荷组件 + `ScheduledAction` +
-  `Declared` / `Pending` / `Committed` 状态标记）；调度器不感知载荷，新增动作只需
-  新增载荷与执行器。复杂交互走两阶段结算（阶段 1 算 `CombatResult`，阶段 2 统一应用）。
-  暂停用 `Time<Virtual>`，不手写阶段门控。
+- **动作实体化**：行动 = 独立实体（载荷组件 + `ScheduledAction` + `Cancellable`）；
+  调度器不感知载荷，新增动作只需新增载荷与执行器。**状态由时间戳推导**
+  （`now < execute_at` 前摇 / `now > execute_at` 该执行 / `Busy` 后摇），
+  不再有 `Declared` / `Pending` / `Committed` 这类标记。暂停用 `Time<Virtual>`，
+  不手写阶段门控。
 - **实体构建优先用 BSN**（`bsn!` + `spawn_scene`）：组件派生 `Default + Clone`
   （含 `Entity` 字段的派生 `FromTemplate`），多个组件组合成实体用场景语法，
   不用长元组 `spawn((...))`；字段值若非字面量，一律包 `{expr}`。
@@ -66,7 +67,8 @@ cargo fmt --check                           # 格式校验
   [`docs/architecture.md`](docs/architecture.md) 第六节。
 - **消息定义与消费它的系统同属一个领域**：如 `MoveCommand` 与 `declare_move_system`
   在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/skills/`、
-  `TogglePause` / `UndoCommand` 与 `pause_toggle_system` / `undo_system` 在 `timeline/`、
+  `TogglePause` / `UndoCommand` / `PauseRequest` 与 `compute_manual_pause` /
+  `undo_system` / `process_pause_requests` 在 `timeline/`、
   `PointerCommand` 与 `pointer_command_system` 在 `interaction/`。
   其他领域需要该操作时只写消息，不重复实现。
 - 跨模块交互一律走 `MessageWriter` / `MessageReader`；只有需要立即生效、
@@ -84,12 +86,14 @@ cargo fmt --check                           # 格式校验
 - **角色实体不是模块**：零件归各领域（`Health` → combat、`Velocity` → movement、
   `EnemyBrain` → ai、`ChunkLoader` → world），组装归 `spawn/`（`unit_scene` 给共用
   零件，`player.rs` / `enemy.rs` 追加驱动源）；**没有任何领域依赖 `spawn`**。
-- **执行器收尾必须走 `timeline::end_action`**（或 `end_action_until`）：
-  摘 `Committed` + 销毁行动实体 + 挂后摇。否则执行器会每帧重复触发同一个动作。
-  「效果延迟发生」的动作（移动 / 火球）必须用 `end_action_until` 忙到效果落地。
-- **唯一的暂停点是 `timeline_gate_system`**：玩家就绪且未在空中时冻结
-  `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用 `Time`，位移 / 投射物 / 后摇自动停表）；
-  禁止在其它地方手写 `if paused` 阶段门控。
+- **执行器自己收尾**：`if !schedule.due(now) { continue; }` → 落地效果 → 销毁行动实体 →
+  给行动者挂 `Busy::after(schedule, executed_at, busy_until)`。没有集中式收尾函数；
+  「效果延迟发生」的动作（移动 / 火球 / 箭矢）必须把 `busy_until` 推到效果真的发生，
+  否则玩家一空闲世界就冻住、效果停在半路。
+- **唯一的暂停判据是 `PauseReasons` 非空**：各领域用 `PauseRequest::{Pause, Resume}`
+  加减原因（`"manual"` / `"slot_empty"` / `"threat"`），只有帧末 `ClockSet` 的
+  `apply_clock` 能写 `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用 `Time`，
+  位移 / 投射物 / 后摇自动停表）；禁止在其它地方手写 `if paused` 阶段门控。
 - **坐标：决策按格、结算按真实距离**。格（`movement::Cell`，边长 `CELL_SIZE`）只用于
   决策与同格判定；命中 / 射程 / 爆炸半径一律用世界距离。位置只有一份真相
   （Bevy `Transform`），`Cell` 只在单位停下时更新。

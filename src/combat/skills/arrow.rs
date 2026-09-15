@@ -2,15 +2,18 @@
 
 use bevy::prelude::*;
 
-use crate::combat::attributes::{AttackFrame, HitRadius, Impact, PhysicalDamage};
+use crate::combat::attributes::{AttackFrame, HitRadius, InterruptPower, PhysicalDamage};
 use crate::combat::components::Faction;
 use crate::combat::lifecycle::Projectile;
 use crate::movement::Velocity;
 
+/// 箭速（世界单位 / 秒）：执行器用它算「射手要忙到什么时候」。
+pub const ARROW_SPEED: f32 = 12.0;
+
 /// 普通箭矢：穿透 1，命中一次即结束。
 ///
 /// `position` / `direction` 由生成方现场计算；阵营随箭矢携带，供碰撞过滤
-/// （不打自己人）。裁决参数：帧 4（快）、破势 1（低）。
+/// （不打自己人）。属性：伤害 10、帧 4（快）、打断力度 1（弱）。
 pub fn arrow_scene(position: Vec3, direction: Vec3, faction: Faction) -> impl Scene {
     let direction = direction.normalize_or_zero();
     let rotation = if direction == Vec3::ZERO {
@@ -20,11 +23,11 @@ pub fn arrow_scene(position: Vec3, direction: Vec3, faction: Faction) -> impl Sc
     };
     bsn! {
         template_value(faction)
-        template_value(Velocity(direction * 12.0))
+        template_value(Velocity(direction * ARROW_SPEED))
         Projectile { max_hits: 1, current_hits: 0, finished: false }
-        template_value(PhysicalDamage(10.0))
+        template_value(PhysicalDamage(10))
         template_value(AttackFrame(4))
-        template_value(Impact(1))
+        template_value(InterruptPower(1))
         HitRadius(0.2)
         Transform {
             translation: {position},

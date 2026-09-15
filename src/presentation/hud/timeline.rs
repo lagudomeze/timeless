@@ -11,7 +11,7 @@
 //! - 块内那条白色竖线 = **结算时刻**（`execute_at` = 声明时刻 + 前摇），
 //!   回答"我这一手什么时候真的发生 / 什么时候会挨打"。
 //!
-//! 颜色 = 阵营（蓝 = 玩家、红 = 敌人），未提交的草案（`Declared`）用半透明表示。
+//! 颜色 = 阵营（蓝 = 玩家、红 = 敌人），**前摇中**（还撤得掉）的行动用半透明表示。
 //!
 //! **每个单位一行（lane）**：一条横轴解决不了"谁在动手"——两个单位同时出手时色块会
 //! 叠在一起。所以纵轴按单位分道：玩家在最上面一行，其余按稳定顺序往下排，行首的字母
@@ -24,7 +24,7 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::timeline::{Declared, Ready, ScheduledAction, Timeline};
+use crate::timeline::{DecisionSlot, PauseReasons, ScheduledAction};
 
 use super::{HudCache, faction_color_alpha, hud_text_tinted};
 
@@ -62,7 +62,7 @@ pub const TICK_POOL: usize = (WINDOW_SECONDS / TICK_SECONDS) as usize;
 pub const MIN_BLOCK_WIDTH: f32 = 3.0;
 /// 车道池大小（每个单位一行；常驻 1 玩家 + 1 敌人，留几个空位给召唤物）。
 pub const LANE_POOL: usize = 4;
-/// 单条车道的色块池：一个单位同一时刻只会有一个未结算行动（声明即失去 `Ready`）。
+/// 单条车道的色块池：一个单位同一时刻只会有一个未落地的行动。
 pub const BLOCK_POOL_PER_LANE: usize = 2;
 /// 单条车道的高度（像素）。
 pub const LANE_HEIGHT: f32 = 12.0;
@@ -370,7 +370,7 @@ pub fn spawn_timeline(commands: &mut Commands, font: &Handle<Font>) -> Entity {
 /// 一条车道内的一个色块：底色 + 阵营字母 + 结算刻线，默认隐藏。
 ///
 /// `slot` 顺序 = Children 顺序 = z 序（后面的画在上面）。一个单位同一时刻只会有一个
-/// 未结算行动（声明即失去 `Ready`），池子留 2 个只是为了给"同一帧内换手"留余量。
+/// 未落地的行动（决策槽被占住的那段时间），池子留 2 个只是为了给"同一帧内换手"留余量。
 fn spawn_lane_block(
     commands: &mut Commands,
     font: &Handle<Font>,
@@ -499,11 +499,11 @@ type ReadyLabelQuery<'w, 's> = Query<
 /// 否则 Bevy 会报 B0001 参数冲突。
 #[allow(clippy::too_many_arguments)]
 pub fn update_timeline_system(
-    timeline: Res<Timeline>,
+    reasons: Res<PauseReasons>,
     now: Res<Time<Virtual>>,
     actors: Query<(Entity, &Faction)>,
-    ready: Query<(), With<Ready>>,
-    actions: Query<(&ScheduledAction, Has<Declared>)>,
+    slots: Query<&DecisionSlot>,
+    actions: Query<&ScheduledAction>,
     mut cache: ResMut<HudCache>,
     mut states: StateTextQuery<'_, '_>,
     mut lane_labels: LaneLabelQuery<'_, '_>,
@@ -513,14 +513,11 @@ pub fn update_timeline_system(
     mut chips: ReadyChipQuery<'_, '_>,
     mut chip_labels: ReadyLabelQuery<'_, '_>,
 ) {
-    let state = if timeline.waiting_for_input() {
-        if timeline.has_draft() {
-            "TIMELINE · WAITING FOR INPUT · action declared (right click to undo)"
-        } else {
-            "TIMELINE · WAITING FOR INPUT (frozen)"
-        }
+    // 冻结的原因直接读出来：玩家一眼知道是"等我决策"、"我按了空格"还是"有人打过来"
+    let state = if reasons.is_frozen() {
+        format!("TIMELINE · FROZEN · {}", reasons.labels().join(" + "))
     } else {
-        "TIMELINE · RUNNING"
+        "TIMELINE · RUNNING".to_string()
     };
 
     // 1. 稳定的 actor → lane 映射：玩家排最上面，其余按实体序号（同帧可复现）
@@ -539,7 +536,7 @@ pub fn update_timeline_system(
     // 2. 每个单位只画自己那一行：行动色块 = 这段"被占住"的时间（从声明时刻长出去）
     let now_seconds = now.elapsed_secs();
     let mut lanes: Vec<Vec<TimelineSlot>> = vec![Vec::new(); LANE_POOL];
-    for (schedule, draft) in &actions {
+    for schedule in &actions {
         let Some(lane) = lane_actor
             .iter()
             .position(|actor| *actor == Some(schedule.actor))
@@ -549,9 +546,11 @@ pub fn update_timeline_system(
         let Some(faction) = lane_faction[lane] else {
             continue;
         };
+        // 还没到点 = 前摇中 = 还能撤（半透明表示"这一手还改得动"）
+        let draft = schedule.pending(now_seconds);
         let Some((left, width)) = block_span(
             schedule.declared_at,
-            schedule.timing.total(),
+            schedule.total(),
             now_seconds,
             WINDOW_SECONDS,
         ) else {
@@ -560,7 +559,7 @@ pub fn update_timeline_system(
         lanes[lane].push(TimelineSlot {
             left,
             width,
-            mark: resolve_mark_percent(schedule.timing.windup, schedule.timing.total()),
+            mark: resolve_mark_percent(schedule.windup(), schedule.total()),
             faction,
             draft,
         });
@@ -573,7 +572,9 @@ pub fn update_timeline_system(
     // 3. 候场区：已就绪、还没有排期的人
     let ready_lanes: Vec<usize> = (0..LANE_POOL)
         .filter(|lane| {
-            lane_actor[*lane].is_some_and(|actor| ready.contains(actor)) && lanes[*lane].is_empty()
+            lane_actor[*lane].is_some_and(|actor| {
+                slots.get(actor).copied().unwrap_or_default() == DecisionSlot::Empty
+            }) && lanes[*lane].is_empty()
         })
         .collect();
 
@@ -800,7 +801,7 @@ mod tests {
     fn each_actor_draws_in_its_own_lane() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .init_resource::<Timeline>()
+            .init_resource::<PauseReasons>()
             .init_resource::<HudCache>()
             .add_systems(Update, update_timeline_system);
 
@@ -820,9 +821,10 @@ mod tests {
             .collect();
         // 敌人先声明（0.5s），玩家后声明（2.0s）
         for (actor, declared_at) in [(enemy, 0.5), (player, 2.0)] {
-            app.world_mut().spawn((
-                ScheduledAction::declared_at(actor, timing::MOVE, declared_at),
-                crate::timeline::Pending,
+            app.world_mut().spawn(ScheduledAction::declared_at(
+                actor,
+                timing::MOVE,
+                declared_at,
             ));
         }
 
@@ -870,11 +872,14 @@ mod tests {
     fn ready_units_wait_in_the_staging_area() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .init_resource::<Timeline>()
+            .init_resource::<PauseReasons>()
             .init_resource::<HudCache>()
             .add_systems(Update, update_timeline_system);
 
-        let player = app.world_mut().spawn((Faction::Player, Ready)).id();
+        let player = app
+            .world_mut()
+            .spawn((Faction::Player, DecisionSlot::Empty))
+            .id();
         let chip = app
             .world_mut()
             .spawn((
@@ -904,10 +909,11 @@ mod tests {
         );
         assert_eq!(display(&app, block), Display::None, "没排期就不占横轴");
 
-        app.world_mut().spawn((
-            ScheduledAction::declared_at(player, timing::MOVE, 0.0),
-            crate::timeline::Pending,
-        ));
+        app.world_mut()
+            .spawn(ScheduledAction::declared_at(player, timing::MOVE, 0.0));
+        app.world_mut()
+            .entity_mut(player)
+            .insert(DecisionSlot::Filled);
         app.update();
         assert_eq!(display(&app, chip), Display::None, "有排期就不再候场");
         assert_eq!(display(&app, block), Display::Flex, "排期画在自己的车道里");
@@ -918,7 +924,7 @@ mod tests {
     fn frozen_timeline_is_left_alone_until_the_queue_changes() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .init_resource::<Timeline>()
+            .init_resource::<PauseReasons>()
             .init_resource::<HudCache>()
             .add_systems(Update, update_timeline_system);
         // 玩家等输入 → 虚拟时间冻结：这是 HUD 最常处的状态
@@ -951,10 +957,8 @@ mod tests {
             "冻结且队列没变时不该重写"
         );
 
-        app.world_mut().spawn((
-            ScheduledAction::declared_at(player, timing::MOVE, 0.5),
-            crate::timeline::Pending,
-        ));
+        app.world_mut()
+            .spawn(ScheduledAction::declared_at(player, timing::MOVE, 0.5));
         app.update();
         assert_eq!(
             app.world().get::<Node>(block).unwrap().display,
@@ -968,7 +972,7 @@ mod tests {
     fn hidden_blocks_reset_their_geometry() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .init_resource::<Timeline>()
+            .init_resource::<PauseReasons>()
             .init_resource::<HudCache>()
             .add_systems(Update, update_timeline_system);
 
@@ -983,10 +987,7 @@ mod tests {
             .id();
         let action = app
             .world_mut()
-            .spawn((
-                ScheduledAction::declared_at(player, timing::MOVE, 0.5),
-                crate::timeline::Pending,
-            ))
+            .spawn(ScheduledAction::declared_at(player, timing::MOVE, 0.5))
             .id();
 
         app.update();

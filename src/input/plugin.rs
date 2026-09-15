@@ -4,8 +4,8 @@ use bevy::prelude::*;
 
 use super::InputSet;
 use super::keyboard::{
-    HotkeyBinds, pause_input_system, player_help_input_system, player_move_input_system,
-    player_skill_input_system, reaction_window_input_system, skill_menu_input_system,
+    HotkeyBinds, focus_intent_input_system, pause_input_system, player_help_input_system,
+    player_move_input_system, player_skill_input_system, skill_menu_input_system,
     skill_use_input_system,
 };
 use super::pointer::{
@@ -16,7 +16,7 @@ use super::pointer::{
 ///
 /// 消息本身由**消费它们的领域**注册：`MoveCommand` → movement、
 /// `FireCommand` / `MeleeCommand` / 技能菜单消息 → combat、
-/// `TogglePause` / `CycleReactionWindow` → timeline、`PointerCommand` → interaction、
+/// `TogglePause` / `UseFocus` → timeline、`PointerCommand` → interaction、
 /// `PanCamera` / `ZoomCamera` → presentation。
 /// 生产者只引用消息类型，不引用消费系统；因此单独装本插件会缺消息
 /// （系统初始化即报错），要连同上面几个领域一起装。
@@ -36,7 +36,8 @@ impl Plugin for InputPlugin {
                 player_help_input_system,
                 // 空格 = 暂停 / 继续；F2 = 反应窗口松紧（都只写消息）
                 pause_input_system,
-                reaction_window_input_system,
+                // Shift + 决策键 = 用 Focus 换前摇（只写意图，扣费在声明那一刻）
+                focus_intent_input_system,
                 camera_pan_input_system,
                 // 滚轮 → `ZoomCamera`（拉近 / 拉远）
                 camera_zoom_input_system,

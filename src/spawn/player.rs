@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use crate::combat::Faction;
 use crate::movement::{Cell, MoveSpeed};
 use crate::presentation::unit_sprite::UnitSprites;
+use crate::timeline::InputDriven;
 use crate::world::{ChunkLoader, TerrainConfig};
 
 use super::cell_ground;
@@ -20,11 +21,16 @@ use super::unit::unit_scene;
 pub const PLAYER_SPAWN: Cell = Cell::new(1, 0);
 
 /// 玩家场景：骑士精灵（后续换一张贴图即可换角色，逻辑零件不动）。
+///
+/// `InputDriven` 是**输入归属**标记：时间线靠它决定「世界该停下来等谁」，
+/// 反应系统靠它决定「谁被威胁」、「谁能用 Focus 换前摇」。
+/// 它与 `Faction` 分工不同：`Faction` 管战斗目标过滤，两者互不替代。
 pub fn player_scene(terrain: &TerrainConfig, sprites: &UnitSprites) -> impl Scene {
     let position = cell_ground(terrain, PLAYER_SPAWN);
     let loader = ChunkLoader::default();
     bsn! {
         unit_scene(Faction::Player, position, sprites)
+        InputDriven
         MoveSpeed(5.0)
         template_value(loader)
     }

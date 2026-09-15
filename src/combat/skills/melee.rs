@@ -2,17 +2,17 @@
 
 use bevy::prelude::*;
 
-use crate::combat::attributes::{AttackFrame, Impact, PhysicalDamage};
+use crate::combat::attributes::{AttackFrame, InterruptPower, PhysicalDamage};
 use crate::combat::components::Faction;
 use crate::combat::lifecycle::{HitOnce, Lifetime};
 use crate::combat::targeting::MeleeShape;
 
-/// 近战横扫的伤害与裁决参数（注册表 / HUD 展示也读这里，避免两处各写一份）。
-pub const MELEE_DAMAGE: f32 = 15.0;
-/// 速度帧：三层裁决的 L1。
+/// 近战横扫的伤害与属性（注册表 / HUD 展示也读这里，避免两处各写一份）。
+pub const MELEE_DAMAGE: i32 = 15;
+/// 速度帧（信息层读数）。
 pub const MELEE_FRAME: u32 = 5;
-/// 破势：三层裁决的 L3。
-pub const MELEE_IMPACT: u32 = 3;
+/// 打断力度：命中时和目标的打断抗性掷骰对抗。
+pub const MELEE_POWER: i32 = 3;
 
 /// 近战横扫：短命攻击实体。
 ///
@@ -31,7 +31,7 @@ pub fn melee_scene(position: Vec3, direction: Vec3, faction: Faction) -> impl Sc
         template_value(faction)
         template_value(PhysicalDamage(MELEE_DAMAGE))
         template_value(AttackFrame(MELEE_FRAME))
-        template_value(Impact(MELEE_IMPACT))
+        template_value(InterruptPower(MELEE_POWER))
         template_value(lifetime)
         template_value(hit_once)
         MeleeShape {

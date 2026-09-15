@@ -1,9 +1,10 @@
-//! 防御域的标记清理。
+//! 防御域的标记清理与撤销退款。
 //!
-//! 纯逻辑（三层裁决 / 防御判定 / 反制伤害）住在
+//! 纯逻辑（防御判定 / 反制伤害）住在
 //! [`crate::combat::formula::domain`]；系统层只做两件事：
 //!
-//! 1. 把 ECS 状态翻成纯函数需要的参数（在 `phase1_arbitrate_system` 里）；
+//! 1. 把 ECS 状态翻成纯函数需要的参数（在
+//!    [`apply_physical_hits_system`](crate::combat::formula::apply_physical_hits_system) 里）；
 //! 2. 清理短命标记（[`expire_defense_markers_system`]）。
 
 use bevy::prelude::*;
@@ -17,14 +18,14 @@ use super::stamina::Stamina;
 
 /// 撤销行动时退还精力（`ActionCancelled` → `Stamina`）。
 ///
-/// 撤销本身归时间线管（它知道"哪条行动还没结算"），**退多少、退给谁**归资源
-/// 的拥有者管——这里只负责把广播变成一次 `regen`。
+/// 撤销本身归时间线管（它知道"哪条行动还没到点"），**退多少、退给谁**归资源的
+/// 拥有者管——这里只负责把广播变成一次 `regen`。
 pub fn refund_cancelled_actions_system(
     mut cancelled: MessageReader<crate::timeline::ActionCancelled>,
     mut units: Query<&mut Stamina>,
 ) {
     for event in cancelled.read() {
-        if event.refund == 0 {
+        if event.refund == 0 && event.penalty == 0 {
             continue;
         }
         if let Ok(mut stamina) = units.get_mut(event.actor) {

@@ -1,17 +1,17 @@
-//! 防御域的声明 / 执行系统与过期清理。
+//! 防御域的声明 / 执行系统。
 //!
 //! - 翻滚载荷的工厂在 [`crate::movement`]（退一格与移动是同一个原语），
 //!   本模块只负责**声明**与**落地**；
 //! - 招架只绑实体，不需要位移，因此载荷与执行器都住在这里；
-//! - 过期清理统一在这里，两个标记的语义放在一起看。
+//! - 两个执行器都自己收尾：销毁行动实体 + 给行动者挂 `Busy`（时间线不集中收尾）。
 
 use bevy::prelude::*;
 
 use crate::combat::Faction;
 use crate::movement::{Cell, Velocity, ground_direction, step_from_axis};
-use crate::timeline::{Declared, Ready, Timeline, begin_action};
+use crate::timeline::{DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction};
 
-use super::components::{Dodging, ParryAction, Parrying};
+use super::components::{ParryAction, Parrying};
 use super::events::{ParryCommand, RollCommand};
 use super::stamina::Stamina;
 
@@ -21,7 +21,7 @@ pub const ROLL_COST: u32 = 1;
 pub const PARRY_COST: u32 = 1;
 /// 翻滚的无敌帧时长（虚拟秒）。
 pub const DODGE_SECS: f32 = 0.5;
-/// 翻滚标记的兜底存活时长（虚拟秒）：目标攻击被销毁后不等它自然过期。
+/// 招架标记的兜底存活时长（虚拟秒）：目标攻击被销毁后不等它自然过期。
 pub const PARRY_SECS: f32 = 0.5;
 /// 翻滚的位移速度（世界单位 / 秒）：比走路快，但仍然是「退一格」。
 pub const ROLL_SPEED: f32 = 8.0;
@@ -48,47 +48,47 @@ pub fn roll_step(
     step_from_axis(Vec2::new(away.x, away.z).normalize_or_zero())
 }
 
-/// 声明一次翻滚（载荷实体 + [`begin_action`]）——**行动是统一实体**的落点。
+/// 声明一次翻滚（载荷实体）。
 ///
 /// 玩家走输入消息、AI 直接调用它，产出的行动实体完全一样；
 /// 区别只在"谁触发"，不在"行动长什么样"。
 pub fn declare_roll(
     commands: &mut Commands,
-    timeline: &mut Timeline,
     actor: Entity,
     from_cell: Cell,
     to_cell: Cell,
-    now: f32,
+    schedule: ScheduledAction,
 ) -> Entity {
-    let draft = commands
+    let action = commands
         .spawn_scene(crate::movement::roll_action_scene(
-            actor, from_cell, to_cell, now,
+            from_cell, to_cell, schedule,
         ))
         .id();
-    begin_action(commands, timeline, actor, draft);
-    draft
+    commands.entity(actor).insert(DecisionSlot::Filled);
+    action
 }
 
 /// 声明翻滚（PC 路径）：`RollCommand` → 远离最近威胁退一格 + 无敌帧。
 ///
 /// **只有 PC 靠按键决策**：`RollCommand` 是玩家输入消息，AI 不经它
 /// （AI 的 `Intent::Dodge` 直接调 [`declare_roll`]）。
+#[allow(clippy::too_many_arguments)]
 pub fn declare_roll_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    mut timeline: ResMut<Timeline>,
+    time: Res<Time<Virtual>>,
+    mut focus: ResMut<Focus>,
+    intent: Res<FocusIntent>,
     mut requests: MessageReader<RollCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    mut rollers: Query<(Entity, &Cell, &Stamina, &Transform, &Faction), With<Ready>>,
+    rollers: Query<(Entity, &Cell, &Stamina, &DecisionSlot, &Transform), With<InputDriven>>,
     units: Query<(&Transform, &Faction)>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    // **必须按阵营挑玩家**：就绪的单位里也有敌人，不筛就会把玩家的按键挂到敌人身上。
-    let Some((entity, cell, stamina, transform, _)) = rollers
-        .iter_mut()
-        .find(|(_, _, _, _, faction)| **faction == Faction::Player)
+    let Some((entity, cell, stamina, _, transform)) = rollers
+        .iter()
+        .find(|(_, _, _, slot, _)| **slot == DecisionSlot::Empty)
     else {
         blocked.write(crate::timeline::ActionBlocked::BUSY);
         return;
@@ -98,6 +98,7 @@ pub fn declare_roll_system(
         return;
     }
 
+    let now = time.elapsed_secs();
     let (dx, dz) = roll_step(
         transform.translation,
         Faction::Player,
@@ -105,13 +106,19 @@ pub fn declare_roll_system(
             .iter()
             .map(|(other, faction)| (other.translation, *faction)),
     );
+    let schedule = ScheduledAction::with_focus(
+        entity,
+        crate::timeline::timing::ROLL,
+        now,
+        &mut focus,
+        intent.0,
+    );
     declare_roll(
         &mut commands,
-        &mut timeline,
         entity,
         *cell,
         Cell::new(cell.x + dx, cell.z + dz),
-        now.elapsed_secs(),
+        schedule,
     );
 }
 
@@ -120,62 +127,61 @@ pub fn declare_roll_system(
 /// **不直接改 `Cell`**：格子由 [`crate::movement::move_entities_system`] 在真正
 /// 到达格中心时更新。否则决策层坐标会立刻跳到目标格，而世界坐标还没动
 /// （表现为「滚了但人没动」）。
+///
+/// 收尾：销毁行动实体 + 把行动者忙到**滚到位**为止（`距离 / 速度`）。
 pub fn roll_executor_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    actions: Query<
-        (
-            Entity,
-            &crate::movement::RollAction,
-            &crate::timeline::ScheduledAction,
-        ),
-        With<crate::timeline::Committed>,
-    >,
+    time: Res<Time<Virtual>>,
+    actions: Query<(Entity, &crate::movement::RollAction, &ScheduledAction)>,
     mut actors: Query<(&mut Velocity, &mut Stamina, &Transform), With<Cell>>,
 ) {
-    let now = now.elapsed_secs();
+    let now = time.elapsed_secs();
     for (entity, roll, schedule) in &actions {
+        if !schedule.due(now) {
+            continue;
+        }
+        let mut busy_until = now;
         if let Ok((mut velocity, mut stamina, transform)) = actors.get_mut(schedule.actor) {
             stamina.try_spend(ROLL_COST);
-            let target = roll.to_cell.center();
-            velocity.0 = ground_direction(target - transform.translation.xz()) * ROLL_SPEED;
-            crate::timeline::insert_on_actor(
-                &mut commands,
-                schedule.actor,
-                (
-                    crate::movement::MoveGoal { cell: roll.to_cell },
-                    crate::movement::DodgingOnArrival {
-                        expires_at: now + DODGE_SECS,
-                    },
-                ),
-            );
+            let to_goal = roll.to_cell.center() - transform.translation.xz();
+            velocity.0 = ground_direction(to_goal) * ROLL_SPEED;
+            busy_until = now + to_goal.length() / ROLL_SPEED;
+            commands.entity(schedule.actor).insert((
+                crate::movement::MoveGoal { cell: roll.to_cell },
+                crate::movement::DodgingOnArrival {
+                    expires_at: now + DODGE_SECS,
+                },
+            ));
         }
-        crate::timeline::end_action(&mut commands, entity, schedule.actor, schedule, now);
+        let busy = crate::timeline::Busy::after(schedule, now, busy_until);
+        commands.entity(entity).despawn();
+        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
+            actor.insert(busy);
+        }
     }
 }
 
-/// 声明招架：`ParryCommand` → 挡下当前正在前摇的那次攻击。
+/// 声明招架：`ParryCommand` → 挡下**正打向玩家的那一次攻击**。
 ///
-/// 找不到威胁（敌人没有待执行的攻击）就不消耗精力、不占用这次决策——
+/// 找不到威胁（没有挂在自己身上的 `CollisionTarget`）就不消耗精力、不占用决策槽——
 /// 招架是反应，不该因为「空气招架」而白白失去一次行动机会。
+#[allow(clippy::too_many_arguments)]
 pub fn declare_parry_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    mut timeline: ResMut<Timeline>,
+    time: Res<Time<Virtual>>,
+    mut focus: ResMut<Focus>,
+    intent: Res<FocusIntent>,
     mut requests: MessageReader<ParryCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    mut players: Query<(Entity, &Stamina, &Faction), With<Ready>>,
-    threats: Query<&crate::timeline::ScheduledAction, With<Declared>>,
+    players: Query<(Entity, &Stamina, &DecisionSlot), With<InputDriven>>,
+    attacks: Query<(Entity, &crate::combat::targeting::CollisionTarget)>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    // **必须按阵营挑玩家**：就绪的单位里也有敌人，`single_mut()` 会抓错人
-    // （两个都就绪时还会直接失败 —— 表现为按 V 什么也没发生）。
-    // `ParryCommand` 只有玩家写，所以找不到就绪的玩家就等于"这次按键被拒"。
     let Some((player, stamina, _)) = players
-        .iter_mut()
-        .find(|(_, _, faction)| **faction == Faction::Player)
+        .iter()
+        .find(|(_, _, slot)| **slot == DecisionSlot::Empty)
     else {
         blocked.write(crate::timeline::ActionBlocked::BUSY);
         return;
@@ -185,67 +191,53 @@ pub fn declare_parry_system(
         blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
         return;
     }
-    // 威胁 = 任何「还在草案里」的动作实体（玩家与敌人共用一条声明流程）
-    let Some(target_attack) = threats.iter().map(|s| s.actor).next() else {
+    // 威胁 = 这次攻击的目标正是玩家自己
+    let Some(target_attack) = attacks
+        .iter()
+        .find(|(_, marker)| marker.0 == player)
+        .map(|(attack, _)| attack)
+    else {
         return; // 没有威胁：这次输入什么也不做
     };
 
-    let draft = commands
-        .spawn_scene(crate::combat::defense::parry_action_scene(
-            player,
-            target_attack,
-            now.elapsed_secs(),
-        ))
-        .id();
-    begin_action(&mut commands, &mut timeline, player, draft);
+    let now = time.elapsed_secs();
+    let schedule = ScheduledAction::with_focus(
+        player,
+        crate::timeline::timing::PARRY,
+        now,
+        &mut focus,
+        intent.0,
+    );
+    commands.spawn_scene(crate::combat::defense::parry_action_scene(
+        target_attack,
+        schedule,
+    ));
+    commands.entity(player).insert(DecisionSlot::Filled);
 }
 
 /// 执行招架：给行动者挂 [`Parrying`]，绑定被挡的那次攻击。
 pub fn parry_executor_system(
     mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    actions: Query<
-        (Entity, &ParryAction, &crate::timeline::ScheduledAction),
-        With<crate::timeline::Committed>,
-    >,
+    time: Res<Time<Virtual>>,
+    actions: Query<(Entity, &ParryAction, &ScheduledAction)>,
     mut actors: Query<&mut Stamina>,
 ) {
-    let now = now.elapsed_secs();
+    let now = time.elapsed_secs();
     for (entity, parry, schedule) in &actions {
+        if !schedule.due(now) {
+            continue;
+        }
         if let Ok(mut stamina) = actors.get_mut(schedule.actor) {
             stamina.try_spend(PARRY_COST);
-            crate::timeline::insert_on_actor(
-                &mut commands,
-                schedule.actor,
-                Parrying {
-                    target_attack: parry.target_attack,
-                    expires_at: now + PARRY_SECS,
-                },
-            );
+            commands.entity(schedule.actor).insert(Parrying {
+                target_attack: parry.target_attack,
+                expires_at: now + PARRY_SECS,
+            });
         }
-        crate::timeline::end_action(&mut commands, entity, schedule.actor, schedule, now);
-    }
-}
-
-/// 过期清理：[`Dodging`] 到点移除；[`Parrying`] 到点或绑定的攻击消失即移除。
-pub fn expire_defense_markers_system(
-    mut commands: Commands,
-    now: Res<Time<Virtual>>,
-    attacks: Query<(), With<crate::timeline::ScheduledAction>>,
-    dodging: Query<(Entity, &Dodging)>,
-    parrying: Query<(Entity, &Parrying)>,
-) {
-    let now = now.elapsed_secs();
-    for (entity, dodging) in &dodging {
-        if now >= dodging.expires_at {
-            commands.entity(entity).remove::<Dodging>();
-        }
-    }
-    for (entity, parrying) in &parrying {
-        // 绑定的攻击实体已经不存在（打空了 / 被销毁）→ 标记失去意义
-        let target_gone = attacks.get(parrying.target_attack).is_err();
-        if now >= parrying.expires_at || target_gone {
-            commands.entity(entity).remove::<Parrying>();
+        let busy = crate::timeline::Busy::after(schedule, now, now);
+        commands.entity(entity).despawn();
+        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
+            actor.insert(busy);
         }
     }
 }
@@ -256,9 +248,6 @@ mod tests {
     use crate::movement::RollAction;
 
     /// PC 的按键**只作用于 PC**：就绪的敌人不会被 `RollCommand` 一起带着滚。
-    ///
-    /// 无回合模型里"谁能决策"由各自 `Ready` 决定，但**触发源**只有玩家：AI 不走输入
-    /// 消息（见 `ai::systems::enemy_declare_system`）。
     #[test]
     fn the_players_roll_command_only_moves_the_player() {
         let mut app = crate::test_support::headless_app();
@@ -291,10 +280,10 @@ mod tests {
         assert_eq!(rolls.len(), 1, "一次按键只该产生一条翻滚");
         let actor = app
             .world()
-            .get::<crate::timeline::ScheduledAction>(rolls[0])
+            .get::<ScheduledAction>(rolls[0])
             .expect("行动实体应当带调度数据")
             .actor;
         assert_eq!(actor, player, "翻滚必须挂在玩家身上");
-        assert_ne!(actor, enemy, "敌人的 Ready 不该被玩家的按键消耗");
+        assert_ne!(actor, enemy, "敌人的决策槽不该被玩家的按键消耗");
     }
 }

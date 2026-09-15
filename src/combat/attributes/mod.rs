@@ -2,4 +2,4 @@
 
 pub mod components;
 
-pub use components::{Armor, AttackFrame, AttackRange, HitRadius, Impact, PhysicalDamage};
+pub use components::{Armor, AttackFrame, AttackRange, HitRadius, InterruptPower, PhysicalDamage};

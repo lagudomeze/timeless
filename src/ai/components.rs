@@ -4,7 +4,8 @@ use bevy::prelude::*;
 
 /// 敌人决策参数。
 ///
-/// 无回合模型下敌人靠自己的节奏决策：一有 [`Ready`](crate::timeline::Ready) 就选一个意图。
+/// 无回合模型下敌人靠自己的节奏决策：决策槽一空
+/// （[`DecisionSlot::Empty`](crate::timeline::DecisionSlot::Empty)）就选一个意图。
 /// 「射程」不在这里——那是**武器**的属性（[`AttackRange`](crate::combat::AttackRange)）。
 ///
 /// **`#[require(Intent)]`**：两个 AI 系统都要求 `&mut Intent`，少了它 AI 会**静默地

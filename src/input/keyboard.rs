@@ -7,7 +7,7 @@ use crate::combat::defense::ParryCommand;
 use crate::combat::skills::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill};
 use crate::movement::{JumpCommand, MoveCommand};
 use crate::presentation::{CameraRig, ToggleHelp};
-use crate::timeline::{CycleReactionWindow, TogglePause};
+use crate::timeline::{TogglePause, UseFocus};
 
 /// `Q/W/E/R` 的技能热键绑定（默认值；用户自定义留到配置外置那一步）。
 ///
@@ -176,17 +176,39 @@ pub fn player_help_input_system(
     }
 }
 
-/// F2 → 循环「反应窗口」的松紧（loose → strict → off）。
+/// `Shift` + 任一「决策键」→ [`UseFocus`]：这一手用 1 点 Focus 换前摇归零。
 ///
-/// 输入域只改**配置**，是否真的停表由时间线的门控解释。
-pub fn reaction_window_input_system(
+/// 输入域只翻译意图（哪个键是按下的、Shift 有没有按着），**扣不扣 Focus 由声明那一刻
+/// 决定**：没有真的声明行动就不会花掉——空按 Shift 什么也不消耗。
+/// 所以这里只需要认出"这一帧有没有决策键被按下"，不必知道各领域会怎么处理它。
+pub fn focus_intent_input_system(
     keys: Res<ButtonInput<KeyCode>>,
-    mut requests: MessageWriter<CycleReactionWindow>,
+    binds: Res<HotkeyBinds>,
+    mut requests: MessageWriter<UseFocus>,
 ) {
-    if !keys.just_pressed(KeyCode::F2) {
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if !shift {
         return;
     }
-    requests.write(CycleReactionWindow);
+    // 方向键 / 跳跃 / 释放技能 / 数字键 / 技能热键——凡是能声明行动的都算
+    let declared = [
+        KeyCode::ArrowUp,
+        KeyCode::ArrowDown,
+        KeyCode::ArrowLeft,
+        KeyCode::ArrowRight,
+        KeyCode::KeyC,
+        KeyCode::KeyG,
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+    ]
+    .into_iter()
+    .chain(binds.entries.iter().map(|(key, _)| *key))
+    .any(|key| keys.just_pressed(key));
+    if declared {
+        requests.write(UseFocus);
+    }
 }
 
 /// 技能栏：`1`~`4` **直接执行**那一格 · `Tab`/`Shift+Tab` 循环（只选，不执行）。

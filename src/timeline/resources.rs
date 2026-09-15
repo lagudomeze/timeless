@@ -1,120 +1,152 @@
-//! 时间线状态资源：**唯一的暂停真相**。
+//! 时间线资源：暂停原因集合、手动暂停开关、反应资源 `Focus`。
+//!
+//! 冻结的判据只有一条：**暂停原因集合非空**。谁想停世界就往集合里放一个原因，
+//! 不想要了就撤掉——因此「玩家等输入」「手动暂停」「敌人正打过来」可以叠加，
+//! 互不覆盖（这是旧的单门控系统最容易出错的地方）。
+
+use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-/// 反应窗口：**敌人打过来时要不要停下来等玩家决定**。
+/// 暂停原因：手动暂停（空格）。
+pub const MANUAL: &str = "manual";
+/// 暂停原因：有一名 `InputDriven` 的行动者空着决策槽，正等玩家决策。
+pub const SLOT_EMPTY: &str = "slot_empty";
+/// 暂停原因：combat 检测到有威胁瞄准玩家（见 `combat::reaction`）。
+pub const THREAT: &str = "threat";
+
+/// 暂停原因集合：**整个游戏唯一的冻结判据**（`frozen ⟺ 非空`）。
+#[derive(Resource, Debug, Default, Clone)]
+pub struct PauseReasons(HashSet<String>);
+
+impl PauseReasons {
+    /// 现在冻着吗。
+    pub fn is_frozen(&self) -> bool {
+        !self.0.is_empty()
+    }
+
+    /// 某个原因在不在。
+    pub fn contains(&self, reason: &str) -> bool {
+        self.0.contains(reason)
+    }
+
+    /// 加上一个原因（已经在里面就什么也不做）。
+    pub fn insert(&mut self, reason: String) {
+        self.0.insert(reason);
+    }
+
+    /// 撤掉一个原因。
+    pub fn remove(&mut self, reason: &str) {
+        self.0.remove(reason);
+    }
+
+    /// 排序后的原因列表（HUD 展示用；排序让「同一批原因」永远显示成同一句话）。
+    pub fn labels(&self) -> Vec<&str> {
+        let mut labels: Vec<&str> = self.0.iter().map(String::as_str).collect();
+        labels.sort_unstable();
+        labels
+    }
+}
+
+/// 手动暂停开关：`Space` 切换，随 [`PauseReasons`] 一起决定要不要停表。
 ///
-/// 无回合模型默认已经会在「玩家就绪」时冻结时间；这个开关管的是**威胁**：
-/// 场上有「正在前摇、且瞄准玩家」的攻击时，要不要也停。
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct TimelineConfig {
-    pub reaction: ReactionWindow,
+/// 单独放一个资源（而不是直接读写 `Time<Virtual>`）是为了让**手动暂停能一直有效**：
+/// 旧实现里「等玩家输入」的门控每帧都会 unpause 一次，空格因而只前进一帧。
+#[derive(Resource, Debug, Default, Clone, Copy)]
+pub struct ManualPause(pub bool);
+
+/// Focus 上限。
+pub const FOCUS_MAX: u32 = 3;
+/// Focus 恢复间隔（虚拟秒）：世界在走才回，冻结时不回。
+pub const FOCUS_RECOVER_INTERVAL: f32 = 10.0;
+
+/// 反应资源：**1 点 Focus = 把一次声明的前摇归零**。
+///
+/// 它买的是「反应速度」而不是数值：威胁压过来时，只有攒着 Focus 的人才来得及
+/// 在同一瞬间改手（见 [docs/timeline.md](../../../docs/timeline.md) 第六节）。
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Focus {
+    pub current: u32,
+    pub max: u32,
 }
 
-/// 反应窗口的三种松紧（按 `F2` 循环）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReactionWindow {
-    /// 只要敌人有瞄准玩家的未结算攻击就冻结（**默认：最松，方便调试**）
-    #[default]
-    Loose,
-    /// 只在玩家**能反应**（就绪）时冻结，且同一发攻击只停一次
-    Strict,
-    /// 完全不因威胁冻结
-    Off,
-}
-
-impl ReactionWindow {
-    /// `F2` 循环：Loose → Strict → Off → Loose。
-    pub fn next(self) -> Self {
-        match self {
-            Self::Loose => Self::Strict,
-            Self::Strict => Self::Off,
-            Self::Off => Self::Loose,
+impl Default for Focus {
+    fn default() -> Self {
+        Self {
+            current: FOCUS_MAX,
+            max: FOCUS_MAX,
         }
     }
+}
 
-    /// 状态行上显示的名字。
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Loose => "loose",
-            Self::Strict => "strict",
-            Self::Off => "off",
+impl Focus {
+    /// 还有没有余量。
+    pub fn available(&self) -> bool {
+        self.current > 0
+    }
+
+    /// 花掉 1 点；没有余量时返回 `false`（调用方据此退回普通前摇）。
+    pub fn spend(&mut self) -> bool {
+        if !self.available() {
+            return false;
         }
+        self.current -= 1;
+        true
+    }
+
+    /// 回复 1 点（封顶）。
+    pub fn recover(&mut self) {
+        self.current = (self.current + 1).min(self.max);
     }
 }
 
-/// 时间线状态：整个游戏唯一的暂停判据。
+/// 本帧玩家有没有要求「用 Focus 换前摇归零」（`Shift` + 决策键）。
 ///
-/// 无回合模型里不存在「阶段」：谁该决策由各单位自己的 `Ready` 决定
-/// （见 [`crate::timeline::components::Ready`]），本资源只回答
-/// 「现在要不要为玩家停下世界」。
-#[derive(Resource, Debug, Default)]
-pub struct Timeline {
-    /// 玩家已就绪、世界正在等他做决定：此时冻结虚拟时间。
-    waiting_for_input: bool,
-    /// 本帧刚声明、还没被提交桥升为 `Pending` 的那条玩家行动。
-    ///
-    /// 提交桥每帧清一次，所以它的实际寿命只有一帧——HUD 靠它区分
-    /// "正在等玩家决定"和"玩家这一手刚落地"。
-    draft: Option<Entity>,
-}
-
-impl Timeline {
-    /// 世界是否正在等玩家输入（HUD / 调试面板读它）。
-    pub fn waiting_for_input(&self) -> bool {
-        self.waiting_for_input
-    }
-
-    /// 玩家是否有"刚声明、还没进 `Pending`"的行动。
-    pub fn has_draft(&self) -> bool {
-        self.draft.is_some()
-    }
-
-    /// 每帧由 `timeline_gate_system` 写入。
-    pub fn set_waiting_for_input(&mut self, waiting: bool) {
-        self.waiting_for_input = waiting;
-    }
-
-    /// 记下 / 清掉玩家草案。
-    pub fn set_draft(&mut self, draft: Option<Entity>) {
-        self.draft = draft;
-    }
-}
+/// 由 [`track_focus_intent_system`](crate::timeline::track_focus_intent_system) 每帧写入，
+/// 声明系统读它——真正的扣费发生在声明那一刻（没声明就不花）。
+#[derive(Resource, Debug, Default, Clone, Copy)]
+pub struct FocusIntent(pub bool);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_reaction_window_starts_loose_for_easy_debugging() {
-        let config = TimelineConfig::default();
-        assert!(
-            matches!(config.reaction, ReactionWindow::Loose),
-            "默认应当最松：敌人一动就停，方便调试"
+    fn frozen_is_exactly_the_reason_set_being_non_empty() {
+        let mut reasons = PauseReasons::default();
+        assert!(!reasons.is_frozen(), "没有原因就不冻结");
+
+        reasons.insert(MANUAL.to_string());
+        reasons.insert(SLOT_EMPTY.to_string());
+        assert!(reasons.is_frozen());
+        assert_eq!(
+            reasons.labels(),
+            vec![MANUAL, SLOT_EMPTY],
+            "多个原因可以叠加，互不覆盖"
         );
-        assert_eq!(ReactionWindow::Loose.next(), ReactionWindow::Strict);
-        assert_eq!(ReactionWindow::Strict.next(), ReactionWindow::Off);
-        assert_eq!(ReactionWindow::Off.next(), ReactionWindow::Loose);
+
+        reasons.remove(MANUAL);
+        assert!(reasons.is_frozen(), "还有原因就仍然冻着");
+        reasons.remove(SLOT_EMPTY);
+        assert!(!reasons.is_frozen(), "原因撤空才解冻");
     }
 
     #[test]
-    fn timeline_starts_not_waiting_and_without_a_draft() {
-        let timeline = Timeline::default();
-        assert!(!timeline.waiting_for_input());
-        assert!(!timeline.has_draft());
-    }
+    fn focus_spends_only_when_available_and_recovers_to_the_cap() {
+        let mut focus = Focus::default();
+        assert_eq!(focus.current, FOCUS_MAX);
 
-    #[test]
-    fn waiting_flags_are_writable_by_the_gate() {
-        let mut timeline = Timeline::default();
-        timeline.set_waiting_for_input(true);
-        timeline.set_draft(Some(Entity::PLACEHOLDER));
-        assert!(timeline.waiting_for_input());
-        assert!(timeline.has_draft());
+        for _ in 0..FOCUS_MAX {
+            assert!(focus.spend());
+        }
+        assert!(!focus.spend(), "没有余量时花不出去");
+        assert_eq!(focus.current, 0);
 
-        timeline.set_waiting_for_input(false);
-        timeline.set_draft(None);
-        assert!(!timeline.waiting_for_input());
-        assert!(!timeline.has_draft());
+        focus.recover();
+        assert_eq!(focus.current, 1);
+        for _ in 0..FOCUS_MAX {
+            focus.recover();
+        }
+        assert_eq!(focus.current, FOCUS_MAX, "回复封顶");
     }
 }
