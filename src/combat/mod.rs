@@ -46,8 +46,8 @@ pub mod targeting;
 pub use attributes::{Armor, AttackFrame, AttackRange, HitRadius, InterruptPower, PhysicalDamage};
 pub use components::{Collidable, Faction};
 pub use defense::{DefenseOutcome, Dodging, ParryCommand, Parrying, RollCommand, Stamina};
-pub use formula::{DamageEvent, DefenseState, counter_damage, physical_damage, resolve_defense};
-pub use health::{DeathEvent, Health, apply_damage_system, despawn_dead_system};
+pub use formula::{DefenseState, counter_damage, physical_damage, resolve_defense};
+pub use health::{DamageEvent, DeathEvent, Health, apply_damage_system, despawn_dead_system};
 pub use lifecycle::{HitOnce, Lifetime, Projectile};
 pub use plugin::CombatPlugin;
 pub use reaction::{

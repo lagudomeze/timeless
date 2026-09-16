@@ -1,11 +1,66 @@
-//! 扣血与死亡销毁。
+//! 生命值组件。
 
 use bevy::prelude::*;
 
-use crate::combat::formula::DamageEvent;
+/// 当前 / 最大生命值（整数：纯减法，可交换，没有浮点边界）。
+///
+/// **允许扣到负数**：伤害不提前终止，`is_alive` 只回答"还站着吗"。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Health {
+    pub current: i32,
+    pub max: i32,
+}
 
-use super::components::Health;
-use super::events::DeathEvent;
+impl Default for Health {
+    fn default() -> Self {
+        Self::new(100)
+    }
+}
+
+impl Health {
+    /// 满血单位。
+    pub fn new(max: i32) -> Self {
+        Self { current: max, max }
+    }
+
+    /// 是否还活着。
+    pub fn is_alive(&self) -> bool {
+        self.current > 0
+    }
+}
+
+/// 目标生命归零（**同一实体只发一次**：扣血时比较扣前 / 扣后）。
+///
+/// 写：[`apply_damage_system`](super::systems::apply_damage_system)；
+/// 消费：战斗日志（[`crate::presentation::BattleLog`]）。
+///
+/// 销毁不由它驱动：`despawn_dead_system` 直接看 `Health.current <= 0`，
+/// 因此"谁把血扣成负的"都能被清理，不会漏。
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeathEvent {
+    /// 阵亡的实体
+    pub entity: Entity,
+    /// 击杀者（伤害来源；环境伤害可以是 `None`）
+    pub killer: Option<Entity>,
+}
+
+/// 一次**已经算完减免**的伤害（纯减法，可交换）。
+///
+/// 写：各伤害类型的命中系统（[`apply_physical_hits_system`](super::apply_physical_hits_system)、
+/// 爆炸、将来的火焰 / 毒…）；
+/// 消费：[`apply_damage_system`](crate::combat::health::apply_damage_system)（唯一的扣血点）、
+/// 战斗日志（[`crate::presentation::BattleLog`]）。
+///
+/// `source` 只为复盘 / 击杀归属存在（死亡消息要写清"谁杀的"），结算本身不看它。
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DamageEvent {
+    /// 伤害来源（攻击实体 / 施法者；环境伤害可以是 `None`）
+    pub source: Option<Entity>,
+    /// 被打的目标
+    pub target: Entity,
+    /// 扣多少血
+    pub amount: i32,
+}
 
 /// **唯一的扣血点**：把 [`DamageEvent`] 落到 `Health` 上，并在首次归零时发
 /// [`DeathEvent`]。
@@ -47,6 +102,7 @@ pub fn despawn_dead_system(mut commands: Commands, dead: Query<(Entity, &Health)
             continue;
         }
         info!("🗑 销毁死亡实体 {entity:?}");
+        //todo maybe do despawn recursively
         commands.entity(entity).despawn();
     }
 }
@@ -54,7 +110,6 @@ pub fn despawn_dead_system(mut commands: Commands, dead: Query<(Entity, &Health)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::formula::DamageEvent;
 
     fn damage_app() -> App {
         let mut app = App::new();

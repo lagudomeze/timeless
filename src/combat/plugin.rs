@@ -11,8 +11,8 @@ use super::defense::{
     expire_defense_markers_system, parry_executor_system, refund_cancelled_actions_system,
     roll_executor_system,
 };
-use super::formula::{DamageEvent, apply_physical_hits_system};
-use super::health::{DeathEvent, apply_damage_system, despawn_dead_system};
+use super::formula::apply_physical_hits_system;
+use super::health::{DamageEvent, DeathEvent, apply_damage_system, despawn_dead_system};
 use super::lifecycle::{cleanup_finished_attacks_system, expire_attack_entities_system};
 use super::reaction::{ThreatWindow, detect_threat_system};
 use super::skills::{

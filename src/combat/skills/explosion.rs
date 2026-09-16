@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::combat::formula::DamageEvent;
+use crate::combat::health::DamageEvent;
 use crate::combat::{Faction, Health};
 
 use super::fireball::ProjectileArrived;
