@@ -13,13 +13,13 @@ use bevy::prelude::*;
 
 use crate::combat::attributes::{Armor, InterruptPower, PhysicalDamage};
 use crate::combat::defense::{DefenseOutcome, Dodging, Parrying};
+use crate::combat::health::DamageEvent;
 use crate::combat::lifecycle::{HitOnce, Projectile};
 use crate::combat::targeting::CollisionTarget;
 use crate::movement::Velocity;
 use crate::timeline::InterruptEvent;
 
 use super::domain::{DefenseState, counter_damage, resolve_defense};
-use super::events::DamageEvent;
 
 /// 物理伤害公式：原始伤害扣护甲，最低为 0。
 ///

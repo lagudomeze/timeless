@@ -14,9 +14,7 @@
 //! 生命值链路（`DamageEvent` → `apply_damage_system` → `DeathEvent`）对所有人共用。
 
 pub mod domain;
-pub mod events;
 pub mod systems;
 
 pub use domain::{DefenseState, counter_damage, resolve_defense};
-pub use events::DamageEvent;
 pub use systems::{apply_physical_hits_system, physical_damage};
