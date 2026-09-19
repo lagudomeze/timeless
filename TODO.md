@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 169 通过（167 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 178 通过（176 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -27,13 +27,16 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - `combat` 生命 / 护甲公式 / 碰撞与近战扇形 / 攻击实体生命周期 / 箭矢与横扫 /
   火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 / 招架反制 / 威胁检测（反应系统）/
   `SKILLS` 注册表与技能菜单
-- `timeline` **无回合**调度：`DecisionSlot` 决定谁能决策，`ScheduledAction` 的时间戳
-  决定前摇 + 后摇，`PauseReasons` 决定什么时候冻结 `Time<Virtual>`（唯一写时钟的是
-  帧末的 `apply_clock`）；`Focus` 让玩家把一次前摇买掉
+- `timeline` **无回合**调度：`DecisionSlot` 三态（`Empty` / `Windup` /
+  `Recovery { until }`）直接写在行动者身上，`ScheduledAction` 的时间戳回答"到点了没有"；
+  暂停是**每帧断言**——谁这一帧还想停表就写一条 `PauseRequest::Pause(原因)`，
+  `process_pause_requests` 每帧重建 `PauseReasons`，唯一的时钟写入点是帧末的 `apply_clock`；
+  行动是行动者的**子实体**（`ChildOf`，人没了行动跟着没），`Focus` 让玩家把一次前摇买掉
 - `ai` 六种意图（含威胁预判）+ 声明行动
-- `input` 只翻译 · `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
+- `input` 只翻译（含 `F5` → `ResetBattle`、空格 → `PauseRequest`、`PlayerIntent`）·
+  `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
 - `presentation` 相机 / 单位纸片与贴地阴影 / 装饰 / 中文日志 / 英文 HUD
-- `spawn` 组装车间 + `ResetBattle`
+- `spawn` 组装车间（消费 `ResetBattle`，不认识按键）
 
 模块地图、流水线顺序、按键表见 [`docs/architecture.md`](docs/architecture.md)；
 组件与系统的逐层对照见 [`docs/components.md`](docs/components.md)。
@@ -82,11 +85,11 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `ActionCost` / `CancelCost` / `Uncancellable`。
 - [x] **M15 同帧阵亡崩溃 + 远射被冻在半路**：收尾全程走 `Commands::get_entity` 守卫；
       火球用 `end_action_until(.., flight_time)` 忙到落地。
-- [x] **M16 时间戳 + 事件模型（本次重构）**：删掉 `Ready` / `BusyRecovery` /
+- [x] **M16 时间戳 + 事件模型**：删掉 `Ready` / `BusyRecovery` /
       `Declared` / `Pending` / `Committed` / `ActionCost` / `CancelCost` /
       `Uncancellable` / `Impact` 与 `Arbitration` 两阶段结算，改为
-      「`DecisionSlot` + `ScheduledAction.execute_at` + `Busy` + `Cancellable`」：
-      执行器自己判 `due()`、自己销毁行动实体、自己挂 `Busy`（无 `scheduler_system`、
+      「决策槽 + `ScheduledAction.execute_at` + 后摇」：
+      执行器自己判 `due()`、自己销毁行动实体、自己写行动者的后摇（无 `scheduler_system`、
       无 `begin_action` / `end_action`）。暂停改成**原因集合**（`"manual"` /
       `"slot_empty"` / `"threat"`，唯一的时钟写入点是 `apply_clock`，空格不再只前进一帧）；
       新增**反应系统**（`Threatens` / `TargetCell` → `detect_threat_system` → 冻结等玩家表态）
@@ -95,6 +98,31 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       伤害压成一条链（`DamageEvent` → `apply_damage_system` → `DeathEvent` →
       `despawn_dead_system`，血量改整数、扣到负数继续扣、死亡只报一次）。
       验收：169 测试全绿 / clippy 零警告 / `rg "ResMut<Time<Virtual>>" src` 只命中 `apply_clock`。
+- [x] **M17 阶段收口 + 交互边界 + 归属交给关系**（四次提交 d94bc0b / 7e47a05 /
+      faa3f5a / 970313a）：① `DecisionSlot` 变成**三态**
+      （`Empty` / `Windup` / `Recovery { until }`，住在新的 `decision.rs`），
+      `Busy` 组件与 `DecisionSlot::Filled` 删除；调度数据搬进新的 `schedule.rs`
+      （`ScheduledAction` 的 `declared_at` / `with_focus` / `windup` / `total` / `pending` / `due`）。
+      ② 交互边界：`F5` 的读取从 `spawn/restart.rs` 搬进
+      `input::keyboard::restart_input_system`；时间线不再读各领域的命令，
+      改认输入层唯一的一条 `PlayerIntent`（写：键盘 / 左键，消费：`interrupt_system`）；
+      `recovery_system` 不再直接改 `Stamina`，改为 trigger `DecisionReady`
+      （`combat::defense::recover_stamina_observer` 订阅回 1 点）；暂停改成**每帧断言**
+      （`PauseRequest::{Pause, Resume}`，`Resume` 不带原因，`process_pause_requests`
+      每帧先 `clear()`，删掉 `TogglePause` / `ManualPause` / `compute_manual_pause` /
+      `request_on_edge`），手动暂停的闩搬进 `input::keyboard::pause_input_system`。
+      ③ 撤销退款：`Cancellable` 枚举删除 → `timeline::Uncancellable` 标记组件
+      （`undo_system` 用 `Without<Uncancellable>` 过滤）；`ActionCancelled` 从 Message
+      改成 **EntityEvent**（`{ entity, actor }`，在 `despawn` **之前** trigger）；
+      退款搬到花钱的领域（`refund_fireball_observer` 退 2 收 2、
+      `refund_melee_observer` 收 `MELEE_CANCEL_PENALTY`，删掉
+      `refund_cancelled_actions_system`）；翻滚 / 招架执行时才扣精力，撤销不退款。
+      ④ 行动实体成为行动者的**子实体**（`ChildOf`，`ScheduledAction.actor` 字段删除）：
+      声明侧统一 `spawn_scene().id()` + `add_child(action)` + `DecisionSlot::Windup`，
+      读取侧（七个执行器、`undo_system`、`interrupt_observer`、`detect_threat_system`、
+      HUD 时间轴与行动行）改带 `&ChildOf` 取 `parent()`；父节点销毁时行动跟着销毁，
+      因此 `reset_battle_system` 的清场查询删掉了 `With<ScheduledAction>`。
+      验收：178 测试全绿（176 单元 + 2 资产验收）/ clippy 零警告 / `cargo fmt --check` 通过。
 - [x] **CJK 字体**：`assets/fonts/NotoSansSC-Regular.otf`（OFL-1.1），
       HUD 显式指定，战斗日志中文不再显示成豆腐块。
 - [x] **文档整合**：文档收敛为「入口 + 架构 + 时间线 + 组件对照 + 设计 + 素材 +
@@ -111,15 +139,17 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `expire_defense_markers_system`、`lifecycle::manage_projectile_hits_system`、
       写而无消费的 `AttackResolved`。剩下的 `declare_skill_system` / `arrow_scene`
       是「单体狙击」的预留实现（收尾已与火球对齐），接输入即可用。
-- [x] **`Space` 手动暂停只前进一帧**：改成暂停原因集合，手动暂停一直有效直到再按一次
-      （见 M16）。
+- [x] **`Space` 手动暂停只前进一帧**：改成暂停原因集合 + **每帧断言**，手动暂停一直有效
+      直到再按一次；"按一下是暂停还是恢复"的闩住在
+      `input::keyboard::pause_input_system`（读 `PauseReasons`）。
 - [x] **箭矢的收尾方式**：`shoot_action_executor_system` 现在忙到
-      `距离 / ARROW_SPEED`（与火球共用 `Busy::after`）。
+      `距离 / ARROW_SPEED`（与火球共用 `DecisionSlot::recovering(.., effect_delay)`）。
 - [x] **玩家身份收口**：新增 `timeline::InputDriven` 标记（组装层挂在玩家身上），
       时间线 / 反应系统 / 撤销 / 各玩家声明系统都认它，不再满世界找 `Faction::Player`。
       表现层仍按 `Faction` 找单位——它看的是阵营，不是输入归属。
 - [ ] **反应窗口的粒度**：现在是"一次威胁一个窗口"，多段攻击（连续三刀）只会问玩家一次。
       将来按威胁**来源**分别开窗（`ThreatWindow` 存集合而不是一个 `Option`）。
+- [ ] **威胁窗口存的是行动者而不是行动**：`ThreatWindow.opening_action` 存的是玩家实体，`detect_threat_system` 用它判断"表态了没有"。玩家在**前摇中**被威胁冻结时，撤销再声明一手不会改变这个值，窗口于是永远等不到表态——双方一起冻死。改成存行动实体即可修好（行动实体在撤销/重新声明时会变）。
 - [ ] **AI 不会用 Focus**：`Focus` 只在玩家侧，敌人声明固定排前摇。
       要让精英怪也会抢先手，得给 AI 一套"什么时候值得花资源"的策略。
 - [ ] **`AttackFrame` 没有消费者**：攻击实体都挂着它，但没有系统读——

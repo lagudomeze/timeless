@@ -31,7 +31,7 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 169 通过（167 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 178 通过（176 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check                           # 格式校验
 ```
@@ -51,9 +51,11 @@ cargo fmt --check                           # 格式校验
 - **高内聚低耦合**：每个领域文件只装自己的组件 / 消息 / 系统。移动领域只含
   格子坐标、位移行动与投射物飞行；火球 / 爆炸等战斗内容归 `combat`，
   通过 `ProjectileArrived` 衔接。
-- **动作实体化**：行动 = 独立实体（载荷组件 + `ScheduledAction` + `Cancellable`）；
-  调度器不感知载荷，新增动作只需新增载荷与执行器。**状态由时间戳推导**
-  （`now < execute_at` 前摇 / `now > execute_at` 该执行 / `Busy` 后摇），
+- **动作实体化**：行动 = 独立实体（载荷组件 + `ScheduledAction` + 可选的
+  `Uncancellable`），以 `ChildOf` 挂在行动者之下；调度器不感知载荷，新增动作
+  只需新增载荷与执行器。**行动者的阶段写在决策槽里**（`DecisionSlot::{Empty,
+  Windup, Recovery { until }}`），时间戳只回答「到点没有」
+  （`now < execute_at` 前摇 / `now > execute_at` 该执行），
   不再有 `Declared` / `Pending` / `Committed` 这类标记。暂停用 `Time<Virtual>`，
   不手写阶段门控。
 - **实体构建优先用 BSN**（`bsn!` + `spawn_scene`）：组件派生 `Default + Clone`
@@ -67,10 +69,13 @@ cargo fmt --check                           # 格式校验
   [`docs/architecture.md`](docs/architecture.md) 第六节。
 - **消息定义与消费它的系统同属一个领域**：如 `MoveCommand` 与 `declare_move_system`
   在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/skills/`、
-  `TogglePause` / `UndoCommand` / `PauseRequest` 与 `compute_manual_pause` /
-  `undo_system` / `process_pause_requests` 在 `timeline/`、
+  `PauseRequest` / `PlayerIntent` / `UndoCommand` 与
+  `compute_player_awaiting_system` / `interrupt_system` / `undo_system` /
+  `process_pause_requests` 在 `timeline/`、
   `PointerCommand` 与 `pointer_command_system` 在 `interaction/`。
   其他领域需要该操作时只写消息，不重复实现。
+  **按键本身永远住在 `input/`**：空格是暂停、`F5` 是重置、`Q/W/E/R` 是技能，
+  各领域只收到"暂停一下""重置一下"这类意图，不认识 `KeyCode`。
 - 跨模块交互一律走 `MessageWriter` / `MessageReader`；只有需要立即生效、
   针对具体实体时才用 Event + Observer，两者不可混用。
 - 新增消息在**消费方领域**的插件 `build` 里用 `add_message::<T>()` 注册
@@ -85,15 +90,19 @@ cargo fmt --check                           # 格式校验
   `resources.rs`；`mod.rs` 只做 `pub mod` + `pub use` 门面。
 - **角色实体不是模块**：零件归各领域（`Health` → combat、`Velocity` → movement、
   `EnemyBrain` → ai、`ChunkLoader` → world），组装归 `spawn/`（`unit_scene` 给共用
-  零件，`player.rs` / `enemy.rs` 追加驱动源）；**没有任何领域依赖 `spawn`**。
+  零件，`player.rs` / `enemy.rs` 追加驱动源）；**没有任何领域依赖 `spawn` 的组装逻辑**
+  （唯一的例外是输入域写 `spawn::ResetBattle` 这一条消息，它由 `spawn` 消费）。
 - **执行器自己收尾**：`if !schedule.due(now) { continue; }` → 落地效果 → 销毁行动实体 →
-  给行动者挂 `Busy::after(schedule, executed_at, busy_until)`。没有集中式收尾函数；
-  「效果延迟发生」的动作（移动 / 火球 / 箭矢）必须把 `busy_until` 推到效果真的发生，
-  否则玩家一空闲世界就冻住、效果停在半路。
-- **唯一的暂停判据是 `PauseReasons` 非空**：各领域用 `PauseRequest::{Pause, Resume}`
-  加减原因（`"manual"` / `"slot_empty"` / `"threat"`），只有帧末 `ClockSet` 的
-  `apply_clock` 能写 `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用 `Time`，
-  位移 / 投射物 / 后摇自动停表）；禁止在其它地方手写 `if paused` 阶段门控。
+  给行动者写 `DecisionSlot::recovering(schedule, now, effect_delay)`。没有集中式收尾函数；
+  「效果延迟发生」的动作（移动 / 火球 / 箭矢）必须把 `effect_delay` 给到效果真的发生
+  （走到格中心 / 飞到落点），否则玩家一空闲世界就冻住、效果停在半路。
+- **暂停是每帧断言**：各领域这一帧还想停表就写一条
+  `PauseRequest::Pause(reason)`（`"manual"` / `"slot_empty"` / `"threat"`）；
+  下一帧不再断言，原因自然消失，不需要谁去撤销。`PauseRequest::Resume` 不带原因，
+  只表示"清空此刻已收集的原因、让时间流动"。**按哪个键暂停 / 恢复是输入域的事**
+  （`input::keyboard::pause_input_system` 读 `PauseReasons` 决定），只有帧末
+  `ClockSet` 的 `apply_clock` 能写 `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用
+  `Time`，位移 / 投射物 / 后摇自动停表）；禁止在其它地方手写 `if paused` 阶段门控。
 - **坐标：决策按格、结算按真实距离**。格（`movement::Cell`，边长 `CELL_SIZE`）只用于
   决策与同格判定；命中 / 射程 / 爆炸半径一律用世界距离。位置只有一份真相
   （Bevy `Transform`），`Cell` 只在单位停下时更新。
@@ -117,7 +126,7 @@ cargo fmt --check                           # 格式校验
 - 单元测试写在源码旁的 `#[cfg(test)] mod tests` 中；`src/lib.rs` 的 `mod tests`
   放**整机用例**（真实流水线顺序 + `headless_app`），其余散在各领域文件里的
   纯逻辑用例；资产验收在 `tests/assets.rs`。
-- 测试名用描述性的 `snake_case`，例如 `layer1_speed_frame_decides_who_hits_first`。
+- 测试名用描述性的 `snake_case`，例如 `pressing_walks_exactly_one_cell_and_stops_at_its_center`。
 - 用 `assert_eq!`；断言意图不直观时附简短说明。
 - **不要用 `#[ignore]` 隐藏失败**：要么修好，要么在 `TODO.md` 写明根因与下一步。
 - 提交前必须通过：`cargo test` 全绿、

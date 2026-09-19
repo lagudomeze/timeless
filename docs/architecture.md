@@ -35,9 +35,9 @@
 | 一个领域 = 一个目录 = 一个 `Plugin` | `mod.rs` 只做 `pub mod` + `pub use` 门面 | 领域边界消失，循环依赖 |
 | 输入只翻译、不执行 | 键盘 / 鼠标只写消息，落盘由消费领域负责 | 输入系统变成上帝系统 |
 | 消息与消费系统同域 | 新增消息在**消费方**插件 `build` 里 `add_message::<T>()` | 生产者与消费者绑死 |
-| 行动实体化 | 行动 = 独立实体（载荷 + `ScheduledAction` + `Cancellable`） | 调度器开始认识载荷 |
+| 行动实体化 | 行动 = 独立实体（载荷 + `ScheduledAction` + 可选的 `Uncancellable`），`add_child` 挂在行动者下 | 调度器开始认识载荷 |
 | 暂停只用 `Time<Virtual>` | 唯一写时钟的是帧末的 `apply_clock`（原因集合 `PauseReasons`） | 各领域冒出 `if paused` 分支 |
-| 状态由时间戳推导 | 前摇 / 到点 / 后摇由 `execute_at` 与 `Busy` 推出，没有三态标记 | 标记与时间戳打架（重复触发 / 忘了摘） |
+| 状态写在决策槽里 | 前摇 / 后摇由 `DecisionSlot` 的三态回答，时刻由 `execute_at` 与 `until` 回答 | 标记与时间戳打架（重复触发 / 忘了摘） |
 | 决策按格、结算按真实距离 | `Cell` 管决策，`Transform` 距离管命中 | 两套坐标各算一半，命中飘忽 |
 | 组装单向依赖 | `spawn` 依赖所有领域，**没有任何领域依赖 `spawn`** | 改角色配置波及战斗规则 |
 | 功能不是领域 | 只把已有系统拼一次的胶水留在调用方 | 每个功能都长出一个空领域 |
@@ -93,9 +93,11 @@ src/
 │   └── plugin.rs               #   CombatPlugin（战斗流水线）
 ├── timeline/
 │   ├── timing.rs               #   ActionTiming（前摇 / 后摇 / 打断抗性）+ 常量表 + CELL_SIZE
-│   ├── components.rs           #   DecisionSlot / InputDriven / ScheduledAction / Busy / Cancellable
-│   ├── resources.rs            #   PauseReasons / ManualPause / Focus / FocusIntent
-│   ├── events.rs               #   PauseRequest / TogglePause / UseFocus / ActionBlocked / UndoCommand / InterruptEvent
+│   ├── decision.rs             #   DecisionSlot 三态（Empty / Windup / Recovery）+ recovering()
+│   ├── schedule.rs             #   ScheduledAction（声明 / 执行时间戳 + 后摇 + 打断抗性）
+│   ├── components.rs           #   Uncancellable / InputDriven（行动实体与行动者的标记）
+│   ├── resources.rs            #   PauseReasons / Focus / FocusIntent
+│   ├── events.rs               #   PauseRequest / PlayerIntent / UseFocus / ActionBlocked / UndoCommand / ActionCancelled / InterruptEvent / DecisionReady
 │   ├── systems.rs              #   暂停原因 / Focus / 打断 / 撤销 / 后摇 / apply_clock
 │   └── plugin.rs
 ├── ai/{components,systems,plugin}.rs
@@ -126,14 +128,15 @@ WorldSet ───────────────────────�
 
 | 系统集 | 内部链 |
 | :--- | :--- |
-| `TimelineSet` | 暂停原因（手动 / 空决策槽）→ Focus 意图 → 打断 → 撤销 → 后摇恢复 → Focus 回复 |
-| `ClockSet`（帧末） | 暂停请求 → 原因集合 → `apply_clock`（**唯一**写 `Time<Virtual>`） |
+| `TimelineSet` | 断言空决策槽 → Focus 意图 → 打断 → 撤销 → 后摇恢复 → Focus 回复 |
+| `ClockSet`（帧末） | 暂停请求（每帧重建原因集合）→ `apply_clock`（**唯一**写 `Time<Virtual>`） |
+| `InputSet` | 方向键 / 技能热键 / 技能栏 / 释放 → 消息；空格 → `PauseRequest`；`F5` → `ResetBattle`；`F1` → `ToggleHelp`；Shift + 决策键 → `UseFocus`；相机平移 / 缩放；左 / 右键 → `PointerCommand` |
 | `MovementSet` | 声明（移动/点地/跳跃）→ 执行器 → 位移 → 贴地 → 跳跃弹道 |
 | `AiSet` | `decide_intent_system` → `enemy_declare_system` |
-| `CombatSet` | 威胁检测 → 防御标记过期 → 退款 → 菜单 → 声明 → 执行器 → 投射物到达/爆炸 → 目标获取 → 命中结算（防御/护甲/打断）→ 扣血 → 生命期清理 → 死亡销毁 |
+| `CombatSet` | 威胁检测 → 防御标记过期 → 菜单 → 声明 → 执行器 → 投射物到达/爆炸 → 目标获取 → 命中结算（防御/护甲/打断）→ 扣血 → 生命期清理 → 死亡销毁 |
 | `PresentationSet` | 相机 → 纸片/阴影 → 日志 → 各面板 → 布局缩放 |
 
-`CombatSet` 的完整链条见 [components.md](components.md) 第七节。
+`CombatSet` 的完整链条见 [components.md](components.md) 第五节。
 
 ## 六、通信规范
 
@@ -150,17 +153,19 @@ WorldSet ───────────────────────�
 | `RollCommand` / `ParryCommand` | `input` / `menu` 派发 | `combat::defense` 的声明系统 |
 | `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` / `interaction` | `combat::skills::menu` |
 | `PointerCommand` | `input` | `interaction::pointer_command_system` |
-| `TogglePause` / `UseFocus` / `UndoCommand` | `input` / `interaction` | `timeline` |
-| `PauseRequest` | `timeline` 的计算系统 / `combat::reaction` | `timeline::process_pause_requests` → `apply_clock` |
+| `PlayerIntent` | `input`（键盘）/ `interaction`（左键） | `timeline::interrupt_system`（撤掉玩家那条还没到点的行动） |
+| `UseFocus` / `UndoCommand` | `input` / `interaction` | `timeline` |
+| `PauseRequest` | `input`（手动）/ `timeline` 的等输入系统 / `combat::reaction` | `timeline::process_pause_requests` → `apply_clock` |
 | `InterruptEvent`（**EntityEvent**） | `combat::formula` 的命中系统（`commands.trigger`） | `timeline::interrupt_observer` |
+| `ActionCancelled`（**EntityEvent**） | `timeline::undo_system`（销毁行动之前 trigger） | 花钱的领域：`combat::skills`（火球退 2 收 2、近战收 1） |
+| `DecisionReady`（**EntityEvent**） | `timeline::recovery_system` | `combat::defense::recover_stamina_observer`（+1 精力） |
 | `ActionBlocked` | 各声明系统 | HUD 提示条 |
-| `ActionCancelled` | `timeline::undo_system` | `combat::defense`（退还精力） |
 | `ProjectileArrived` | `skills::projectile_arrival_system` | `skills::explosion_system` |
 | `DamageEvent` | 各伤害类型的命中系统（物理 / 爆炸） | `health::apply_damage_system`、战斗日志 |
 | `DeathEvent` | `apply_damage_system` | 战斗日志（销毁由 `despawn_dead_system` 直接看 `Health`） |
 | `PanCamera` / `ZoomCamera` / `ToggleHelp` / `PreviewReadout` | `input` / `interaction` | `presentation` |
 | `ChunkLoadEvent` / `ChunkUnloadEvent` / `ChunkDirtyEvent` | `world` | `voxel_render`（+ `world` 自身的地形生成） |
-| `ResetBattle` | `spawn::restart_input_system` | `spawn::reset_battle_system` |
+| `ResetBattle` | `input::keyboard::restart_input_system`（`F5`） | `spawn::reset_battle_system` |
 
 链式分工：**每种伤害类型一个组件 + 一个命中系统**（把"打到了谁"翻译成
 `DamageEvent`）→ `apply_damage_system`（唯一扣血点）→ `DeathEvent`（首次归零）。
@@ -200,8 +205,10 @@ unit_scene        共用零件（Faction / Health / Collidable / HitRadius / Att
 ├── player_scene  + InputDriven（输入归属）+ MoveSpeed(5.0) + ChunkLoader
 └── enemy_scene   + MoveSpeed(2.0) + EnemyBrain（#[require(Intent)]）
 
+行动实体           声明系统 spawn_scene 出行动实体后 add_child 挂在行动者下（ChildOf）
+
 setup_scene       方向光 → 相机 → 玩家 → 敌人 → 地表装饰（Startup）
-reset_battle_system  F5：清场 → 用同一组工厂重建（功能胶水，不是领域）
+reset_battle_system  清场 → 用同一组工厂重建（F5 的按键读取在 input，功能胶水不是领域）
 ```
 
 玩家和敌人的差别只有两点：**驱动源**（`input` 写消息 vs `ai` 自己选意图）
@@ -211,10 +218,16 @@ reset_battle_system  F5：清场 → 用同一组工厂重建（功能胶水，�
 
 ```text
 spawn ──▶ combat / movement / timeline / ai / world / presentation
-input ──▶ movement / combat / timeline / interaction / presentation（只写消息）
+input ──▶ movement / combat / timeline / interaction / presentation / spawn（只写消息）
 interaction ──▶ movement / combat / timeline（点击解释成消息）
 ai ──▶ movement / combat（只声明行动实体）
 ```
+
+`input` 对 `spawn` 的依赖只有一条 `ResetBattle` 消息（`F5`），组装车间反过来
+不认识键盘。行动实体的归属则走 **`ChildOf` 父子关系**：声明侧
+`commands.spawn_scene(..).id()` + `commands.entity(actor).add_child(action)`，
+读取侧（七个执行器、`undo_system`、`interrupt_observer`、`detect_threat_system`、
+HUD 时间轴与行动行）用 `&ChildOf` 的 `parent()` 取行动者。
 
 所以「加一种怪物」「换一套角色零件」永远不会波及战斗、移动、渲染的规则。
 
@@ -230,8 +243,12 @@ ai ──▶ movement / combat（只声明行动实体）
 - **只是把已有系统按顺序拼一次** → 留在调用方，别造领域。
 
 `spawn/restart.rs` 是现成的例子：重置没有自己的数据模型，
-它只是一段「清场 + 用同一套工厂重建」的胶水，因此 `ResetBattle` 消息、
-`F5` 键翻译与消费系统都留在同一个文件里。
+它只是一段「清场 + 用同一套工厂重建」的胶水，因此 `ResetBattle` 消息与
+消费系统（`reset_battle_system`）都留在同一个文件里——触发键 `F5` 的读取
+则和其他按键一样住在 `input/keyboard.rs`，那里只翻译成消息。
+
+清场查询只需要 `Faction` / `Projectile` / `Collidable`：没执行的行动是行动者的
+**子实体**，人没了行动跟着没（`Children` 是 linked spawn），不必单独列进查询。
 
 ## 十、交互与表现
 
@@ -283,7 +300,7 @@ BRP 的 `world.query` 与按名截图靠它们定位实体；**加了新标记�
 | `G` | 释放选中技能（`Attack` 按真实距离派发近战 / 火球） |
 | `Q` / `W` / `E` / `R` | 技能热键，默认火球 / 近战 / 翻滚 / 招架（`HotkeyBinds`） |
 | `C` | 跳跃（弹道约 0.6s，**不可取消**） |
-| `Space` | 暂停 / 继续（只翻译成 `TogglePause`，由暂停原因集合落地） |
+| `Space` | 暂停 / 继续（只翻译成 `PauseRequest`，由暂停原因集合落地） |
 | `Shift` + 决策键 | 用 1 点 Focus 把这一手的前摇归零 |
 | `F1` | 帮助面板开合 |
 | `F5` | 重置战斗 |
@@ -301,13 +318,15 @@ BRP 的 `world.query` 与按名截图靠它们定位实体；**加了新标记�
 | `Phase` / `RoundEnded` / `RESOLUTION_WINDOW` 阶段机 | `DecisionSlot` + 每动作的 `ActionTiming` |
 | `ActionsCommitted` / `require_commit` / 等 `Enter` 确认 | 声明即生效；反悔走打断 / 撤销 |
 | `Position` + `GridMath`（第二套网格坐标） | `Transform` + `Cell`（分工明确） |
-| `Can*` 能力标记 | `DecisionSlot` + `SKILLS` 注册表 + `MenuSelection` |
-| `AttackCooldown` 冷却计时器 | 后摇（`Busy`）就是冷却 |
+| `Can*` 能力标记 | `DecisionSlot`（能不能决策）+ `SKILLS` 注册表 + `MenuSelection` |
+| `AttackCooldown` 冷却计时器 | 后摇（`DecisionSlot::Recovery { until }`）就是冷却 |
 | `AttackStats` 作为 ECS 组件 | 领域层的纯函数入参 |
-| `Declared` / `Pending` / `Committed` 三态标记 | `ScheduledAction.execute_at` + `due()` / `pending()` |
+| `Declared` / `Pending` / `Committed` 三态标记 | `DecisionSlot` 三态 + `ScheduledAction.execute_at` + `due()` / `pending()` |
 | `timeline_gate_system` / `TimelineConfig` / `F2` 反应窗口 | `PauseReasons` + `PauseRequest` + 威胁检测 |
 | `Arbitration` / `phase1_arbitrate` / `phase2_apply` / 三层裁决（破势） | 单一命中系统 + `InterruptEvent`（打断的是**还没到点**的行动） |
-| `ModifyHealthEvent` / `AttackResolved` / `ActionCost` / `CancelCost` / `Uncancellable` | `DamageEvent`（一段链路）/ `Cancellable`（一个枚举） |
+| `ModifyHealthEvent` / `AttackResolved` / `ActionCost` / `CancelCost` | `DamageEvent`（一段链路）/ 各领域自己的退款 Observer |
+| `Busy` 后摇组件 / `Cancellable` 枚举 / `TogglePause` / `ManualPause` | `DecisionSlot::Recovery` / `Uncancellable` 标记 / `PauseRequest`（每帧断言） |
+| `ScheduledAction.actor` 字段 | 行动是行动者的子实体（Bevy `ChildOf`） |
 | `restart` / `scene` 等领域目录 | `spawn/` 组装车间 + 功能胶水 |
 | `timeless/` workspace（代码 B） | 能力已迁入 `src/`，代码树已移除 |
 

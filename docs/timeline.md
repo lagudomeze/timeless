@@ -7,47 +7,60 @@
 
 ## 一、四条不变量
 
-**没有回合、没有阶段、没有状态标记。** 节奏与「谁说了算」由四件事决定：
+**没有回合、没有阶段、没有窗口。** 节奏与「谁说了算」由四件事决定：
 
 | 不变量 | 载体 | 含义 |
 | :--- | :--- | :--- |
-| 谁能决策 | `DecisionSlot`（`Empty` / `Filled`） | 行动者身上唯一的「轮到谁」判据 |
+| 谁能决策 | `DecisionSlot`（`Empty` / `Windup` / `Recovery`） | 行动者身上唯一的「轮到谁」判据 |
 | 出手多快 | `ScheduledAction.execute_at` | 到点就执行，没有调度器替你标记状态 |
 | 什么时候停 | `PauseReasons`（原因集合） | `frozen ⟺ 非空`；唯一写 `Time<Virtual>` 的是 `apply_clock` |
 | 谁被威胁 | `Threatens` / `TargetCell` | 威胁由**行动自己声明**，反应系统只做读数 |
 
 ```text
-[Empty] ──声明──▶ [Filled + 行动实体] ──到点──▶ 执行器落地 ──▶ [Filled + Busy]
-   ▲                                                              │
-   └──────────────────── recovery_system（+1 精力）───────────────┘
+[Empty] ──声明──▶ [Windup + 行动实体] ──到点──▶ 执行器落地 ──▶ [Recovery { until }]
+   ▲                                                                │
+   └───────── recovery_system（now >= until → DecisionReady）────────┘
 ```
 
-### 状态由时间戳推导，不由标记维护
+### 状态写在决策槽里，时间戳只回答「到点了没有」
 
 ```rust
-pub struct ScheduledAction {
-    pub actor: Entity,
-    pub declared_at: f32,   // 虚拟秒
-    pub execute_at: f32,    // declared_at + windup
+pub enum DecisionSlot {          // 行动者身上，三态直接写在这里
+    Empty,                       // 空闲：可以声明行动
+    Windup,                      // 前摇中：行动实体还活着，随时可以反悔
+    Recovery { until: f32 },     // 后摇中：until（虚拟秒）之前不接受新决策
+}
+
+pub struct ScheduledAction {     // 行动实体身上，**没有 actor 字段**
+    pub declared_at: f32,        // 虚拟秒
+    pub execute_at: f32,         // declared_at + windup
     pub recovery: f32,
     pub interrupt_resist: i32,
 }
 ```
 
+**行动者不写在调度数据里**：行动实体是行动者的**子实体**（Bevy 的 `ChildOf`），
+「这条行动是谁的」由父子关系直接回答。父节点销毁时子节点跟着销毁（`Children`
+是 linked spawn），因此不存在"行动者死了、行动还在半空"这种孤儿状态。
+
 | 状态 | 判据 | 谁处理 |
 | :--- | :--- | :--- |
-| 前摇（可撤销 / 可打断） | `now < execute_at` | `undo_system` / `interrupt_observer` |
+| 前摇（可撤销 / 可打断） | `DecisionSlot::Windup`，且 `now < execute_at` | `undo_system` / `interrupt_observer` |
 | 该执行了 | `now > execute_at` | 各领域自己的执行器（`due()`） |
-| 后摇 | 行动者身上有 `Busy { until }` | `recovery_system` |
+| 后摇 | `DecisionSlot::Recovery { until }` 且 `now < until` | `recovery_system` |
 
 - **`Declared` / `Pending` / `Committed` 三态被删掉**：标记与时间戳打架是这类系统的经典
-  bug（"标记忘了摘，于是每帧重复触发同一个动作"），现在只有一份真相（时间戳）。
+  bug（"标记忘了摘，于是每帧重复触发同一个动作"）；现在动作的**阶段**是决策槽里
+  唯一的枚举，**时刻**只有 `execute_at` / `until` 两个时间戳。
 - **执行器自己收尾**：`if !schedule.due(now) { continue; }` → 落地效果 → 销毁行动实体 →
-  给行动者挂 `Busy`。没有 `scheduler_system`，也没有 `begin_action` / `end_action`
-  这类集中式收尾函数。
+  `DecisionSlot::recovering(schedule, now, effect_delay)` 写进行动者的决策槽。
+  没有 `scheduler_system`，也没有 `begin_action` / `end_action` 这类集中式收尾函数。
 - **`due()` 用严格大于**：`execute_at = now` 的零前摇行动（Focus 抢先手）因此落到
   **下一帧**执行。这一帧延迟让反应系统看得见"玩家刚举起来的那一手"，
   玩家感知上仍然是瞬时生效。
+- **后摇到点只由时间线宣布**：`recovery_system` 把槽清成 `Empty` 并 trigger
+  `DecisionReady`（EntityEvent，目标 = 行动者），时间线**不直接改任何资源**——
+  谁关心"又轮到它决策了"（比如精力回复）谁自己订阅。
 
 ### 冻结：原因集合，而不是一个布尔
 
@@ -55,21 +68,29 @@ pub struct ScheduledAction {
 冻结 ⟺ PauseReasons 非空
 ```
 
+**暂停是每帧断言，不是边沿开关**：谁这一帧还想让世界停着，就写一条
+`PauseRequest::Pause(原因)`；不再写，原因下一帧自然消失——不需要谁去"撤销"。
+
 | 原因 | 谁写 | 什么时候写 |
 | :--- | :--- | :--- |
-| `"manual"` | `compute_manual_pause` | 空格切换手动暂停（边沿触发） |
+| `"manual"` | `input::keyboard::pause_input_system` | 空格打开手动暂停后，**每帧重新断言**直到再按一次 |
 | `"slot_empty"` | `compute_player_awaiting_system` | 场上有 `InputDriven` 单位的决策槽空着 |
-| `"threat"` | `combat::reaction::detect_threat_system` | 有敌对行动 / 投射物瞄准玩家所在的格 |
+| `"threat"` | `combat::reaction::detect_threat_system` | 有敌对行动 / 投射物瞄准玩家所在的格，且玩家还没表态 |
 
-- 各领域用 `PauseRequest::{Pause, Resume}(原因)` 加减原因，`ClockSet` 帧末把集合落成时钟。
+- `PauseRequest` 只有两个变体：`Pause(&'static str)`（断言）与 `Resume`（解冻，
+  **不带原因**）。`process_pause_requests` 每帧先 `clear()` 再按消息顺序处理，
+  `Resume` 清掉"此刻已经收集到"的原因。`PauseReasons` 内部是
+  `HashSet<&'static str>`，因此"每帧断言"零分配。
+- 顺序因此有意义且确定：输入域（`Resume` 的来源）排在 `TimelineSet` 之前，
+  各领域的断言排在它之后——玩家手动解冻的那一帧，仍然成立的断言会照常加回来。
 - **多个原因可以叠加、互不覆盖**：手动暂停不会因为"玩家刚声明了行动"而失效
-  （旧实现里门控每帧都反着设一次，空格因此只前进一帧——这是本次重构修掉的 bug）。
+  （旧实现是边沿触发的开关，空格因此只前进一帧——这是重构修掉的 bug）。
 - `apply_clock` 是**唯一**写 `Time<Virtual>` 的地方；Bevy 每帧把虚拟时间拷进通用 `Time`，
   因此位移、投射物、`Lifetime`、后摇计时全部自动停表，各领域**不需要** `if paused` 分支。
 - 冻结在帧末生效，因此一帧之内所有系统看到的是同一个时钟状态（不会半帧冻、半帧不冻）。
 
-> **再也不需要「空中不冻结」这条特例**：跳跃的 `Busy`（0.60s）正好覆盖整条弹道，
-> 落地之前决策槽一直是 `Filled`，世界自然不会停下来等输入。
+> **再也不需要「空中不冻结」这条特例**：跳跃的后摇是 0.60s，正好覆盖整条弹道，
+> 落地之前决策槽一直占着（`Windup` / `Recovery`），世界自然不会停下来等输入。
 
 ## 二、两套坐标，各管一段
 
@@ -97,25 +118,38 @@ pub struct ScheduledAction {
 | 招架 `ParryAction` | 0.05s | 0.25s | 2 |
 
 > **后摇从「效果落地那一刻」起算**：执行器用
-> `Busy::after(schedule, executed_at, busy_until)`，其中 `busy_until` 允许把忙碌窗口
-> 推到效果真的发生（移动走到格中心、火球飞到落点）。数值先集中硬编码，
-> 后续外置成 `.ron`（见 [../TODO.md](../TODO.md)）。
+> `DecisionSlot::recovering(schedule, now, effect_delay)`，其中
+> `effect_delay` 允许把忙碌窗口推到效果真的发生（移动走到格中心、火球飞到落点）。
+> 数值先集中硬编码，后续外置成 `.ron`（见 [../TODO.md](../TODO.md)）。
 
-## 四、撤销与取消规则
+## 四、撤销：退款归花钱的领域
 
-撤销由 `undo_system` 完成：**没到点**（`pending`）的行动可以被撤，撤销后行动实体销毁、
-决策槽立刻变空、并按行动自己的 `Cancellable` 广播退款。
+撤销由 `undo_system` 完成：**没到点**（`pending`）且**没挂 `Uncancellable`** 的玩家行动
+可以被撤。撤销时**先** trigger `ActionCancelled { entity, actor }`（EntityEvent，目标 = 行动实体），
+**再**销毁行动实体，并把行动者的决策槽清成 `Empty`。
 
-| 变体 | 语义 | 谁在用 |
-| :--- | :--- | :--- |
-| `Cancellable::Free` | 撤销免费 | 移动 / 翻滚 / 招架 / 箭矢 |
-| `Cancellable::Cost { refund, penalty }` | 退还 `refund`、再收 `penalty` | 火球（2/2）、近战（0/1） |
-| `Cancellable::Never` | 根本不给撤 | 跳跃 |
+```text
+undo_system
+  ├─ 过滤：Without<Uncancellable> + schedule.pending(now) + 行动者是 InputDriven
+  ├─ trigger ActionCancelled { entity: 行动实体, actor: 行动者 }   ← 必须在 despawn 之前
+  ├─ despawn 行动实体
+  └─ 行动者决策槽 → Empty（行动者可能已阵亡，先 get_entity 守卫）
+```
 
-- 一个组件取代了旧的 `ActionCost` / `CancelCost` / `Uncancellable` 三件套。
-- **退款在资源拥有者那一侧落地**：时间线只广播 `ActionCancelled { actor, refund, penalty }`，
-  `combat::defense::refund_cancelled_actions_system` 把它变成一次 `Stamina` 增减。
-- 到点的行动撤不掉（来不及）；`Cancellable::Never` 的行动连前摇里也撤不掉。
+「退多少、收多少」**不住在时间线里**，而是由花钱的那个领域订阅 `ActionCancelled`
+自己算——时间线根本不认识火球 / 近战这些载荷：
+
+| 退款 Observer | 规则 |
+| :--- | :--- |
+| `combat::skills::fireball::refund_fireball_observer` | 退 `FIREBALL_COST`(2) 又收 2：撤销本身要有分量 |
+| `combat::skills::actions::refund_melee_observer` | 收 `MELEE_CANCEL_PENALTY`(1)：抡出去再收招 |
+
+- **翻滚 / 招架不退款**：它们的精力在**执行时**才扣（`roll_executor_system` /
+  `parry_executor_system`），前摇里撤销时还没花过钱，无可退。
+- **打断也不退款**：那一手白费了（`ActionCancelled` 只由 `undo_system` 触发）。
+- `Uncancellable` 是**标记组件**，只回答"能不能撤"；旧的 `Cancellable` 枚举
+  （`Free` / `Cost` / `Never`）已经删掉。
+- 到点的行动撤不掉（来不及）；挂了 `Uncancellable` 的行动（跳跃）连前摇里也撤不掉。
 
 ## 五、打断：打的是「还没发生的事」
 
@@ -129,11 +163,11 @@ pub struct InterruptEvent { pub entity: Entity, pub source: Entity, pub power: i
 commands.trigger(InterruptEvent { entity: target, source: attack, power });
 ```
 
-Observer 的判定（`timeline::interrupt_observer`）：
+Observer 的判定（`timeline::interrupt_observer`，用 `&ChildOf` 取行动者）：
 
 ```text
-power == 0                       → 直接返回（没有力度就不做对抗）
-找不到 execute_at > now 的行动   → 直接返回（这一手已经出去了，打不断）
+power == 0                                  → 直接返回（没有力度就不做对抗）
+找不到该行动者 execute_at > now 的行动        → 直接返回（这一手已经出去了，打不断）
 攻方 = power + 3 + 3d5
 守方 = interrupt_resist + 3 + 3d5
 攻方 >= 守方 → 销毁那条行动实体 + 目标决策槽清空
@@ -141,7 +175,7 @@ power == 0                       → 直接返回（没有力度就不做对抗�
 
 - 旧的「破势（`Impact`）」是**同刻相撞**时比大小；新模型里"谁先出手"由 `execute_at`
   决定，相撞不再需要仲裁，打断因此改成"撞掉对方还在前摇里的那一手"。
-- 打断不退款：那一手白费了（`Cancellable` 只对撤销生效）。
+- 打断不退款：那一手白费了（`ActionCancelled` 只由撤销触发，打断不触发它）。
 - AI 与玩家共用同一条规则：谁被打中前摇，谁的决策槽就被清空、下一帧重新决策。
 
 ## 六、反应系统：威胁 → 冻结 → 玩家表态
@@ -149,18 +183,20 @@ power == 0                       → 直接返回（没有力度就不做对抗�
 ```text
 每个 action 自己声明威胁覆盖的格（Threatens）
 飞行中的投射物声明瞄准的格（TargetCell）
-  ─▶ detect_threat_system：敌对来源且覆盖玩家所在格 → Pause("threat")
+  ─▶ detect_threat_system：敌对来源且覆盖玩家所在格 → 每帧断言 Pause("threat")
   ─▶ 世界冻结：玩家可以撤销、换手、或者花 1 点 Focus 抢先手
-  ─▶ 玩家换了一手 / 威胁消失 → Resume("threat")
+  ─▶ 玩家换了一手（= 表态）→ 停止断言，原因下一帧自然消失、世界解冻
 ```
 
 - **「敌对」是必要条件**：玩家自己的火球砸在自己脚下不该把世界冻住（那样球永远飞不出去）。
 - **一次威胁只开一个窗口**：窗口打开时记下"玩家当时那一手"，玩家换了行动就说明他表态了；
-  表态之后即使威胁还在也不再重复冻结（否则世界会走一帧停一帧）。
+  表态之后即使威胁还在也不再断言（否则世界会走一帧停一帧）。
 - 威胁消失（前摇结束 / 被打断 / 投射物落地）后窗口复位，下一次威胁重新开窗。
 - 判据用**格**而不是实体：火球声明飞行经过的格（`trajectory_cells`），
   近战声明正前方 + 左右各一格（`melee_arc_cells`），因此"站哪一格"就是全部信息。
   新增攻击方式只要挂 `Threatens`，反应系统一行不改。
+- `detect_threat_system` 与时间线一样**只断言**（写 `PauseRequest`），不自己解冻：
+  真正把原因落成时钟的仍然是 `process_pause_requests` → `apply_clock`。
 
 ### Focus：把前摇买掉
 
@@ -184,7 +220,7 @@ pub struct MoveAction { pub from_cell: Cell, pub to_cell: Cell }
 MoveCommand{axis} / MoveToCommand{cell}
   → declare_*_system      决策槽空着才接受 → step_from_axis 吸附成正交格步 → 行动实体
   → move_action_executor  now > execute_at → 朝格中心设 Velocity + MoveGoal
-                          收尾：销毁行动实体 + Busy 到「真的走到位」
+                          收尾：销毁行动实体 + Recovery 到「真的走到位」
   → move_entities_system  按速度位移；到格中心吸附 + 停 Velocity
                           + 写 Cell + 移除 MoveGoal + 兑现 DodgingOnArrival
 ```
@@ -240,7 +276,7 @@ FireCommand
   → declare_fireball_system  锁格 + 扣 2 精力 + 声明威胁覆盖的格（飞行路径）→ 行动实体
   → 前摇 0.30s
   → fireball_action_executor_system  从**当前站位**发射投射物（TargetCell + Fireball）
-                                     收尾：忙到 executed_at + flight_time(..)
+                                     收尾：Recovery 到 executed_at + flight_time(..)
   → projectile_arrival_system  每帧比「格中心 ↔ 投射物位置」→ ProjectileArrived
   → explosion_system           按**真实距离**取半径内敌对单位 → DamageEvent
 ```
@@ -251,7 +287,8 @@ FireCommand
 ## 十一、精力与技能菜单
 
 - `Stamina { current, max }` 是**防御与机动的货币**（翻滚 1 / 招架 1 / 火球 2），
-  每次重新可决策（后摇结束、决策槽清空）回 1 点。
+  每次重新可决策时回 1 点：`recovery_system` trigger `DecisionReady` →
+  `combat::defense::recover_stamina_observer` 落地。时间线不反向依赖 `Stamina`。
 - 注册表 `combat/skills/registry.rs` 的 `SKILLS` 是**展示与消耗的单一来源**。
 - 菜单选择**随时可做**（忙的时候也能先把下一个选好），释放要求决策槽为空。
 - 菜单不生成行动实体、不扣资源：扣费只在各领域的声明系统里发生。

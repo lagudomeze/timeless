@@ -23,7 +23,7 @@ L6 表现与交互    CameraRig / UnitSprite / HUD 标记 / HoveredCell / 预演
 L5 行动载荷      MoveAction / JumpAction / RollAction / MeleeAction / ShootAction
                  FireballAction / ParryAction / Fireball
 L4 战斗零件      Health / Faction / Collidable / 属性 / 防御标记 / 攻击实体生命周期
-L3 时间线调度    DecisionSlot / InputDriven / ScheduledAction / Busy / Cancellable
+L3 时间线调度    DecisionSlot / InputDriven / ScheduledAction / Uncancellable
 L2 决策与位移    Cell / MoveGoal / Velocity / MoveSpeed / Jumping / DodgingOnArrival
 L1 体素数据域    Chunk / ChunkPos / ChunkLoader / ChunkPinned / Voxel + 区块消息
 L0 引擎零件      Transform / Visibility / Children / Mesh3d / Node / Text / Camera3d
@@ -93,7 +93,7 @@ ChunkUnloadEvent -> despawn_chunk_surfaces_system（清理网格）
 | `Cell { x, z }` | `movement/cell.rs` | `unit_scene`（`Cell::from_world(出生位置)`） | **决策系统的通用语言**：movement 的声明系统、`move_action_executor_system`、`ai::enemy_declare_system`、`combat::defense::declare_roll_system`、`combat::reaction`（威胁按格声明、玩家站在哪格）、`interaction`（悬停色 / 点击判定）、`presentation::hud::panels` | **只有 `move_entities_system` 写**（吸附到格中心那一刻） |
 | `MoveGoal { cell }` | 同上 | `move_action_executor_system`、`roll_executor_system` | `move_entities_system` | 到格中心时 remove |
 | `Velocity(Vec3)` | `movement/components.rs` | `unit_scene`（零）、`arrow_scene`、`fireball_scene` | `move_entities_system`、`combat::defense` 的攻击探针 | `move_action_executor_system` / `roll_executor_system`（起步）、`move_entities_system`（每帧位移）、`apply_physical_hits_system`（命中后归零）、`projectile_arrival_system`（到达归零） |
-| `MoveSpeed(f32)` | 同上 | `player_scene`(5.0) / `enemy_scene`(2.0) | `move_action_executor_system`（算 `Velocity` 与 `busy_until`） | 不变 |
+| `MoveSpeed(f32)` | 同上 | `player_scene`(5.0) / `enemy_scene`(2.0) | `move_action_executor_system`（算 `Velocity`，并据此估出「还要走多久」`effect_delay`） | 不变 |
 | `Jumping { ground_y, velocity }` | `movement/actions.rs` | `jump_action_executor_system` | `jump_motion_system`、`follow_terrain_system`（过滤）、HUD 面板（状态行） | `jump_motion_system` 落地时 remove |
 | `DodgingOnArrival { expires_at }` | `movement/systems.rs` | `roll_executor_system` | `move_entities_system` | 到位那一刻**换成 `Dodging`** 并 remove |
 
@@ -107,40 +107,41 @@ ChunkUnloadEvent -> despawn_chunk_surfaces_system（清理网格）
 
 | 组件 | 挂在哪 | 创建 | 读 | 写 / 生命周期 |
 | :--- | :--- | :--- | :--- | :--- |
-| `DecisionSlot`（`Empty` / `Filled`） | 单位 | `unit_scene`（`Empty`） | movement / combat / defense / skills 的**所有**声明系统、`ai` 两个系统、`menu` 的循环与派发、`compute_player_awaiting_system`（世界要不要停）、`combat::reaction`（玩家表态了没有）、HUD（面板状态行、时间轴候场区） | 声明时 `Filled`；`recovery_system` / `undo_system` / `interrupt_observer` 置 `Empty` |
+| `DecisionSlot`（`Empty` / `Windup` / `Recovery`） | 单位 | `unit_scene`（`Empty`） | movement / combat / defense / skills 的**所有**声明系统、`ai` 两个系统、`menu` 的循环与派发、`compute_player_awaiting_system`（世界要不要停）、`combat::reaction`（玩家表态了没有）、HUD（面板状态行、时间轴候场区） | 声明时 `Windup`（`add_child` 行动实体 + insert）；`recovery_system` 在后摇到点时置 `Empty`；`undo_system` / `interrupt_observer` 置 `Empty` |
 | `InputDriven` | 单位 | `player_scene` | `compute_player_awaiting_system`（停下等谁）、`combat::reaction`（谁被威胁 / 谁在表态）、`undo_system`（只撤玩家的行动）、各玩家声明系统（认人不认阵营） | 不变 |
-| `Busy { until }` | 单位 | 各执行器收尾（`Busy::after`） | `recovery_system` | 到点 remove 并把决策槽置 `Empty`（顺带回 1 精力） |
-| `ScheduledAction { actor, declared_at, execute_at, recovery, interrupt_resist }` | 行动实体 | 所有行动场景工厂（`declared_at` / `with_focus`） | 各执行器（`due`）、`undo_system` / `interrupt_observer`（`pending`）、`ai::decide_intent_system`（威胁）、HUD 时间轴 / 行动行、`reset_battle_system`（清场目标） | 不变（行动实体销毁即消失） |
-| `Cancellable`（`Free` / `Cost` / `Never`） | 行动实体 | 各行动场景工厂 | `undo_system`（退多少、能不能撤） | 行动实体销毁即消失 |
+| `ScheduledAction { declared_at, execute_at, recovery, interrupt_resist }` | 行动实体（行动者的**子实体**，`ChildOf`） | 所有行动场景工厂（`declared_at` / `with_focus`） | 各执行器（`due`）、`undo_system` / `interrupt_observer`（`pending`）、`ai::decide_intent_system`（威胁）、HUD 时间轴 / 行动行 | 不变（行动实体销毁即消失）；**没有 `actor` 字段**：归属由 `ChildOf` 回答 |
+| `Uncancellable` | 行动实体 | 行动场景工厂（目前只有 `jump_action_scene`） | `undo_system`（`Without<Uncancellable>`：挂了就不给撤） | 行动实体销毁即消失；退款金额不在这里（见 5.4 的退款 Observer） |
 
 ### 4.2 资源
 
 | 资源 | 写 | 读 |
 | :--- | :--- | :--- |
-| `PauseReasons(HashSet<String>)` | `process_pause_requests`（帧末） | `apply_clock`（唯一的停表判据）、HUD 时间轴（冻结原因） |
-| `ManualPause(bool)` | `compute_manual_pause` | 同系统（决定要不要写 `"manual"` 原因） |
+| `PauseReasons(HashSet<&'static str>)` | `process_pause_requests`（帧末每帧重建：先 `clear()`，再按消息顺序放断言） | `apply_clock`（唯一的停表判据）、`input::keyboard::pause_input_system`（手动暂停开着没有）、HUD 时间轴（冻结原因） |
 | `Focus { current, max }` | `recover_focus_system`（+1）、各玩家声明系统（花 1 点换零前摇） | 同左 |
 | `FocusIntent(bool)` | `track_focus_intent_system` | 各玩家声明系统（本帧要不要用 Focus） |
 
 ### 4.3 系统链（顺序即语义）
 
 ```text
-compute_manual_pause           空格 -> 手动暂停原因（边沿触发）
-compute_player_awaiting_system 玩家决策槽空着 -> "slot_empty" 原因
+compute_player_awaiting_system 玩家决策槽空着 -> 每帧断言 "slot_empty"
 track_focus_intent_system      Shift + 决策键 -> FocusIntent（只在本帧有效）
-interrupt_system               本帧有玩家新意图 -> 写 UndoCommand
-undo_system                    右键 / 打断：销毁还没到点的玩家行动 + 清空决策槽 + 广播退款
-recovery_system                Busy 到点 -> 清空决策槽 + 回 1 精力
+interrupt_system               本帧有 PlayerIntent -> 写 UndoCommand
+undo_system                    右键 / 打断：销毁还没到点的玩家行动 + 清空决策槽 + trigger ActionCancelled
+recovery_system                后摇到点 -> 决策槽置 Empty + trigger DecisionReady
 recover_focus_system           每 10 虚拟秒回 1 点 Focus
 
 （帧末 ClockSet）process_pause_requests -> apply_clock：**唯一**写 Time<Virtual> 的地方
 ```
 
-`interrupt_observer` 不在系统链里：它是 `InterruptEvent`（`EntityEvent`）的 Observer，
-命中结算当场触发、当场决定那条行动还在不在（见 [timeline.md](timeline.md) 第五节）。
+`interrupt_observer` / `recover_stamina_observer` / 两个退款 Observer 都不在系统链里：
+它们是 EntityEvent 的 Observer，触发那一刻当场执行（见 [timeline.md](timeline.md) 第四 / 五节）。
+
+手动暂停不在这一域：`input::keyboard::pause_input_system` 读 `PauseReasons` 判断
+"按一下是暂停还是恢复"，然后每帧断言（或不再断言）`"manual"`。
 
 **没有集中式收尾函数**：每个执行器自己判 `if !schedule.due(now) { continue; }`、
-自己销毁行动实体、自己挂 `Busy`（往可能已经阵亡的行动者上写命令要先 `get_entity` 守卫）。
+自己销毁行动实体、自己给行动者写 `DecisionSlot::recovering(..)`
+（往可能已经阵亡的行动者上写命令要先 `get_entity` 守卫）。
 
 ## 五、L4 战斗零件（`combat`）
 
@@ -151,7 +152,7 @@ recover_focus_system           每 10 虚拟秒回 1 点 Focus
 | `Faction` | `unit_scene` | 几乎所有战斗系统（目标过滤 / 敌我判定）、`ai`、`combat::reaction`（威胁必须来自敌对阵营）、`presentation`（立绘、面板、日志、相机跟随） | 不变 |
 | `Collidable` | `unit_scene` | `detect_collisions_system`、`detect_melee_system`、`reset_battle_system` | 不变 |
 | `Health { current, max }`（整数） | `unit_scene`(50) | `ai::decide_intent_system`（血量比例）、`explosion_system`（`With<Health>` 过滤）、HUD 面板 | `apply_damage_system`（**唯一**扣血入口）、`despawn_dead_system`（`current <= 0` 时销毁） |
-| `Stamina` | `unit_scene`（默认 5） | `declare_roll_system` / `declare_parry_system`（够不够）、`declare_fireball_system`（够不够）、`ai::enemy_declare_system`、`menu` 的可用性判断、HUD 技能栏 / 面板 | 扣费：`roll_executor_system`(1) / `parry_executor_system`(1) / `declare_fireball_system`(2)；回复：`recovery_system`(+1)、`refund_cancelled_actions_system`(退还 − 取消代价) |
+| `Stamina` | `unit_scene`（默认 5） | `declare_roll_system` / `declare_parry_system`（够不够）、`declare_fireball_system`（够不够）、`ai::enemy_declare_system`、`menu` 的可用性判断、HUD 技能栏 / 面板 | 扣费：`roll_executor_system`(1) / `parry_executor_system`(1) / `declare_fireball_system`(2)；回复：`recover_stamina_observer`（订阅 `DecisionReady`，+1）、`refund_fireball_observer` / `refund_melee_observer`（撤销退款） |
 
 ### 5.2 数值属性（`combat/attributes`）
 
@@ -182,23 +183,33 @@ recover_focus_system           每 10 虚拟秒回 1 点 Focus
 | `Threatens { cells }` | `fireball_action_scene`（飞行路径）/ `melee_action_scene`（正前方 + 两侧） | `detect_threat_system`（威胁是否压在玩家格上）、`ai::decide_intent_system`（是否压在自己格上） | 行动实体销毁即消失 |
 | `TargetCell(Cell)` | `fireball_scene`（飞行中的投射物） | `projectile_arrival_system`（到达判定）、`detect_threat_system`（飞行中也是威胁） | 到达时 remove（它不再是威胁） |
 
-### 5.4 战斗资源
+### 5.4 战斗资源与撤销退款
 
 | 资源 | 写 | 读 |
 | :--- | :--- | :--- |
 | `ThreatWindow { threatening, opening_action, answered }` | `detect_threat_system` | 同系统（一次威胁只开一个窗口） |
 | `MenuSelection { index }` | `select_skill_system` / `cycle_skill_system` | `use_selected_skill_system`、`interaction`（预演指示器）、HUD 技能栏 |
 
+**撤销退款是 Observer，不是资源操作**（都不在系统链里，`ActionCancelled` 触发即执行）：
+
+| Observer | 订阅 | 做什么 |
+| :--- | :--- | :--- |
+| `combat::skills::fireball::refund_fireball_observer` | `ActionCancelled` + `With<FireballAction>` | 退 `FIREBALL_COST`(2) 再收 2：净额不变，撤销本身要有分量 |
+| `combat::skills::actions::refund_melee_observer` | `ActionCancelled` + `With<MeleeAction>` | 收 `MELEE_CANCEL_PENALTY`(1)：抡出去再收招 |
+| `combat::defense::recover_stamina_observer` | `DecisionReady` | 后摇结束、重新可决策 → +1 精力 |
+
+翻滚 / 招架**不退款**：它们的精力在执行时才扣（`roll_executor_system` /
+`parry_executor_system`），前摇里撤销时还没花过钱。
+
 ### 5.5 `CombatSet` 内部链
 
 ```text
-detect_threat_system              敌对威胁压在玩家格上 -> 请求冻结（本帧末生效）
+detect_threat_system              敌对威胁压在玩家格上 -> 每帧断言冻结（本帧末生效）
 expire_defense_markers_system     本帧到期的无敌帧不该再生效
-refund_cancelled_actions_system   退还上一帧撤销的行动花费
 select_skill_system / cycle_skill_system
 use_selected_skill_system         按选择派发成 FireCommand / MeleeCommand / RollCommand
 declare_fireball_system / declare_melee_system / declare_roll_system / declare_parry_system
-melee / fireball / roll / parry 执行器    到点落地 -> 销毁行动实体 + 挂 Busy（各自收尾）
+melee / fireball / roll / parry 执行器    到点落地 -> 销毁行动实体 + 写 DecisionSlot::Recovery（各自收尾）
 projectile_arrival_system -> explosion_system
 detect_collisions_system / detect_melee_system    挂 CollisionTarget
 apply_physical_hits_system        防御判定 + 护甲 + 打断触发 + 命中计数
@@ -306,7 +317,11 @@ enemy_scene(terrain, sprites)  = unit_scene(Enemy, 格 (3,3) 中心)
 | `preload`（`PreloadSet`） | Startup，最早 | 插 `GlobalAmbientLight`、`Natures`、`UnitSprites` |
 | `setup_hud`（`.after(preload)`） | Startup | 建整套 HUD（用单位精灵当头像，所以必须在预载之后） |
 | `setup_scene`（`AssemblySet`） | Startup | 方向光 → 相机 → 玩家 → 敌人 → 5×5 装饰 |
-| `restart_input_system` / `reset_battle_system`（`SpawnSet`） | Update | `F5` → `ResetBattle` → 清单位 / 攻击实体 / 未结算行动 → 用同一组工厂重建 |
+| `restart_input_system`（`InputSet`）→ `reset_battle_system`（`SpawnSet`） | Update | `F5` → `ResetBattle` → 清单位 / 攻击实体 → 用同一组工厂重建 |
+
+`F5` 的读取住在 `input::keyboard::restart_input_system`：组装车间**不认识按键**，
+它只消费 `ResetBattle`。清场查询只需要 `Faction` / `Projectile` / `Collidable`——
+没执行的行动是单位的子实体，人没了行动跟着没（`Children` 是 linked spawn）。
 
 **攻击实体不在组装层**：它们是技能的产物，工厂归 `combat::skills`
 （`melee_scene` / `arrow_scene` / `fireball_scene`）。
@@ -323,41 +338,44 @@ UnitSprites   --> unit_scene  --^
                         |
       +-----------------+----------------------+
       v                 v                      v
-  input/ai 声明行动   时间线：决策槽 / Busy / 暂停原因      HUD / 相机只读
+  input/ai 声明行动   时间线：决策槽三态 / 暂停原因      HUD / 相机只读
       |                 |
-      `-> 行动实体（载荷 + ScheduledAction + Cancellable）-> 执行器 -> 攻击实体
-                                                                     |
-                              targeting -> apply_physical_hits -> apply_damage -> despawn_dead
+      `-> 行动实体（载荷 + ScheduledAction + Uncancellable）--add_child--> 行动者
+                              |
+                              v
+                          执行器 -> 攻击实体
+                                      |
+          targeting -> apply_physical_hits -> apply_damage -> despawn_dead
 ```
 
 ## 九、系统 × 组件反查（按系统集）
 
 | 系统 | 读 | 写 |
 | :--- | :--- | :--- |
-| `compute_manual_pause` / `compute_player_awaiting_system` | `TogglePause`、`ManualPause`、`DecisionSlot`、`InputDriven` | `PauseRequest` |
+| `compute_player_awaiting_system` | `DecisionSlot`、`InputDriven` | `PauseRequest`（每帧断言 `"slot_empty"`） |
 | `track_focus_intent_system` | `UseFocus` | `FocusIntent` |
-| `interrupt_system` | 六条玩家意图消息 | `UndoCommand` |
-| `undo_system` | `UndoCommand`、`ScheduledAction`（`pending`）、`Cancellable`、`InputDriven` | 销毁行动实体、`DecisionSlot::Empty`、`ActionCancelled` |
-| `recovery_system` | `Busy`、`Time<Virtual>`、`Stamina` | `DecisionSlot::Empty`、`Stamina`、remove `Busy` |
+| `interrupt_system` | `PlayerIntent`（输入层的唯一一条意图消息） | `UndoCommand` |
+| `undo_system` | `UndoCommand`、`ScheduledAction`（`pending`）、`ChildOf`（取行动者）、`Uncancellable`（`Without`）、`InputDriven` | trigger `ActionCancelled`、销毁行动实体、`DecisionSlot::Empty` |
+| `recovery_system` | `DecisionSlot`（只处理 `Recovery`）、`Time<Virtual>` | `DecisionSlot::Empty`、trigger `DecisionReady` |
 | `recover_focus_system` | `Time<Virtual>` | `Focus` |
-| `process_pause_requests` / `apply_clock` | `PauseRequest` / `PauseReasons` | `PauseReasons` / `Time<Virtual>`（**唯一**写时钟的地方） |
-| `interrupt_observer` | `InterruptEvent`、`ScheduledAction`（`pending`）、`Time<Virtual>` | 销毁行动实体、`DecisionSlot::Empty` |
-| `declare_move_system` / `declare_move_to_system` / `declare_jump_system` | 命令消息、`InputDriven`、`DecisionSlot`、`Cell`、`Focus`、`FocusIntent`、`Time<Virtual>` | 行动实体、`DecisionSlot::Filled`、`ActionBlocked` |
-| `move_action_executor_system` | `MoveAction`、`ScheduledAction`（`due`）、`Cell`、`MoveSpeed`、`Transform` | `Velocity`、`MoveGoal`、`Busy`、销毁行动实体 |
+| `process_pause_requests` / `apply_clock` | `PauseRequest` / `PauseReasons` | `PauseReasons`（每帧 `clear` 后重建）/ `Time<Virtual>`（**唯一**写时钟的地方） |
+| `interrupt_observer` | `InterruptEvent`、`ScheduledAction`（`pending`）、`ChildOf`（取行动者）、`Time<Virtual>` | 销毁行动实体、`DecisionSlot::Empty` |
+| `declare_move_system` / `declare_move_to_system` / `declare_jump_system` | 命令消息、`InputDriven`、`DecisionSlot`、`Cell`、`Focus`、`FocusIntent`、`Time<Virtual>` | 行动实体、行动者的 `DecisionSlot::Windup` + `ChildOf`、`ActionBlocked` |
+| `move_action_executor_system` | `MoveAction`、`ScheduledAction`（`due`）、`ChildOf`、`Cell`、`MoveSpeed`、`Transform` | `Velocity`、`MoveGoal`、`DecisionSlot::Recovery`、销毁行动实体 |
 | `move_entities_system` | `Transform`、`Velocity`、`MoveGoal`、`DodgingOnArrival`、`Time`、`TerrainConfig` | `Transform`、`Velocity`、`Cell`、`Dodging`、`MoveGoal`(remove) |
 | `follow_terrain_system` | `Transform`、`Cell`、`Jumping`(排除)、`TerrainConfig` | `Transform.y` |
 | `jump_motion_system` | `Jumping`、`Time` | `Transform.y`、`Jumping`(remove) |
 | `decide_intent_system` | `Transform`、`Cell`、`Faction`、`Health`、`AttackRange`、`EnemyBrain`、`DecisionSlot`、`Threatens` | `Intent` |
-| `enemy_declare_system` | `Intent`、`DecisionSlot`、`Cell`、`Faction`、`Stamina`、`Transform` | 行动实体、`DecisionSlot::Filled` |
+| `enemy_declare_system` | `Intent`、`DecisionSlot`、`Cell`、`Faction`、`Stamina`、`Transform` | 行动实体、`DecisionSlot::Windup` + `ChildOf` |
 | `select_skill_system` / `cycle_skill_system` | `SelectSkill` / `CycleSkill`、`Stamina`（`InputDriven`）、`DecisionSlot` | `MenuSelection` |
 | `use_selected_skill_system` | `UseSelectedSkill`、`MenuSelection`、`Stamina`、`DecisionSlot`、`InputDriven`、`Transform`、`Faction` | `FireCommand` / `MeleeCommand` / `RollCommand`、`ActionBlocked` |
-| `declare_fireball_system` | `FireCommand`、`InputDriven`、`DecisionSlot`、`Cell`、`Stamina`、`Transform`、`Faction`、`Focus`、`FocusIntent` | 行动实体（带 `Threatens`）、`Stamina`、`DecisionSlot::Filled` |
-| `declare_melee_system` / `declare_roll_system` / `declare_parry_system` | 对应命令、`InputDriven`、`DecisionSlot`、`Cell`/`Stamina`/`Transform`/`Faction`、`Focus`、`FocusIntent`、`CollisionTarget`(招架找威胁) | 行动实体、`DecisionSlot::Filled`、`Stamina`(仅在执行时) |
-| `fireball_action_executor_system` | `FireballAction`、`ScheduledAction`（`due`）、`Transform`、`Faction` | 火球实体、`Busy`、销毁行动实体 |
-| `roll_executor_system` | `RollAction`、`ScheduledAction`（`due`）、`Velocity`、`Stamina`、`Transform` | `Velocity`、`Stamina`、`MoveGoal`、`DodgingOnArrival`、`Busy` |
-| `parry_executor_system` | `ParryAction`、`ScheduledAction`（`due`）、`Stamina` | `Parrying`、`Stamina`、`Busy` |
-| `melee_action_executor_system` | `MeleeAction`、`ScheduledAction`（`due`）、`Transform`、`Faction` | 近战攻击实体、`Busy` |
-| `detect_threat_system` | `ScheduledAction`（`pending`）、`Threatens`、`TargetCell`、`Cell`、`Faction`、`InputDriven`、`Time<Virtual>` | `ThreatWindow`、`PauseRequest` |
+| `declare_fireball_system` | `FireCommand`、`InputDriven`、`DecisionSlot`、`Cell`、`Stamina`、`Transform`、`Faction`、`Focus`、`FocusIntent` | 行动实体（带 `Threatens`）、`Stamina`、`DecisionSlot::Windup` + `ChildOf` |
+| `declare_melee_system` / `declare_roll_system` / `declare_parry_system` | 对应命令、`InputDriven`、`DecisionSlot`、`Cell`/`Stamina`/`Transform`/`Faction`、`Focus`、`FocusIntent`、`CollisionTarget`(招架找威胁) | 行动实体、`DecisionSlot::Windup` + `ChildOf`、`Stamina`(翻滚 / 招架仅在执行时) |
+| `fireball_action_executor_system` | `FireballAction`、`ScheduledAction`（`due`）、`ChildOf`、`Transform`、`Faction` | 火球实体、`DecisionSlot::Recovery`、销毁行动实体 |
+| `roll_executor_system` | `RollAction`、`ScheduledAction`（`due`）、`ChildOf`、`Velocity`、`Stamina`、`Transform` | `Velocity`、`Stamina`、`MoveGoal`、`DodgingOnArrival`、`DecisionSlot::Recovery` |
+| `parry_executor_system` | `ParryAction`、`ScheduledAction`（`due`）、`ChildOf`、`Stamina` | `Parrying`、`Stamina`、`DecisionSlot::Recovery` |
+| `melee_action_executor_system` | `MeleeAction`、`ScheduledAction`（`due`）、`ChildOf`、`Transform`、`Faction` | 近战攻击实体、`DecisionSlot::Recovery` |
+| `detect_threat_system` | `ScheduledAction`（`pending`）、`Threatens`、`TargetCell`、`Cell`、`Faction`、`InputDriven`、`ChildOf`（取行动者）、`Time<Virtual>` | `ThreatWindow`、`PauseRequest`（每帧断言 `"threat"`） |
 | `projectile_arrival_system` | `Fireball`、`TargetCell`、`Transform`、`Velocity`、`Faction` | `Transform`、`Velocity`、`Projectile`、`ProjectileArrived`、remove `TargetCell`/`Fireball` |
 | `explosion_system` | `ProjectileArrived`、`Transform`、`Faction`、`Health` | `DamageEvent`、销毁投射物 |
 | `detect_collisions_system` | `CollisionTarget`、`Transform`、`HitRadius`、`Projectile`、`Faction`、`Collidable` | `CollisionTarget`（先清后挂） |
@@ -365,10 +383,12 @@ UnitSprites   --> unit_scene  --^
 | `apply_physical_hits_system` | `PhysicalDamage`、`CollisionTarget`、`InterruptPower`、`Armor`、`Dodging`、`Parrying`、`Projectile`、`HitOnce` | `DamageEvent`、`InterruptEvent`（trigger）、`Projectile`、`HitOnce`、remove `CollisionTarget` |
 | `apply_damage_system` / `despawn_dead_system` | `DamageEvent` / `Health` | `Health`、`DeathEvent` / 销毁实体 |
 | `expire_defense_markers_system` | `Dodging`、`Parrying`、攻击探针（`Projectile`/`Velocity`/`MeleeShape`/`Lifetime`）、`Time<Virtual>` | 移除到期标记 |
-| `refund_cancelled_actions_system` | `ActionCancelled` | `Stamina` |
+| `refund_fireball_observer` / `refund_melee_observer` | `ActionCancelled`（EntityEvent）、`FireballAction` / `MeleeAction` | `Stamina`（退 / 收的手续费各自由花钱的领域决定） |
+| `recover_stamina_observer` | `DecisionReady`（EntityEvent） | `Stamina`（+1） |
 | `cleanup_finished_attacks_system` / `expire_attack_entities_system` | `Projectile` / `Lifetime`、`Time` | 销毁攻击实体 |
 | `hover_cell_system` | `Window`、`Camera`、`GlobalTransform`、`TerrainConfig` | `HoveredCell` |
-| `pointer_command_system` | `PointerCommand`、`HoveredCell`、`Cell`、`Faction` | `MoveToCommand` / `UseSelectedSkill` / `UndoCommand` |
+| `pointer_command_system` | `PointerCommand`、`HoveredCell`、`Cell`、`Faction` | `MoveToCommand` / `UseSelectedSkill` / `UndoCommand` / `PlayerIntent` |
+| `pause_input_system` / `restart_input_system` | `ButtonInput<KeyCode>`、`PauseReasons`（手动暂停开着没有） | `PauseRequest` / `ResetBattle` |
 | `camera_*` | `PanCamera` / `ZoomCamera`、`Transform`、`Faction`、`Time<Real>` | `CameraRig`、相机 `Transform` |
 | `battle_log_system` | `DamageEvent`、`DeathEvent`、`Faction` | `BattleLog` |
 | `update_*_system`（HUD） | 见第七节 | 只写 UI 组件 |
@@ -421,7 +441,10 @@ UnitSprites   --> unit_scene  --^
 | AI 的 `Dodge` 写玩家的 `RollCommand` | AI 直接 `declare_roll`，`RollCommand` 只属于 PC |
 | `ChunkLoader` 玩家半径是 3×3 区块 | 默认 `radius = (0,1,0)`：XZ 只加载 1×1 区块 |
 | HUD 缓存文档里的「WeGo 冻结」 | 无回合模型（措辞遗留，不影响行为） |
-| 时间线三层状态机（`Declared`/`Pending`/`Committed`）、`Arbitration` 两阶段结算 | 全部删除，改为「时间戳 + 事件」模型（见 [timeline.md](timeline.md)） |
+| 时间线三层状态机（`Declared`/`Pending`/`Committed`）、`Arbitration` 两阶段结算 | 全部删除，改为「决策槽三态 + 时间戳 + 事件」模型（见 [timeline.md](timeline.md)） |
+| 后摇是行动者身上的 `Busy` 组件、取消代价是行动上的 `Cancellable` 枚举 | 后摇是决策槽的 `Recovery { until }`；"能不能撤"只剩 `Uncancellable` 标记，退多少钱归花钱的领域 |
+| `ScheduledAction.actor` 字段 | 行动是行动者的子实体（`ChildOf`），调度数据里不再抄一份归属 |
+| 手动暂停是 `ManualPause` 资源 + 边沿触发的 `compute_manual_pause` | "按一下是暂停还是恢复"住在 `input::keyboard::pause_input_system`（读 `PauseReasons`），暂停原因每帧重新断言 |
 
 ### 10.4 值得保留的设计（别在重构时弄丢）
 
@@ -429,7 +452,7 @@ UnitSprites   --> unit_scene  --^
    这个「一个系统管一类实体的位移」让移动 / 投射物 / 跳跃不会互相争抢。
 2. **`DodgingOnArrival` 把「无敌帧」和「位移到位」绑在一起**——
    它用一个短命组件换掉了「在哪一帧挂标记」的隐式约定。
-3. **`Busy::after(schedule, executed_at, busy_until)` 把「忙到效果发生」变成显式参数**——
+3. **`DecisionSlot::recovering(schedule, now, effect_delay)` 把「忙到效果发生」变成显式参数**——
    这是「按了技能没放出去」这类 bug 的通用解法，新动作要照抄
    （移动忙到走到格中心、火球忙到落地、箭矢忙到命中）。
 4. **暂停用「原因集合」而不是一个布尔**——`"manual"` / `"slot_empty"` / `"threat"`
