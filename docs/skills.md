@@ -49,7 +49,7 @@ pub fn can_cast(caster: Entity, ability: AbilityId, world: &World) -> Result<(),
   `ActionBlocked { reason }` 给 HUD —— 玩家按键失败与 AI 决策失败走同一条路。
 - **类别共享条件**先判（`AbilityCategory` 一级），技能只写自己的
   `requirements`。避免"每个技能把沉默 / 眩晕 / 冷却各写一遍"。
-- 它和 [`first_ready`](../../src/timeline/decision.rs) **分工明确**：
+- 它和 [`first_ready`](../src/timeline/decision.rs) **分工明确**：
 
   | | 管什么 | 归谁 |
   | :--- | :--- | :--- |
@@ -74,7 +74,7 @@ pub enum TargetSelector {
 ```
 
 **选目标只产出"打哪儿"，命中的几何判定归 [combat.md](combat.md)**：
-决策层用格（`Cell`），结算层用真实距离与形状（`Shape`）。
+决策层用格（`Cell`），结算层用真实距离与形状（`Shape` 🚧——形状的规格还没定，见 `TODO.md`）。
 
 ## 四、阶段与效果（🚧 后置）
 

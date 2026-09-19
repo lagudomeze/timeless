@@ -31,15 +31,15 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
   `Recovery { until }`）直接写在行动者身上，`ScheduledAction` 的时间戳回答"到点了没有"；
   暂停是**每帧断言**——谁这一帧还想停表就写一条 `PauseRequest::Pause(原因)`，
   `process_pause_requests` 每帧重建 `PauseReasons`，唯一的时钟写入点是帧末的 `apply_clock`；
-  行动是行动者的**子实体**（`ChildOf`，人没了行动跟着没），`Focus` 让玩家把一次前摇买掉
+  行动归行动者所有（`ActionOf` / `Actions`，人没了行动跟着没），`Focus` 让玩家把一次前摇买掉
 - `ai` 六种意图（含威胁预判）+ 声明行动
 - `input` 只翻译（含 `F5` → `ResetBattle`、空格 → `PauseRequest`、`PlayerIntent`）·
   `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
 - `presentation` 相机 / 单位纸片与贴地阴影 / 装饰 / 中文日志 / 英文 HUD
 - `spawn` 组装车间（消费 `ResetBattle`，不认识按键）
 
-模块地图、流水线顺序、按键表见 [`docs/architecture.md`](docs/architecture.md)；
-组件与系统的逐层对照见 [`docs/components.md`](docs/components.md)。
+域地图与跨域契约见 [`docs/domain.md`](docs/domain.md)，文档入口是
+[`docs/index.md`](docs/index.md)（`architecture.md` / `components.md` 正在被取代，只作历史参考）。
 
 ## 已完成
 

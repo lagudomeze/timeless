@@ -30,7 +30,15 @@ pub enum DecisionSlot {
 判据只有一个：
 
 ```rust
-fn ready(&self) -> bool { matches!(self, Executing { .. }) || self.intent.is_some() }
+impl DecisionSlot {
+    /// 这个单位此刻算不算「已经决定了」（闸门只看这一条）
+    fn ready(&self) -> bool {
+        match self {
+            DecisionSlot::Executing { .. } => true,
+            DecisionSlot::Idle { intent } => intent.is_some(),
+        }
+    }
+}
 ```
 
 ## 二、意图 🚧

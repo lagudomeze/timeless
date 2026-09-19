@@ -89,7 +89,7 @@
 | 类别 | 能否跨域直接引用 | 说明 |
 | :--- | :--- | :--- |
 | **组件类型**（`Health` / `Cell` / `DecisionSlot` …） | ✅ 可以读 | 组件是**数据契约**；写者仍然唯一（见铁律） |
-| **纯类型 / 常量**（`Shape`、`ActionTiming`、`CELL_SIZE`、`*_TIMING`） | ✅ | 没有行为 |
+| **纯类型 / 常量**（`ActionTiming`、`CELL_SIZE`、`*_TIMING`） | ✅ | 没有行为 |
 | **纯函数**（`combat::formula::domain::*`） | ✅ | 零 Bevy、可单测 |
 | **别人的系统** | ❌ 禁止调用 | 排顺序用 `SystemSet`，不要 `run_system` 互调 |
 | **别人的内部状态**（别人的 `Resource`、`Local`） | ❌ | 要么它写成消息/事件，要么它自己算 |
