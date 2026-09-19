@@ -152,7 +152,7 @@ pub fn declare_melee_at(
     let action = commands
         .spawn_scene(melee_action_scene(from_cell, target_cell, schedule))
         .id();
-    commands.entity(actor).insert(DecisionSlot::Filled);
+    commands.entity(actor).insert(DecisionSlot::Windup);
     action
 }
 
@@ -183,10 +183,10 @@ pub fn shoot_action_executor_system(
                 commands.spawn_scene(arrow_scene(origin + direction * 1.2, direction, faction));
             }
         }
-        let busy = crate::timeline::Busy::after(schedule, now, busy_until);
+        let recovery = DecisionSlot::recovering(schedule, now, busy_until);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(busy);
+            actor.insert(recovery);
         }
     }
 }
@@ -213,10 +213,10 @@ pub fn melee_action_executor_system(
                 commands.spawn_scene(melee_scene(origin + direction * 0.6, direction, faction));
             }
         }
-        let busy = crate::timeline::Busy::after(schedule, now, now);
+        let recovery = DecisionSlot::recovering(schedule, now, now);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(busy);
+            actor.insert(recovery);
         }
     }
 }

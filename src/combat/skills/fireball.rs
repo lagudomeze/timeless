@@ -263,7 +263,7 @@ pub fn declare_fireball_at(
     let action = commands
         .spawn_scene(fireball_action_scene(from_cell, target_cell, schedule))
         .id();
-    commands.entity(actor).insert(DecisionSlot::Filled);
+    commands.entity(actor).insert(DecisionSlot::Windup);
     action
 }
 
@@ -294,10 +294,10 @@ pub fn fireball_action_executor_system(
             busy_until = now + flight_time(origin, action.target_cell);
             commands.spawn_scene(fireball_scene(origin, action.target_cell, *faction));
         }
-        let busy = crate::timeline::Busy::after(schedule, now, busy_until);
+        let recovery = DecisionSlot::recovering(schedule, now, busy_until);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(busy);
+            actor.insert(recovery);
         }
     }
 }

@@ -4,25 +4,24 @@
 //! 节奏由每个动作自带的前摇 + 后摇决定（[`timing`]）。
 //!
 //! ```text
-//! [Empty] ──声明──▶ [Filled + 行动实体] ──到点──▶ 执行器落地 ──▶ [Filled + Busy]
-//!    ▲                                                              │
-//!    └──────────────────── recovery_system ─────────────────────────┘
+//! [Empty] ──声明──▶ [Windup + 行动实体] ──到点──▶ 执行器落地 ──▶ [Recovery { until }]
+//!    ▲                                                                │
+//!    └──────────────── recovery_system（now >= until）────────────────┘
 //! ```
 //!
-//! 三件事都由**时间戳**推导，不再有 `Declared` / `Pending` / `Committed` 那样的
-//! 三态标记（标记与时间戳打架是这一类系统的经典 bug）：
+//! 行动者的三个阶段**直接写在决策槽里**（[`DecisionSlot`]），不由「有没有行动实体」
+//! 或「有没有时间戳」推导：
 //!
-//! | 状态 | 判据 |
-//! | :--- | :--- |
-//! | 前摇（可撤销 / 可打断） | `now < ScheduledAction.execute_at` |
-//! | 该执行了 | `now >= ScheduledAction.execute_at` |
-//! | 后摇 | 行动者身上有 [`Busy`] |
+//! | 状态 | 含义 | 行动实体 | 可撤销 | 可打断 |
+//! | :--- | :--- | :--- | :--- | :--- |
+//! | [`DecisionSlot::Empty`] | 空闲，可以声明 | 无 | — | — |
+//! | [`DecisionSlot::Windup`] | 前摇中 | 有 | ✓ | ✓ |
+//! | [`DecisionSlot::Recovery`] | 后摇中 | 无 | ✗ | ✗ |
 //!
 //! 本域只做调度，**不感知载荷**：行动 = 独立实体，实体上只有调度数据
 //! [`ScheduledAction`] + 载荷 + [`Cancellable`]。执行器住在各自的领域里
-//! （[`crate::movement::actions`] 与 [`crate::combat::skills::actions`]），
-//! 新增动作时调度器一行不改；收尾也**不集中**——执行器自己销毁行动实体、
-//! 自己挂 [`Busy`]。
+//! （[`crate::movement`] 与 [`crate::combat`]），新增动作时调度器一行不改；
+//! 收尾也**不集中**——执行器自己销毁行动实体、自己把行动者推进后摇。
 //!
 //! ## 冻结：原因集合，而不是一个布尔
 //!
@@ -43,13 +42,16 @@
 use bevy::prelude::*;
 
 pub mod components;
+pub mod decision;
 pub mod events;
 pub mod plugin;
 pub mod resources;
+pub mod schedule;
 pub mod systems;
 pub mod timing;
 
-pub use components::{Busy, Cancellable, DecisionSlot, InputDriven, ScheduledAction};
+pub use components::{Cancellable, InputDriven};
+pub use decision::DecisionSlot;
 pub use events::{
     ActionBlocked, ActionCancelled, BlockReason, InterruptEvent, PauseRequest, TogglePause,
     UndoCommand, UseFocus,
@@ -59,6 +61,7 @@ pub use resources::{
     FOCUS_MAX, FOCUS_RECOVER_INTERVAL, Focus, FocusIntent, MANUAL, ManualPause, PauseReasons,
     SLOT_EMPTY, THREAT,
 };
+pub use schedule::ScheduledAction;
 pub use systems::{
     apply_clock, compute_manual_pause, compute_player_awaiting_system, interrupt_observer,
     interrupt_system, process_pause_requests, recover_focus_system, recovery_system, roll_3d5,

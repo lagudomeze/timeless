@@ -913,7 +913,7 @@ mod tests {
             .spawn(ScheduledAction::declared_at(player, timing::MOVE, 0.0));
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Filled);
+            .insert(DecisionSlot::Windup);
         app.update();
         assert_eq!(display(&app, chip), Display::None, "有排期就不再候场");
         assert_eq!(display(&app, block), Display::Flex, "排期画在自己的车道里");

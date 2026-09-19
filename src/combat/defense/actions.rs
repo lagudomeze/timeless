@@ -3,7 +3,7 @@
 //! - 翻滚载荷的工厂在 [`crate::movement`]（退一格与移动是同一个原语），
 //!   本模块只负责**声明**与**落地**；
 //! - 招架只绑实体，不需要位移，因此载荷与执行器都住在这里；
-//! - 两个执行器都自己收尾：销毁行动实体 + 给行动者挂 `Busy`（时间线不集中收尾）。
+//! - 两个执行器都自己收尾：销毁行动实体 + 把行动者推进 `Recovery`（时间线不集中收尾）。
 
 use bevy::prelude::*;
 
@@ -64,7 +64,7 @@ pub fn declare_roll(
             from_cell, to_cell, schedule,
         ))
         .id();
-    commands.entity(actor).insert(DecisionSlot::Filled);
+    commands.entity(actor).insert(DecisionSlot::Windup);
     action
 }
 
@@ -153,10 +153,10 @@ pub fn roll_executor_system(
                 },
             ));
         }
-        let busy = crate::timeline::Busy::after(schedule, now, busy_until);
+        let recovery = DecisionSlot::recovering(schedule, now, busy_until);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(busy);
+            actor.insert(recovery);
         }
     }
 }
@@ -212,7 +212,7 @@ pub fn declare_parry_system(
         target_attack,
         schedule,
     ));
-    commands.entity(player).insert(DecisionSlot::Filled);
+    commands.entity(player).insert(DecisionSlot::Windup);
 }
 
 /// 执行招架：给行动者挂 [`Parrying`]，绑定被挡的那次攻击。
@@ -234,10 +234,10 @@ pub fn parry_executor_system(
                 expires_at: now + PARRY_SECS,
             });
         }
-        let busy = crate::timeline::Busy::after(schedule, now, now);
+        let recovery = DecisionSlot::recovering(schedule, now, now);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(busy);
+            actor.insert(recovery);
         }
     }
 }

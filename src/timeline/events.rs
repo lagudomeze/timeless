@@ -63,7 +63,7 @@ impl ActionBlocked {
 /// 输入被拒的原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockReason {
-    /// 决策槽被占着（[`DecisionSlot::Filled`](super::DecisionSlot::Filled)）
+    /// 决策槽被占着（前摇 / 后摇：见 [`DecisionSlot`](super::DecisionSlot)）
     Busy,
     /// 精力不够
     NotEnoughEnergy,

@@ -5,19 +5,21 @@
 //! 1. **暂停只经 `PauseRequest`**：这一域里除了 [`apply_clock`] 谁也不碰
 //!    `Time<Virtual>`，各领域因此不需要任何 `if paused` 分支；
 //! 2. **收尾不集中**：执行器自己写 `ScheduledAction.execute_at` 的判据、
-//!    自己销毁行动实体、自己挂 [`Busy`]——时间线只提供数据与判定函数。
+//!    自己销毁行动实体、自己把行动者推进 `Recovery`——时间线只提供数据与判定函数。
 
 use bevy::prelude::*;
 
 use crate::combat::defense::{STAMINA_REGEN_PER_DECISION, Stamina};
 
-use super::components::{Busy, Cancellable, DecisionSlot, InputDriven, ScheduledAction};
+use super::components::{Cancellable, InputDriven};
+use super::decision::DecisionSlot;
 use super::events::{
     ActionCancelled, InterruptEvent, PauseRequest, TogglePause, UndoCommand, UseFocus,
 };
 use super::resources::{
     FOCUS_RECOVER_INTERVAL, Focus, FocusIntent, MANUAL, ManualPause, PauseReasons, SLOT_EMPTY,
 };
+use super::schedule::ScheduledAction;
 
 /// 边沿触发的小工具：状态**翻转**时才写一条暂停请求。
 ///
@@ -155,25 +157,27 @@ pub fn undo_system(
     }
 }
 
-/// 后摇：到点清空决策槽、摘掉 [`Busy`]，并回一点精力。
+/// 后摇：`Recovery { until }` 到点就清空决策槽，并回一点精力。
 ///
 /// 恢复决策槽是「又轮到它决策了」，因此这里也是精力的自然回复点
 /// （取代旧模型的「每回合 +1」——无回合没有回合）。
 pub fn recovery_system(
-    mut commands: Commands,
     time: Res<Time<Virtual>>,
-    mut recovering: Query<(Entity, &Busy, &mut DecisionSlot, Option<&mut Stamina>)>,
+    mut recovering: Query<(&mut DecisionSlot, Option<&mut Stamina>)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, busy, mut slot, stamina) in &mut recovering {
-        if now < busy.until {
+    for (mut slot, stamina) in &mut recovering {
+        // 只处理后摇：前摇归执行器与撤销 / 打断管，空闲没什么可恢复的
+        let DecisionSlot::Recovery { until } = *slot else {
+            continue;
+        };
+        if now < until {
             continue;
         }
         if let Some(mut stamina) = stamina {
             stamina.regen(STAMINA_REGEN_PER_DECISION);
         }
         *slot = DecisionSlot::Empty;
-        commands.entity(entity).remove::<Busy>();
     }
 }
 
@@ -331,7 +335,7 @@ mod tests {
         app.update(); // 空槽 → 世界本来就冻着
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Filled);
+            .insert(DecisionSlot::Windup);
         app.update();
         assert!(
             !app.world().resource::<Time<Virtual>>().is_paused(),
@@ -373,7 +377,7 @@ mod tests {
 
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Filled);
+            .insert(DecisionSlot::Windup);
         app.update();
         assert!(
             app.world().resource::<Time<Virtual>>().is_paused(),
@@ -383,6 +387,44 @@ mod tests {
         app.world_mut().write_message(TogglePause);
         app.update();
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    }
+
+    /// 后摇到点：`Recovery { until }` → `Empty`，而且**只**碰后摇。
+    #[test]
+    fn recovery_clears_the_slot_only_after_the_window_ends() {
+        fn slot_of(app: &App, entity: Entity) -> Option<DecisionSlot> {
+            app.world().get::<DecisionSlot>(entity).copied()
+        }
+
+        let mut app = clock_app();
+        let actor = app
+            .world_mut()
+            .spawn(DecisionSlot::Recovery { until: 0.35 })
+            .id();
+        let winding_up = app.world_mut().spawn(DecisionSlot::Windup).id();
+
+        // 「到点」是唯一的清槽条件：虚拟时间没走到 until 就一直留着
+        let mut frames = 0;
+        while app.world().resource::<Time<Virtual>>().elapsed_secs() < 0.35 {
+            assert_eq!(
+                slot_of(&app, actor),
+                Some(DecisionSlot::Recovery { until: 0.35 }),
+                "后摇没到点不该清槽"
+            );
+            app.update();
+            frames += 1;
+            assert!(frames < 20, "虚拟时间没有推进，后摇永远不会结束");
+        }
+        assert_eq!(
+            slot_of(&app, actor),
+            Some(DecisionSlot::Empty),
+            "后摇到点应当清空决策槽"
+        );
+        assert_eq!(
+            slot_of(&app, winding_up),
+            Some(DecisionSlot::Windup),
+            "前摇归执行器与撤销 / 打断管，后摇系统不该碰它"
+        );
     }
 
     /// Focus 只走虚拟时间：冻住时一分都不回。
@@ -418,7 +460,7 @@ mod tests {
         let mut app = clock_app();
         let player = app
             .world_mut()
-            .spawn((InputDriven, DecisionSlot::Filled))
+            .spawn((InputDriven, DecisionSlot::Windup))
             .id();
         let action = app
             .world_mut()
@@ -451,7 +493,7 @@ mod tests {
         let mut app = clock_app();
         let player = app
             .world_mut()
-            .spawn((InputDriven, DecisionSlot::Filled))
+            .spawn((InputDriven, DecisionSlot::Windup))
             .id();
         let action = app
             .world_mut()
@@ -476,7 +518,7 @@ mod tests {
     #[test]
     fn interrupt_despawns_a_pending_action_and_frees_the_slot() {
         let mut app = clock_app();
-        let target = app.world_mut().spawn(DecisionSlot::Filled).id();
+        let target = app.world_mut().spawn(DecisionSlot::Windup).id();
         let action = app
             .world_mut()
             .spawn(ScheduledAction::declared_at(target, timing::MELEE, 0.0))
@@ -514,7 +556,7 @@ mod tests {
     #[test]
     fn an_action_that_came_due_this_frame_survives_an_interrupt() {
         let mut app = clock_app();
-        let target = app.world_mut().spawn(DecisionSlot::Filled).id();
+        let target = app.world_mut().spawn(DecisionSlot::Windup).id();
         let action = app
             .world_mut()
             .spawn(ScheduledAction::declared_at(target, timing::MOVE, 0.0))

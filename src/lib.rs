@@ -175,8 +175,8 @@ mod tests {
     };
     use crate::movement::{Cell, Jumping, MoveAction, MoveSpeed, Velocity};
     use crate::timeline::{
-        Busy, DecisionSlot, FOCUS_MAX, Focus, InputDriven, InterruptEvent, PauseReasons,
-        ScheduledAction, THREAT, UndoCommand, timing,
+        DecisionSlot, FOCUS_MAX, Focus, InputDriven, InterruptEvent, PauseReasons, ScheduledAction,
+        THREAT, UndoCommand, timing,
     };
     use crate::world::{TerrainConfig, ground_position};
 
@@ -412,8 +412,8 @@ mod tests {
         assert_eq!(actions::<MoveAction>(&mut app), 1, "按一次应当产生一条移动");
         assert_eq!(
             slot_of(&app, player),
-            DecisionSlot::Filled,
-            "声明之后决策槽被占住"
+            DecisionSlot::Windup,
+            "声明之后决策槽进入前摇"
         );
         assert_eq!(
             velocity_of(&mut app, player),
@@ -468,7 +468,7 @@ mod tests {
         );
     }
 
-    /// 后摇走完：决策槽清空、`Busy` 摘掉，又能声明下一手。
+    /// 后摇走完：决策槽清空，又能声明下一手。
     #[test]
     fn recovery_restores_the_ability_to_decide() {
         let mut app = test_app();
@@ -483,10 +483,6 @@ mod tests {
             slot_of(&app, player),
             DecisionSlot::Empty,
             "后摇结束应当清空决策槽"
-        );
-        assert!(
-            app.world().get::<Busy>(player).is_none(),
-            "`Busy` 应当被摘掉，而不是留成幽灵状态"
         );
     }
 
@@ -791,10 +787,10 @@ mod tests {
         for _ in 0..12 {
             app.update();
         }
-        assert_eq!(
-            slot_of(&app, player),
-            DecisionSlot::Filled,
-            "火球还在飞的时候射手不该拿到决策权，否则时间线会把球冻在半空"
+        let slot = slot_of(&app, player);
+        assert!(
+            matches!(slot, DecisionSlot::Recovery { .. }),
+            "火球还在飞的时候射手不该拿到决策权（他还在飞行的后摇里），实际 {slot:?}"
         );
 
         for _ in 0..14 {
@@ -855,7 +851,7 @@ mod tests {
             1,
             "声明火球时先扣掉 2 点精力"
         );
-        assert_eq!(slot_of(&app, player), DecisionSlot::Filled);
+        assert_eq!(slot_of(&app, player), DecisionSlot::Windup);
 
         app.world_mut().write_message(UndoCommand);
         app.update();
@@ -909,7 +905,11 @@ mod tests {
             Vec3::ZERO,
             "零前摇的行动下一帧就该动起来"
         );
-        assert!(app.world().get::<Busy>(player).is_some());
+        let slot = slot_of(&app, player);
+        assert!(
+            matches!(slot, DecisionSlot::Recovery { .. }),
+            "零前摇的行动过了那一帧就该离开前摇，实际 {slot:?}"
+        );
     }
 
     /// 没有 Focus 时退回普通前摇（不会扣成负数，也不会偷偷瞬发）。
@@ -970,9 +970,9 @@ mod tests {
             !app.world().resource::<Time<Virtual>>().is_paused(),
             "世界该继续跑：那一击该来就来"
         );
-        assert_eq!(
+        assert_ne!(
             slot_of(&app, player),
-            DecisionSlot::Filled,
+            DecisionSlot::Empty,
             "玩家那一手应当已经声明出去"
         );
     }
@@ -1058,7 +1058,7 @@ mod tests {
         ));
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Filled);
+            .insert(DecisionSlot::Windup);
         app.update(); // 声明这一帧：零前摇的行动还不该落地
         app.update(); // 执行器发射投射物
         assert_eq!(actions::<Fireball>(&mut app), 1, "火球应当在飞行中");

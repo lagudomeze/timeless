@@ -205,7 +205,7 @@ pub fn enemy_declare_system(
                     to_cell,
                     ScheduledAction::declared_at(entity, timing::MOVE, now),
                 ));
-                commands.entity(entity).insert(DecisionSlot::Filled);
+                commands.entity(entity).insert(DecisionSlot::Windup);
             }
             Intent::Melee => {
                 declare_melee_at(

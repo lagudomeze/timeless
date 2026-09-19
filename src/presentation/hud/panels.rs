@@ -399,7 +399,7 @@ mod tests {
             stamina: None,
             cell: Cell::new(3, 3),
             position: Vec3::ZERO,
-            slot: DecisionSlot::Filled,
+            slot: DecisionSlot::Windup,
             dodging: true,
             parrying: false,
             airborne: false,

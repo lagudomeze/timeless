@@ -134,7 +134,7 @@ pub fn declare_move_system(
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(player, timing::MOVE, now, &mut focus, intent.0);
     commands.spawn_scene(move_action_scene(*cell, to_cell, schedule));
-    commands.entity(player).insert(DecisionSlot::Filled);
+    commands.entity(player).insert(DecisionSlot::Windup);
 }
 
 /// 声明移动（点地板）：`MoveToCommand` → 朝目标格走**一条直线**的行动。
@@ -167,7 +167,7 @@ pub fn declare_move_to_system(
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(player, timing::MOVE, now, &mut focus, intent.0);
     commands.spawn_scene(move_action_scene(*cell, target, schedule));
-    commands.entity(player).insert(DecisionSlot::Filled);
+    commands.entity(player).insert(DecisionSlot::Windup);
 }
 
 /// 执行：到点的移动行动 → 朝**目标格中心**设速度，到位后由 `move_entities_system` 停下。
@@ -195,10 +195,10 @@ pub fn move_action_executor_system(
                 cell: action.to_cell,
             });
         }
-        let busy = crate::timeline::Busy::after(schedule, now, busy_until);
+        let recovery = DecisionSlot::recovering(schedule, now, busy_until);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(busy);
+            actor.insert(recovery);
         }
     }
 }
@@ -226,7 +226,7 @@ pub fn declare_jump_system(
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(player, timing::JUMP, now, &mut focus, intent.0);
     commands.spawn_scene(jump_action_scene(schedule));
-    commands.entity(player).insert(DecisionSlot::Filled);
+    commands.entity(player).insert(DecisionSlot::Windup);
 }
 
 /// 执行：到点后给行动者一个向上初速度，剩下交给 [`jump_motion_system`]。
@@ -248,10 +248,10 @@ pub fn jump_action_executor_system(
             });
         }
         // 后摇（0.60s）覆盖整条弹道：落地那一刻才重新可决策
-        let busy = crate::timeline::Busy::after(schedule, now, now);
+        let recovery = DecisionSlot::recovering(schedule, now, now);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(busy);
+            actor.insert(recovery);
         }
     }
 }
@@ -283,7 +283,6 @@ pub fn ground_direction(axis: Vec2) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::Busy;
 
     #[test]
     fn step_from_axis_snaps_to_one_orthogonal_cell() {
@@ -360,14 +359,19 @@ mod tests {
 
         app.update();
 
-        let busy = *app.world().get::<Busy>(actor).expect("执行完应当进入后摇");
+        let DecisionSlot::Recovery { until } = *app
+            .world()
+            .get::<DecisionSlot>(actor)
+            .expect("执行完应当进入后摇")
+        else {
+            panic!("执行完应当进入后摇");
+        };
         assert!(
-            (busy.until - 0.4).abs() < 1e-3,
-            "忙到「走到目标格」为止的 0.4s，实际 {}",
-            busy.until
+            (until - 0.4).abs() < 1e-3,
+            "忙到「走到目标格」为止的 0.4s，实际 {until}"
         );
         assert!(
-            busy.until > timing::MOVE.recovery,
+            until > timing::MOVE.recovery,
             "必须比单纯的后摇更久，否则会半路恢复决策槽"
         );
     }
