@@ -7,7 +7,8 @@ use crate::combat::defense::ParryCommand;
 use crate::combat::skills::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill};
 use crate::movement::{JumpCommand, MoveCommand};
 use crate::presentation::{CameraRig, ToggleHelp};
-use crate::timeline::{TogglePause, UseFocus};
+use crate::spawn::ResetBattle;
+use crate::timeline::{MANUAL, PauseReasons, PauseRequest, PlayerIntent, UseFocus};
 
 /// `Q/W/E/R` 的技能热键绑定（默认值；用户自定义留到配置外置那一步）。
 ///
@@ -53,7 +54,8 @@ impl Default for HotkeyBinds {
 pub fn player_move_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     cameras: Query<&Transform, With<CameraRig>>,
-    mut commands: MessageWriter<MoveCommand>,
+    mut moves: MessageWriter<MoveCommand>,
+    mut intents: MessageWriter<PlayerIntent>,
     mut last_axis: Local<Vec2>,
 ) {
     let mut screen = Vec2::ZERO;
@@ -83,9 +85,10 @@ pub fn player_move_input_system(
         .next()
         .map(|transform| GroundBasis::from_rotation(transform.rotation))
         .unwrap_or_else(GroundBasis::world);
-    commands.write(MoveCommand {
+    moves.write(MoveCommand {
         axis: basis.axis(screen),
     });
+    intents.write(PlayerIntent);
 }
 
 /// 相机的「地面基」：屏幕向右 / 屏幕向上分别对应哪个世界方向（都投影到地面）。
@@ -132,9 +135,11 @@ pub fn player_skill_input_system(
     mut uses: MessageWriter<UseSelectedSkill>,
     mut jumps: MessageWriter<JumpCommand>,
     mut parry_commands: MessageWriter<ParryCommand>,
+    mut intents: MessageWriter<PlayerIntent>,
 ) {
     if keys.just_pressed(KeyCode::KeyC) {
         jumps.write(JumpCommand);
+        intents.write(PlayerIntent);
     }
     for (key, action) in &binds.entries {
         if !keys.just_pressed(*key) {
@@ -145,22 +150,54 @@ pub fn player_skill_input_system(
                 if let Some(index) = crate::combat::skills::index_of(*kind) {
                     selects.write(SelectSkill(index));
                     uses.write(UseSelectedSkill::default());
+                    intents.write(PlayerIntent);
                 }
             }
             HotkeyAction::Parry => {
                 parry_commands.write(ParryCommand);
+                intents.write(PlayerIntent);
             }
         }
     }
 }
 
-/// 空格 → 暂停 / 继续（**空格只表示暂停**，不触发任何行动）。
+/// 空格 → 暂停 / 继续（**只写暂停断言，不碰时钟**）。
+///
+/// 「按一下是暂停还是恢复」这个判定归输入域：手动暂停的闩就藏在
+/// [`PauseReasons`] 里——上一帧断言过 [`MANUAL`] 就说明它开着。
+///
+/// - 开着再按 → [`PauseRequest::Resume`]：虚拟时间流动 + 清空已收集的原因；
+/// - 关着按 → 断言 [`MANUAL`]，此后**每帧重新断言**，直到玩家再按一次
+///   （断言式暂停因此不会"只前进一帧"）。
 pub fn pause_input_system(
     keys: Res<ButtonInput<KeyCode>>,
-    mut toggles: MessageWriter<TogglePause>,
+    reasons: Res<PauseReasons>,
+    mut requests: MessageWriter<PauseRequest>,
 ) {
+    let manually_paused = reasons.contains(MANUAL);
     if keys.just_pressed(KeyCode::Space) {
-        toggles.write(TogglePause);
+        if manually_paused {
+            requests.write(PauseRequest::Resume);
+        } else {
+            requests.write(PauseRequest::Pause(MANUAL));
+        }
+        return; // 这一帧的按键已经表过态，不必再重复断言
+    }
+    if manually_paused {
+        requests.write(PauseRequest::Pause(MANUAL));
+    }
+}
+
+/// `F5` → [`ResetBattle`]（只翻译，不改状态）。
+///
+/// 组装车间只负责「清场 + 用同一套工厂重新组装」，**不认识按键**：
+/// 触发键住在输入域，和所有其它按键一样只把意图翻成一条消息。
+pub fn restart_input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut resets: MessageWriter<ResetBattle>,
+) {
+    if keys.just_pressed(KeyCode::F5) {
+        resets.write(ResetBattle);
     }
 }
 
@@ -220,6 +257,7 @@ pub fn skill_menu_input_system(
     mut selects: MessageWriter<SelectSkill>,
     mut cycles: MessageWriter<CycleSkill>,
     mut uses: MessageWriter<UseSelectedSkill>,
+    mut intents: MessageWriter<PlayerIntent>,
 ) {
     // 直接执行那一格（选中 + 用一次）
     let direct = [
@@ -232,10 +270,11 @@ pub fn skill_menu_input_system(
         if keys.just_pressed(key) {
             selects.write(SelectSkill(index));
             uses.write(UseSelectedSkill::default());
+            intents.write(PlayerIntent);
         }
     }
 
-    // 循环：Shift + Tab = 反向
+    // 循环：Shift + Tab = 反向。**只选不执行**，因此不算新意图
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if keys.just_pressed(KeyCode::Tab) {
         cycles.write(CycleSkill { forward: !shift });
@@ -249,9 +288,11 @@ pub fn skill_menu_input_system(
 pub fn skill_use_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut uses: MessageWriter<UseSelectedSkill>,
+    mut intents: MessageWriter<PlayerIntent>,
 ) {
     if keys.just_pressed(KeyCode::KeyG) {
         uses.write(UseSelectedSkill::default());
+        intents.write(PlayerIntent);
     }
 }
 
@@ -293,5 +334,78 @@ mod tests {
     fn vertical_camera_falls_back_to_world_axes() {
         let basis = GroundBasis::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2));
         assert_eq!(basis.axis(Vec2::Y), Vec2::Y, "垂直俯视时退回世界轴");
+    }
+
+    /// 空格：关着按一下 = 断言手动暂停；开着再按 = 解冻。
+    ///
+    /// 「按一下是暂停还是恢复」的闩就藏在 [`PauseReasons`] 里，因此测试必须让它
+    /// 真的转一圈——这里把调度域真正的 `process_pause_requests` 接上，
+    /// 而不是自己糊一个假的集合。
+    #[test]
+    fn space_toggles_the_manual_pause_assertion() {
+        #[derive(Resource, Default)]
+        struct Captured(Vec<PauseRequest>);
+
+        fn capture(mut requests: MessageReader<PauseRequest>, mut captured: ResMut<Captured>) {
+            captured.0.extend(requests.read().copied());
+        }
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<PauseReasons>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Captured>()
+            .add_message::<PauseRequest>()
+            .add_systems(
+                Update,
+                (
+                    pause_input_system,
+                    capture,
+                    crate::timeline::process_pause_requests,
+                )
+                    .chain(),
+            );
+
+        /// 松手：把空格从"按下"集合里摘掉。
+        ///
+        /// 必须用 `reset` 而不是 `clear`——后者只清 `just_pressed` / `just_released`，
+        /// `pressed` 还留着，下一次 `press` 就不会再置 `just_pressed` 了。
+        fn release_space(app: &mut App) {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset(KeyCode::Space);
+        }
+
+        // 没有输入：什么也不写
+        app.update();
+        assert!(app.world().resource::<Captured>().0.is_empty());
+        assert!(!app.world().resource::<PauseReasons>().is_frozen());
+
+        // ① 关着按空格 → 断言 manual，而且此后**每帧继续断言**
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        app.update();
+        release_space(&mut app);
+        for _ in 0..3 {
+            app.update();
+            assert!(
+                app.world().resource::<PauseReasons>().contains(MANUAL),
+                "松手之后也要一直断言，手动暂停才会一直有效"
+            );
+        }
+
+        // ② 开着再按 → 解冻（只发一条 Resume，不附带原因）
+        app.world_mut().resource_mut::<Captured>().0.clear();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        app.update();
+        assert_eq!(
+            app.world().resource::<Captured>().0,
+            vec![PauseRequest::Resume],
+            "开着的时候再按一下只发解冻，不再重复断言"
+        );
+        assert!(!app.world().resource::<PauseReasons>().is_frozen());
     }
 }

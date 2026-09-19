@@ -283,7 +283,7 @@ pub fn fireball_action_executor_system(
         if !schedule.due(now) {
             continue;
         }
-        let mut busy_until = now;
+        let mut effect_delay = 0.0;
         // 发射：从行动者**当前位置**朝锁定的格扔出投射物
         if let Ok((transform, faction)) = actors.get(schedule.actor) {
             let origin = Vec3::new(
@@ -291,10 +291,10 @@ pub fn fireball_action_executor_system(
                 transform.translation.y + SHOOT_HEIGHT,
                 transform.translation.z,
             );
-            busy_until = now + flight_time(origin, action.target_cell);
+            effect_delay = flight_time(origin, action.target_cell);
             commands.spawn_scene(fireball_scene(origin, action.target_cell, *faction));
         }
-        let recovery = DecisionSlot::recovering(schedule, now, busy_until);
+        let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(recovery);

@@ -186,16 +186,16 @@ pub fn move_action_executor_system(
         if !schedule.due(now) {
             continue;
         }
-        let mut busy_until = now;
+        let mut effect_delay = 0.0;
         if let Ok((_, speed, mut velocity, transform)) = actors.get_mut(schedule.actor) {
             let to_goal = action.to_cell.center() - transform.translation.xz();
             velocity.0 = ground_direction(to_goal) * speed.0;
-            busy_until = now + to_goal.length() / speed.0.max(f32::EPSILON);
+            effect_delay = to_goal.length() / speed.0.max(f32::EPSILON);
             commands.entity(schedule.actor).insert(MoveGoal {
                 cell: action.to_cell,
             });
         }
-        let recovery = DecisionSlot::recovering(schedule, now, busy_until);
+        let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(recovery);
@@ -248,7 +248,7 @@ pub fn jump_action_executor_system(
             });
         }
         // 后摇（0.60s）覆盖整条弹道：落地那一刻才重新可决策
-        let recovery = DecisionSlot::recovering(schedule, now, now);
+        let recovery = DecisionSlot::recovering(schedule, now, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(recovery);

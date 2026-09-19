@@ -46,14 +46,17 @@ impl DecisionSlot {
         matches!(self, Self::Empty)
     }
 
-    /// 执行器收尾：进入后摇。后摇从**效果落地那一刻**起算，但至少忙到 `busy_until`。
+    /// 执行器收尾：进入后摇。
     ///
-    /// 带位移 / 飞行的动作必须把「效果真的发生」的那一刻传进来（移动走到格中心、
-    /// 火球飞到落点），否则行动者会在效果还在进行时拿到决策权——表现为滑行途中
-    /// 就能改主意、火球被冻在半空。
-    pub fn recovering(schedule: &ScheduledAction, executed_at: f32, busy_until: f32) -> Self {
+    /// 后摇从**效果真的发生**那一刻起算，因此带位移 / 飞行的动作要把
+    /// 「效果还要多久才发生」传进来（移动走到格中心、火球飞到落点）；
+    /// 瞬间完成的动作传 `0`，只忙一个后摇。
+    ///
+    /// 传时长而不是「忙到哪个时刻」，是因为忙到的那一刻永远是
+    /// `now + 这段时长`——少一次加法，也少一个"现在几点"的重复概念。
+    pub fn recovering(schedule: &ScheduledAction, now: f32, effect_delay: f32) -> Self {
         Self::Recovery {
-            until: (executed_at + schedule.recovery).max(busy_until),
+            until: now + schedule.recovery.max(effect_delay),
         }
     }
 }
@@ -71,19 +74,19 @@ mod tests {
         assert!(!DecisionSlot::Recovery { until: 1.0 }.is_empty());
     }
 
-    /// 后摇取「一个后摇」与「效果落地」里更晚的那个。
+    /// 后摇取「一个后摇」与「效果还要多久」里更晚的那个。
     #[test]
     fn the_recovery_window_ends_at_the_later_of_effect_and_recovery() {
         let schedule = ScheduledAction::declared_at(Entity::PLACEHOLDER, timing::MOVE, 0.0);
 
         // 效果比后摇晚（移动 / 火球）：忙到效果真的发生
         assert_eq!(
-            DecisionSlot::recovering(&schedule, 1.0, 1.4),
+            DecisionSlot::recovering(&schedule, 1.0, 0.4),
             DecisionSlot::Recovery { until: 1.4 }
         );
         // 效果瞬间完成（近战 / 招架）：只忙一个后摇
         assert_eq!(
-            DecisionSlot::recovering(&schedule, 1.0, 1.0),
+            DecisionSlot::recovering(&schedule, 1.0, 0.0),
             DecisionSlot::Recovery {
                 until: 1.0 + timing::MOVE.recovery
             }

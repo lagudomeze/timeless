@@ -5,9 +5,10 @@
 //!
 //! ```text
 //! 每个 action 自己声明威胁覆盖的格（Threatens / TargetCell）
-//!   ─▶ detect_threat_system：有威胁瞄准玩家 → PauseRequest::Pause("threat")
+//!   ─▶ detect_threat_system：有威胁瞄准玩家且玩家还没表态
+//!                             → 每帧断言 PauseRequest::Pause(THREAT)
 //!   ─▶ 世界冻结（Time<Virtual> 停表）：玩家可以撤销 / 换手 / 用 Focus 抢先手
-//!   ─▶ 回应过这次威胁（或威胁消失）→ PauseRequest::Resume("threat")
+//!   ─▶ 回应过这次威胁（或威胁消失）→ 不再断言，原因下一帧自然消失
 //! ```
 //!
 //! **威胁声明在行动自己身上**，而不是由反应系统去猜：

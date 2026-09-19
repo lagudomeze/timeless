@@ -1,4 +1,4 @@
-//! 防御域的标记清理与撤销退款。
+//! 防御域的标记清理、撤销退款与精力回复。
 //!
 //! 纯逻辑（防御判定 / 反制伤害）住在
 //! [`crate::combat::formula::domain`]；系统层只做两件事：
@@ -6,6 +6,9 @@
 //! 1. 把 ECS 状态翻成纯函数需要的参数（在
 //!    [`apply_physical_hits_system`](crate::combat::formula::apply_physical_hits_system) 里）；
 //! 2. 清理短命标记（[`expire_defense_markers_system`]）。
+//!
+//! 「谁能拿回资源」的两条路都是**订阅**：撤销订阅 `ActionCancelled`，
+//! 重新可决策订阅 `DecisionReady`——资源归本域，时间线不反向依赖它。
 
 use bevy::prelude::*;
 
@@ -14,7 +17,20 @@ use crate::combat::targeting::MeleeShape;
 use crate::movement::Velocity;
 
 use super::components::{Dodging, Parrying};
-use super::stamina::Stamina;
+use super::stamina::{STAMINA_REGEN_PER_DECISION, Stamina};
+
+/// 后摇结束、重新可决策时回一点精力（`DecisionReady` → `Stamina`）。
+///
+/// 「又轮到它决策了」是精力的自然回复点（取代旧模型的「每回合 +1」——
+/// 无回合没有回合）。时间线只宣布"槽空了"，回多少、回给谁由资源的拥有者决定。
+pub fn recover_stamina_observer(
+    ready: On<crate::timeline::DecisionReady>,
+    mut units: Query<&mut Stamina>,
+) {
+    if let Ok(mut stamina) = units.get_mut(ready.entity) {
+        stamina.regen(STAMINA_REGEN_PER_DECISION);
+    }
+}
 
 /// 撤销行动时退还精力（`ActionCancelled` → `Stamina`）。
 ///

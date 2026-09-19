@@ -21,9 +21,10 @@ use super::components::{TargetCell, ThreatWindow, Threatens};
 /// 「敌对」这一条不能省：玩家自己的火球砸在自己脚下时，那是**自己**说了算的事，
 /// 把世界冻住只会让那发火球永远飞不出去。
 ///
-/// 威胁出现时写 `Pause("threat")`，世界因此冻结，玩家可以撤销 / 换手 /
-/// 花 1 点 Focus 抢先手。**玩家换了一手就算表态**（见 [`ThreatWindow`]），
-/// 世界随即解冻——否则双方都在冻结里，威胁永远不会自己消失。
+/// 威胁还在、玩家又还没表态时**每帧断言** `Pause("threat")`：世界因此冻着，
+/// 玩家可以撤销 / 换手 / 花 1 点 Focus 抢先手。**玩家换了一手就算表态**
+/// （见 [`ThreatWindow`]），此后不再断言，原因下一帧自然消失、世界解冻——
+/// 否则双方都在冻结里，威胁永远不会自己消失。
 #[allow(clippy::too_many_arguments)]
 pub fn detect_threat_system(
     threats: Query<(&ScheduledAction, &Threatens)>,
@@ -56,32 +57,33 @@ pub fn detect_threat_system(
         .find(|schedule| schedule.pending(now) && drivers.get(schedule.actor).is_ok())
         .map(|schedule| schedule.actor);
 
-    // 威胁消失：复位（下一次威胁会重新开窗）
+    // 威胁消失：复位（下一次威胁会重新开窗）。不再断言，原因下一帧自然消失
     if !threatened {
         if window.threatening {
             window.threatening = false;
             window.answered = false;
             window.opening_action = None;
-            pause.write(PauseRequest::Resume(THREAT.to_string()));
         }
         return;
     }
 
-    // 新威胁：开窗并冻住世界
+    // 新威胁：开窗，记下玩家当时那一手
     if !window.threatening {
         window.threatening = true;
         window.answered = false;
         window.opening_action = player_action;
         debug!("⚔ 敌对威胁逼近玩家：冻结世界等反应");
-        pause.write(PauseRequest::Pause(THREAT.to_string()));
-        return;
     }
 
-    // 玩家换了一手 = 表态：解冻，让他那一手照常落地
+    // 玩家换了一手 = 表态：**停止断言**，让他那一手照常落地
     if !window.answered && window.opening_action != player_action {
         window.answered = true;
         debug!("⚔ 玩家已就这次威胁表态：解冻");
-        pause.write(PauseRequest::Resume(THREAT.to_string()));
+    }
+
+    // 威胁还在、玩家又还没表态 → 这一帧继续把世界按停
+    if !window.answered {
+        pause.write(PauseRequest::Pause(THREAT));
     }
 }
 
@@ -145,18 +147,17 @@ mod tests {
         app.update();
         assert_eq!(
             capture_of(&app).last(),
-            Some(&PauseRequest::Pause(THREAT.to_string())),
+            Some(&PauseRequest::Pause(THREAT)),
             "有人瞄着玩家脚下的格 → 冻住世界"
         );
 
-        // 那条行动被撤销 / 打断 / 落地：威胁消失 → 解冻
+        // 那条行动被撤销 / 打断 / 落地：威胁消失 → 不再断言，世界因此解冻
         app.world_mut().entity_mut(action).despawn();
         app.world_mut().resource_mut::<Captured>().0.clear();
         app.update();
-        assert_eq!(
-            capture_of(&app).last(),
-            Some(&PauseRequest::Resume(THREAT.to_string())),
-            "威胁没了就解冻"
+        assert!(
+            capture_of(&app).is_empty(),
+            "威胁没了就不该再断言暂停，原因下一帧自然消失"
         );
         assert!(app.world().get_entity(player).is_ok());
     }
@@ -191,10 +192,7 @@ mod tests {
 
         app.update();
 
-        assert_eq!(
-            capture_of(&app).last(),
-            Some(&PauseRequest::Pause(THREAT.to_string()))
-        );
+        assert_eq!(capture_of(&app).last(), Some(&PauseRequest::Pause(THREAT)));
     }
 
     /// **玩家表态就解冻**：否则双方都冻着，威胁永远不消失（死锁）。
@@ -213,6 +211,11 @@ mod tests {
         app.update(); // 窗口打开：玩家此刻没有行动
         let window = *app.world().resource::<ThreatWindow>();
         assert!(window.threatening && !window.answered);
+        assert_eq!(
+            capture_of(&app).last(),
+            Some(&PauseRequest::Pause(THREAT)),
+            "还没表态就一直断言着暂停"
+        );
 
         // 玩家举起一招（换了一手）
         app.world_mut()
@@ -220,10 +223,9 @@ mod tests {
         app.world_mut().resource_mut::<Captured>().0.clear();
         app.update();
 
-        assert_eq!(
-            capture_of(&app).last(),
-            Some(&PauseRequest::Resume(THREAT.to_string())),
-            "玩家已经就这次威胁表态过了"
+        assert!(
+            capture_of(&app).is_empty(),
+            "玩家已经就这次威胁表态过了，不该再断言暂停"
         );
         let window = *app.world().resource::<ThreatWindow>();
         assert!(

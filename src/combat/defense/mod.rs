@@ -27,7 +27,9 @@ pub use actions::{
 pub use components::{DefenseOutcome, Dodging, ParryAction, Parrying};
 pub use events::{ParryCommand, RollCommand};
 pub use stamina::{STAMINA_REGEN_PER_DECISION, Stamina};
-pub use systems::{expire_defense_markers_system, refund_cancelled_actions_system};
+pub use systems::{
+    expire_defense_markers_system, recover_stamina_observer, refund_cancelled_actions_system,
+};
 
 /// 招架行动工厂：载荷 + 调度数据 + 可取消规则。
 pub fn parry_action_scene(

@@ -17,7 +17,7 @@ use crate::movement::Cell;
 use crate::movement::MoveToCommand;
 use crate::presentation::MainCamera;
 use crate::presentation::hud::PreviewReadout;
-use crate::timeline::{CELL_SIZE, UndoCommand};
+use crate::timeline::{CELL_SIZE, PlayerIntent, UndoCommand};
 use crate::world::{TerrainConfig, ground_position};
 
 use super::components::{AoePreview, ConePreview, HoverHighlight, HoverTint, HoveredCell};
@@ -352,6 +352,10 @@ pub fn update_preview_readout_system(
 /// | 左键 | 点在空地上 | 走到这一格（`MoveToCommand`，可跨多格） |
 /// | 右键 | —— | 撤销最近一条未结算的玩家行动（`UndoCommand`） |
 ///
+/// 左键同时写一条 [`PlayerIntent`]：它是"玩家这一帧想做事"的输入层事实，
+/// 时间线靠它把玩家那条还没到点的行动撤掉，好让新的这一手抢到决策槽。
+/// 右键不必写——它本来就是一条撤销请求。
+///
 /// 本系统只**写消息**，落地归各自的领域——和 `input` 同一条约定。
 #[allow(clippy::too_many_arguments)]
 pub fn pointer_command_system(
@@ -361,6 +365,7 @@ pub fn pointer_command_system(
     mut moves: MessageWriter<MoveToCommand>,
     mut skills: MessageWriter<UseSelectedSkill>,
     mut undos: MessageWriter<UndoCommand>,
+    mut intents: MessageWriter<PlayerIntent>,
 ) {
     for click in clicks.read() {
         match click {
@@ -378,6 +383,7 @@ pub fn pointer_command_system(
                 } else {
                     moves.write(MoveToCommand { cell });
                 }
+                intents.write(PlayerIntent);
             }
         }
     }
@@ -393,6 +399,7 @@ mod tests {
         moves: usize,
         skills: usize,
         undos: usize,
+        intents: usize,
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -401,10 +408,12 @@ mod tests {
         mut moves: MessageReader<MoveToCommand>,
         mut skills: MessageReader<UseSelectedSkill>,
         mut undos: MessageReader<UndoCommand>,
+        mut intents: MessageReader<PlayerIntent>,
     ) {
         probes.moves += moves.read().count();
         probes.skills += skills.read().count();
         probes.undos += undos.read().count();
+        probes.intents += intents.read().count();
     }
 
     fn click_app() -> App {
@@ -416,11 +425,14 @@ mod tests {
             .add_message::<MoveToCommand>()
             .add_message::<UseSelectedSkill>()
             .add_message::<UndoCommand>()
+            .add_message::<PlayerIntent>()
             .add_systems(Update, (pointer_command_system, probe_system).chain());
         app
     }
 
     /// 左键的两种去向：空地板 → 移动；有单位 → 用当前技能（没有"确认"这一步）。
+    ///
+    /// 两者都算「玩家表达了新意图」；右键不算——它本来就是一条撤销请求。
     #[test]
     fn primary_click_picks_the_right_command() {
         let cell = Cell::new(2, 2);
@@ -432,6 +444,7 @@ mod tests {
         app.update();
         let probes = app.world().resource::<Probes>();
         assert_eq!((probes.moves, probes.skills), (1, 0), "点地板 = 走过去");
+        assert_eq!(probes.intents, 1, "左键是一次新意图");
 
         // ② 那格上站着单位
         let mut app = click_app();
@@ -442,6 +455,7 @@ mod tests {
         app.update();
         let probes = app.world().resource::<Probes>();
         assert_eq!((probes.moves, probes.skills), (0, 1), "点单位 = 用当前技能");
+        assert_eq!(probes.intents, 1, "左键是一次新意图");
     }
 
     /// 右键 = 撤销。
@@ -453,6 +467,7 @@ mod tests {
 
         let probes = app.world().resource::<Probes>();
         assert_eq!((probes.undos, probes.moves), (1, 0), "右键只请求撤销");
+        assert_eq!(probes.intents, 0, "撤销本身就是意图，不必再多写一条");
     }
 
     fn highlight_app(hovered: Option<Cell>) -> (App, Entity) {

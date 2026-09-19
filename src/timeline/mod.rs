@@ -26,13 +26,18 @@
 //! ## 冻结：原因集合，而不是一个布尔
 //!
 //! ```text
-//! frozen ⟺ PauseReasons 非空
+//! frozen ⟺ 本帧的 PauseReasons 非空
 //! ```
 //!
-//! 原因由各领域用 [`PauseRequest`] 加减：`"manual"`（空格）、`"slot_empty"`
-//! （玩家空着决策槽）、`"threat"`（combat 检测到威胁瞄准玩家）。多个原因可以叠加、
-//! 互不覆盖——手动暂停因此不会只前进一帧。**唯一**写 `Time<Virtual>` 的地方是
-//! 帧末 [`ClockSet`] 里的 [`apply_clock`]。
+//! 原因是**断言式**的：谁这一帧还想让世界停着就写一条 [`PauseRequest::Pause`]，
+//! 下一帧不再断言，原因自然消失——不需要谁去"撤销"。集合每帧重建，因此既不会
+//! 留下没人摘的幽灵原因，多个原因（`"manual"` 手动暂停 / `"slot_empty"` 等玩家决策 /
+//! `"threat"` 威胁逼近）又能叠加、互不覆盖。
+//!
+//! 按哪个键暂停、按一下是暂停还是恢复，是 [`crate::input`] 的事：它每帧断言
+//! （或停止断言）`"manual"`，并可以在需要时写一条 [`PauseRequest::Resume`]
+//! 清空此刻已收集的原因。**唯一**写 `Time<Virtual>` 的地方是帧末 [`ClockSet`]
+//! 里的 [`apply_clock`]。
 //!
 //! Bevy 每帧把虚拟时间拷进通用 `Time`，因此位移、投射物、`Lifetime`、后摇计时
 //! 全部自动停表，各领域不需要任何 `if paused` 分支。
@@ -53,18 +58,17 @@ pub mod timing;
 pub use components::{Cancellable, InputDriven};
 pub use decision::DecisionSlot;
 pub use events::{
-    ActionBlocked, ActionCancelled, BlockReason, InterruptEvent, PauseRequest, TogglePause,
-    UndoCommand, UseFocus,
+    ActionBlocked, ActionCancelled, BlockReason, DecisionReady, InterruptEvent, PauseRequest,
+    PlayerIntent, UndoCommand, UseFocus,
 };
 pub use plugin::TimelinePlugin;
 pub use resources::{
-    FOCUS_MAX, FOCUS_RECOVER_INTERVAL, Focus, FocusIntent, MANUAL, ManualPause, PauseReasons,
-    SLOT_EMPTY, THREAT,
+    FOCUS_MAX, FOCUS_RECOVER_INTERVAL, Focus, FocusIntent, MANUAL, PauseReasons, SLOT_EMPTY, THREAT,
 };
 pub use schedule::ScheduledAction;
 pub use systems::{
-    apply_clock, compute_manual_pause, compute_player_awaiting_system, interrupt_observer,
-    interrupt_system, process_pause_requests, recover_focus_system, recovery_system, roll_3d5,
+    apply_clock, compute_player_awaiting_system, interrupt_observer, interrupt_system,
+    process_pause_requests, recover_focus_system, recovery_system, roll_3d5,
     track_focus_intent_system, undo_system,
 };
 pub use timing::{ActionTiming, CELL_SIZE};

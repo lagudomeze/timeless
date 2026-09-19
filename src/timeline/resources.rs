@@ -1,23 +1,30 @@
-//! 时间线资源：暂停原因集合、手动暂停开关、反应资源 `Focus`。
+//! 时间线资源：暂停原因集合与反应资源 `Focus`。
 //!
-//! 冻结的判据只有一条：**暂停原因集合非空**。谁想停世界就往集合里放一个原因，
-//! 不想要了就撤掉——因此「玩家等输入」「手动暂停」「敌人正打过来」可以叠加，
-//! 互不覆盖（这是旧的单门控系统最容易出错的地方）。
+//! 冻结的判据只有一条：**本帧的暂停原因集合非空**。谁这一帧还想让世界停着，
+//! 就断言一条原因；不再断言，原因下一帧自然消失——因此既不存在"原因留在集合里
+//! 没人摘"的幽灵冻结，多种原因（等输入 / 手动 / 威胁）又能叠加、互不覆盖。
 
 use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-/// 暂停原因：手动暂停（空格）。
+/// 暂停原因：手动暂停。
 pub const MANUAL: &str = "manual";
 /// 暂停原因：有一名 `InputDriven` 的行动者空着决策槽，正等玩家决策。
 pub const SLOT_EMPTY: &str = "slot_empty";
 /// 暂停原因：combat 检测到有威胁瞄准玩家（见 `combat::reaction`）。
 pub const THREAT: &str = "threat";
 
-/// 暂停原因集合：**整个游戏唯一的冻结判据**（`frozen ⟺ 非空`）。
+/// **本帧**的暂停原因集合：整个游戏唯一的冻结判据（`frozen ⟺ 非空`）。
+///
+/// 每帧由 [`process_pause_requests`](super::systems::process_pause_requests) 重建：
+/// 先清空，再把这一帧收到的 [`Pause`](super::PauseRequest::Pause) 断言放进来
+/// （收到 [`Resume`](super::PauseRequest::Resume) 则当场清空）。
+///
+/// 集合内容同时是给玩家看的答案——「现在是谁在停世界」（HUD 显示
+/// [`labels`](Self::labels)），原因因此是常量而不是临时字符串。
 #[derive(Resource, Debug, Default, Clone)]
-pub struct PauseReasons(HashSet<String>);
+pub struct PauseReasons(HashSet<&'static str>);
 
 impl PauseReasons {
     /// 现在冻着吗。
@@ -25,13 +32,13 @@ impl PauseReasons {
         !self.0.is_empty()
     }
 
-    /// 某个原因在不在。
+    /// 某个原因在不在（[`crate::input`] 用它判断手动暂停的开 / 关）。
     pub fn contains(&self, reason: &str) -> bool {
         self.0.contains(reason)
     }
 
-    /// 加上一个原因（已经在里面就什么也不做）。
-    pub fn insert(&mut self, reason: String) {
+    /// 断言一个原因（已经在里面就什么也不做）。
+    pub fn insert(&mut self, reason: &'static str) {
         self.0.insert(reason);
     }
 
@@ -40,20 +47,18 @@ impl PauseReasons {
         self.0.remove(reason);
     }
 
+    /// 全部撤掉（每帧重建与 `Resume` 都走它）。
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
     /// 排序后的原因列表（HUD 展示用；排序让「同一批原因」永远显示成同一句话）。
-    pub fn labels(&self) -> Vec<&str> {
-        let mut labels: Vec<&str> = self.0.iter().map(String::as_str).collect();
+    pub fn labels(&self) -> Vec<&'static str> {
+        let mut labels: Vec<&'static str> = self.0.iter().copied().collect();
         labels.sort_unstable();
         labels
     }
 }
-
-/// 手动暂停开关：`Space` 切换，随 [`PauseReasons`] 一起决定要不要停表。
-///
-/// 单独放一个资源（而不是直接读写 `Time<Virtual>`）是为了让**手动暂停能一直有效**：
-/// 旧实现里「等玩家输入」的门控每帧都会 unpause 一次，空格因而只前进一帧。
-#[derive(Resource, Debug, Default, Clone, Copy)]
-pub struct ManualPause(pub bool);
 
 /// Focus 上限。
 pub const FOCUS_MAX: u32 = 3;
@@ -116,8 +121,8 @@ mod tests {
         let mut reasons = PauseReasons::default();
         assert!(!reasons.is_frozen(), "没有原因就不冻结");
 
-        reasons.insert(MANUAL.to_string());
-        reasons.insert(SLOT_EMPTY.to_string());
+        reasons.insert(MANUAL);
+        reasons.insert(SLOT_EMPTY);
         assert!(reasons.is_frozen());
         assert_eq!(
             reasons.labels(),
@@ -127,8 +132,8 @@ mod tests {
 
         reasons.remove(MANUAL);
         assert!(reasons.is_frozen(), "还有原因就仍然冻着");
-        reasons.remove(SLOT_EMPTY);
-        assert!(!reasons.is_frozen(), "原因撤空才解冻");
+        reasons.clear();
+        assert!(!reasons.is_frozen(), "清空之后才解冻");
     }
 
     #[test]

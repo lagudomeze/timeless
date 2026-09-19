@@ -8,8 +8,8 @@ use bevy::prelude::*;
 use super::CombatSet;
 use super::defense::{
     ParryCommand, RollCommand, declare_parry_system, declare_roll_system,
-    expire_defense_markers_system, parry_executor_system, refund_cancelled_actions_system,
-    roll_executor_system,
+    expire_defense_markers_system, parry_executor_system, recover_stamina_observer,
+    refund_cancelled_actions_system, roll_executor_system,
 };
 use super::formula::apply_physical_hits_system;
 use super::health::{DamageEvent, DeathEvent, apply_damage_system, despawn_dead_system};
@@ -46,6 +46,8 @@ impl Plugin for CombatPlugin {
             .add_message::<SelectSkill>()
             .add_message::<CycleSkill>()
             .add_message::<UseSelectedSkill>()
+            // 撤销退款 / 后摇结束回精力：都是 EntityEvent 订阅，不留集中式的收尾
+            .add_observer(recover_stamina_observer)
             .add_systems(
                 Update,
                 (

@@ -22,7 +22,7 @@
 //!
 //! ```text
 //! spawn ──▶ combat / movement / ai / world / presentation
-//! input ──▶ movement / combat / timeline / interaction / presentation（只写它们的消息）
+//! input ──▶ movement / combat / timeline / interaction / presentation / spawn（只写它们的消息）
 //! interaction ──▶ movement / combat / timeline（点击解释成它们的消息）
 //! ai    ──▶ movement / combat（只声明行动实体）
 //! ```
@@ -215,6 +215,8 @@ mod tests {
             .add_message::<crate::presentation::hud::PreviewReadout>()
             // 滚轮缩放由 presentation 消费（本测试 App 没有 PresentationPlugin）
             .add_message::<crate::presentation::ZoomCamera>()
+            // F5 重置由 spawn 消费（本测试 App 没有 SpawnPlugin）
+            .add_message::<crate::spawn::ResetBattle>()
             .add_plugins((
                 InputPlugin,
                 // 输入域要写的 `PointerCommand` 由交互域注册

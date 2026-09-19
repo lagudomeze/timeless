@@ -171,7 +171,7 @@ pub fn shoot_action_executor_system(
         if !schedule.due(now) {
             continue;
         }
-        let mut busy_until = now;
+        let mut effect_delay = 0.0;
         if let Ok((transform, faction)) = units.get(schedule.actor) {
             let origin = transform.translation;
             let faction = *faction;
@@ -179,11 +179,11 @@ pub fn shoot_action_executor_system(
                 let destination = target.center();
                 let to_target = Vec3::new(destination.x - origin.x, 0.0, destination.y - origin.z);
                 let direction = to_target.normalize_or_zero();
-                busy_until = now + to_target.length() / ARROW_SPEED;
+                effect_delay = to_target.length() / ARROW_SPEED;
                 commands.spawn_scene(arrow_scene(origin + direction * 1.2, direction, faction));
             }
         }
-        let recovery = DecisionSlot::recovering(schedule, now, busy_until);
+        let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(recovery);
@@ -213,7 +213,7 @@ pub fn melee_action_executor_system(
                 commands.spawn_scene(melee_scene(origin + direction * 0.6, direction, faction));
             }
         }
-        let recovery = DecisionSlot::recovering(schedule, now, now);
+        let recovery = DecisionSlot::recovering(schedule, now, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(recovery);

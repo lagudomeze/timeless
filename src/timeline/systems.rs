@@ -9,67 +9,29 @@
 
 use bevy::prelude::*;
 
-use crate::combat::defense::{STAMINA_REGEN_PER_DECISION, Stamina};
-
 use super::components::{Cancellable, InputDriven};
 use super::decision::DecisionSlot;
 use super::events::{
-    ActionCancelled, InterruptEvent, PauseRequest, TogglePause, UndoCommand, UseFocus,
+    ActionCancelled, DecisionReady, InterruptEvent, PauseRequest, PlayerIntent, UndoCommand,
+    UseFocus,
 };
-use super::resources::{
-    FOCUS_RECOVER_INTERVAL, Focus, FocusIntent, MANUAL, ManualPause, PauseReasons, SLOT_EMPTY,
-};
+use super::resources::{FOCUS_RECOVER_INTERVAL, Focus, FocusIntent, PauseReasons, SLOT_EMPTY};
 use super::schedule::ScheduledAction;
-
-/// 边沿触发的小工具：状态**翻转**时才写一条暂停请求。
-///
-/// 每帧都写同一个原因有两个坏处：白白分配字符串，以及让「谁在停世界」淹没在
-/// 噪声里（排查暂停问题时最想看的恰恰是第一条）。
-fn request_on_edge(
-    last: &mut Option<bool>,
-    wanted: bool,
-    reason: &str,
-    pause: &mut MessageWriter<PauseRequest>,
-) {
-    if *last == Some(wanted) {
-        return;
-    }
-    *last = Some(wanted);
-    if wanted {
-        pause.write(PauseRequest::Pause(reason.to_string()));
-    } else {
-        pause.write(PauseRequest::Resume(reason.to_string()));
-    }
-}
-
-/// 空格 → 手动暂停开关（只写原因，不碰时钟）。
-///
-/// 旧实现直接把 `Time<Virtual>` 反着设一次，而「等玩家输入」的门控下一帧又会
-/// 把它设回来——净效果是**手动暂停只前进一帧**。现在两个原因各自独立：
-/// 手动暂停一直挂在集合里，直到玩家再按一次空格。
-pub fn compute_manual_pause(
-    mut requests: MessageReader<TogglePause>,
-    mut manual: ResMut<ManualPause>,
-    mut pause: MessageWriter<PauseRequest>,
-    mut last: Local<Option<bool>>,
-) {
-    if requests.read().last().is_some() {
-        manual.0 = !manual.0;
-    }
-    request_on_edge(&mut last, manual.0, MANUAL, &mut pause);
-}
 
 /// 有 `InputDriven`（玩家）空着决策槽吗 → 世界该停下来等他。
 ///
 /// 这是「无回合」里唯一的时间门控需求：敌人不等玩家，玩家一空闲，世界就停。
 /// 没有 `InputDriven` 单位时（单测、组装之前）一律当作「不等输入」，避免把世界冻住。
+///
+/// **每帧断言**：还等着就再说一次。不需要谁去"撤销"——下一帧玩家动了，
+/// 这里不再断言，原因自然从集合里消失（见 [`PauseRequest`]）。
 pub fn compute_player_awaiting_system(
     actors: Query<&DecisionSlot, With<InputDriven>>,
     mut pause: MessageWriter<PauseRequest>,
-    mut last: Local<Option<bool>>,
 ) {
-    let awaiting = actors.iter().any(|slot| *slot == DecisionSlot::Empty);
-    request_on_edge(&mut last, awaiting, SLOT_EMPTY, &mut pause);
+    if actors.iter().any(|slot| slot.is_empty()) {
+        pause.write(PauseRequest::Pause(SLOT_EMPTY));
+    }
 }
 
 /// 玩家想不想用 Focus 换前摇（本帧有效）：`Shift` + 决策键 → [`UseFocus`]。
@@ -84,28 +46,18 @@ pub fn track_focus_intent_system(
 ///
 /// 无回合模型里"随时可以改主意"就靠它。判定是纯谓词，两条同时满足才触发：
 ///
-/// 1. 这一帧有玩家直接产生的意图（多种意图同帧时取**最后一次**读，与声明系统一致）；
+/// 1. 这一帧玩家表达了新意图（见 [`PlayerIntent`]）；
 /// 2. 玩家有一条未执行的行动（撤销系统自己会检查「还没到点 / 可取消 / 是玩家」）。
 ///
-/// ⚠️ **只读玩家直接产生的输入层消息**：`FireCommand` / `MeleeCommand` 是
-/// `UseSelectedSkill`（或热键）派生的下游消息，晚一帧才出现——监听它们会把
-/// "刚刚由自己的意图声明出来的行动"当成新意图撤掉（火球永远发不出去）。
+/// ⚠️ **只读输入层的意图**：`MoveCommand` / `RollCommand` / `UseSelectedSkill`
+/// 这些是各领域的动作消息，时间线不该认识它们的词汇；而 `FireCommand` /
+/// `MeleeCommand` 更是下游派生的，晚一帧才出现——监听它们会把"刚刚由自己的
+/// 意图声明出来的行动"当成新意图撤掉（火球永远发不出去）。
 pub fn interrupt_system(
-    mut moves: MessageReader<crate::movement::MoveCommand>,
-    mut moves_to: MessageReader<crate::movement::MoveToCommand>,
-    mut jumps: MessageReader<crate::movement::JumpCommand>,
-    mut uses: MessageReader<crate::combat::skills::UseSelectedSkill>,
-    mut rolls: MessageReader<crate::combat::defense::RollCommand>,
-    mut parries: MessageReader<crate::combat::defense::ParryCommand>,
+    mut intents: MessageReader<PlayerIntent>,
     mut undo: MessageWriter<UndoCommand>,
 ) {
-    let wanted = moves.read().count()
-        + moves_to.read().count()
-        + jumps.read().count()
-        + uses.read().count()
-        + rolls.read().count()
-        + parries.read().count();
-    if wanted == 0 {
+    if intents.read().next().is_none() {
         return; // 这一帧没人想做事：让当前意图继续
     }
     undo.write(UndoCommand);
@@ -157,16 +109,17 @@ pub fn undo_system(
     }
 }
 
-/// 后摇：`Recovery { until }` 到点就清空决策槽，并回一点精力。
+/// 后摇：`Recovery { until }` 到点就清空决策槽，并广播 [`DecisionReady`]。
 ///
-/// 恢复决策槽是「又轮到它决策了」，因此这里也是精力的自然回复点
-/// （取代旧模型的「每回合 +1」——无回合没有回合）。
+/// 「又轮到它决策了」这件事只由时间线宣布；因此**谁能拿到它**（比如精力回复）
+/// 由关心它的领域自己写 observer——时间线不反向依赖任何资源。
 pub fn recovery_system(
+    mut commands: Commands,
     time: Res<Time<Virtual>>,
-    mut recovering: Query<(&mut DecisionSlot, Option<&mut Stamina>)>,
+    mut recovering: Query<(Entity, &mut DecisionSlot)>,
 ) {
     let now = time.elapsed_secs();
-    for (mut slot, stamina) in &mut recovering {
+    for (entity, mut slot) in &mut recovering {
         // 只处理后摇：前摇归执行器与撤销 / 打断管，空闲没什么可恢复的
         let DecisionSlot::Recovery { until } = *slot else {
             continue;
@@ -174,10 +127,8 @@ pub fn recovery_system(
         if now < until {
             continue;
         }
-        if let Some(mut stamina) = stamina {
-            stamina.regen(STAMINA_REGEN_PER_DECISION);
-        }
         *slot = DecisionSlot::Empty;
+        commands.trigger(DecisionReady { entity });
     }
 }
 
@@ -196,15 +147,26 @@ pub fn recover_focus_system(
     }
 }
 
-/// 暂停请求 → 暂停原因集合（谁想停世界就往里加一条，不想要了撤掉）。
+/// 暂停请求 → **本帧**的暂停原因集合。
+///
+/// 每帧重建：先清空，再按**发出顺序**处理这一帧的请求。
+///
+/// - [`PauseRequest::Pause`] 是**断言**："我还想让世界停着"——谁不停断言，
+///   它的原因下一帧就不在了，不需要谁去撤销；
+/// - [`PauseRequest::Resume`] 是**解冻**："清空此刻已经收集到的原因，让时间流动"。
+///
+/// 顺序因此有意义，而且是确定的：输入域（`Resume` 的来源）排在
+/// [`TimelineSet`](super::TimelineSet) 之前，各领域的断言排在它之后——
+/// 玩家手动解冻的那一帧，仍然成立的断言（比如"还等着你决策"）会照常加回来。
 pub fn process_pause_requests(
     mut requests: MessageReader<PauseRequest>,
     mut reasons: ResMut<PauseReasons>,
 ) {
+    reasons.clear();
     for request in requests.read() {
         match request {
-            PauseRequest::Pause(reason) => reasons.insert(reason.clone()),
-            PauseRequest::Resume(reason) => reasons.remove(reason),
+            PauseRequest::Pause(reason) => reasons.insert(reason),
+            PauseRequest::Resume => reasons.clear(),
         }
     }
 }
@@ -279,7 +241,7 @@ pub fn interrupt_observer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::timing;
+    use crate::timeline::{MANUAL, timing};
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
 
@@ -291,10 +253,9 @@ mod tests {
                 100,
             )))
             .init_resource::<PauseReasons>()
-            .init_resource::<ManualPause>()
+            .init_resource::<ManualLatch>()
             .init_resource::<Focus>()
             .init_resource::<FocusIntent>()
-            .add_message::<TogglePause>()
             .add_message::<PauseRequest>()
             .add_message::<UseFocus>()
             .add_message::<UndoCommand>()
@@ -304,7 +265,7 @@ mod tests {
                 Update,
                 (
                     (
-                        compute_manual_pause,
+                        assert_manual,
                         compute_player_awaiting_system,
                         track_focus_intent_system,
                         undo_system,
@@ -320,12 +281,24 @@ mod tests {
         app
     }
 
-    /// 手动暂停必须**一直有效**，而不是只前进一帧。
+    /// 测试用的「手动暂停开关」：真实实现里这个闩住在 `input` 域
+    /// （空格切换它，然后每帧断言 [`MANUAL`]）。
+    #[derive(Resource, Default)]
+    struct ManualLatch(bool);
+
+    fn assert_manual(latch: Res<ManualLatch>, mut pause: MessageWriter<PauseRequest>) {
+        if latch.0 {
+            pause.write(PauseRequest::Pause(MANUAL));
+        }
+    }
+
+    /// 断言式的暂停：只要还在断言，世界就一直冻着；不再断言，下一帧就解冻。
     ///
-    /// 旧实现里门控每帧都按「玩家就绪」暂停、`pause_toggle_system` 又反着设一次，
-    /// 净效果是空格只让世界多走一帧。
+    /// 旧实现是边沿触发的（靠 `Local<Option<bool>>` 记上一次的状态），
+    /// 一旦有别人清空原因集合，它就再也不会把原因加回来——世界在"还等着玩家
+    /// 决策"的状态下悄悄跑起来。
     #[test]
-    fn manual_pause_stays_until_the_player_toggles_it_back() {
+    fn a_reason_lasts_exactly_as_long_as_it_keeps_being_asserted() {
         let mut app = clock_app();
         let player = app
             .world_mut()
@@ -342,24 +315,21 @@ mod tests {
             "没有原因时世界应当流动"
         );
 
-        // 空格 → 手动暂停
-        app.world_mut().write_message(TogglePause);
-        app.update();
-        assert!(app.world().resource::<Time<Virtual>>().is_paused());
-
-        // 再跑几帧：世界仍然冻着（旧实现这里就解冻了）
-        for _ in 0..5 {
+        app.world_mut().resource_mut::<ManualLatch>().0 = true;
+        for _ in 0..6 {
             app.update();
             assert!(
                 app.world().resource::<Time<Virtual>>().is_paused(),
-                "手动暂停应当一直有效"
+                "只要还在断言，手动暂停就一直有效"
             );
         }
 
-        // 再按一次空格 → 解冻
-        app.world_mut().write_message(TogglePause);
+        app.world_mut().resource_mut::<ManualLatch>().0 = false;
         app.update();
-        assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+        assert!(
+            !app.world().resource::<Time<Virtual>>().is_paused(),
+            "不再断言，原因下一帧就该消失"
+        );
     }
 
     /// 空决策槽是另一个独立原因：它消失时手动暂停仍然有效。
@@ -372,8 +342,13 @@ mod tests {
             .id();
 
         app.update(); // slot_empty
-        app.world_mut().write_message(TogglePause);
+        app.world_mut().resource_mut::<ManualLatch>().0 = true;
         app.update(); // manual + slot_empty
+        assert_eq!(
+            app.world().resource::<PauseReasons>().labels(),
+            vec![MANUAL, SLOT_EMPTY],
+            "两个原因可以同时挂着"
+        );
 
         app.world_mut()
             .entity_mut(player)
@@ -383,8 +358,37 @@ mod tests {
             app.world().resource::<Time<Virtual>>().is_paused(),
             "槽不空了，但手动暂停还挂着"
         );
+        assert_eq!(
+            app.world().resource::<PauseReasons>().labels(),
+            vec![MANUAL],
+            "不再成立的原因应当自己消失，而不是等人来摘"
+        );
 
-        app.world_mut().write_message(TogglePause);
+        app.world_mut().resource_mut::<ManualLatch>().0 = false;
+        app.update();
+        assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    }
+
+    /// `Resume` 的语义：清空**此刻已经收集到**的原因。
+    ///
+    /// 顺序因此是有意义的，而且是确定的——输入域（`Resume` 的来源）排在
+    /// [`TimelineSet`] 之前，各领域的断言排在它之后。
+    #[test]
+    fn a_resume_only_clears_what_was_asserted_before_it() {
+        let mut app = clock_app();
+        app.world_mut().resource_mut::<ManualLatch>().0 = true;
+
+        // 解冻请求先到，同一帧里仍然成立的断言随后加回来
+        app.world_mut().write_message(PauseRequest::Resume);
+        app.update();
+        assert!(
+            app.world().resource::<Time<Virtual>>().is_paused(),
+            "解冻只清掉此刻已收集的原因；同一帧里仍然成立的断言要照常加回来"
+        );
+
+        // 断言停掉之后，解冻才真的生效
+        app.world_mut().resource_mut::<ManualLatch>().0 = false;
+        app.world_mut().write_message(PauseRequest::Resume);
         app.update();
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
     }
@@ -591,6 +595,35 @@ mod tests {
         assert!(
             !app.world().resource::<FocusIntent>().0,
             "上一帧的意图不该延续到下一帧"
+        );
+    }
+
+    /// 打断只认**输入层的意图**这一条消息：时间线不认识各领域的命令词汇。
+    #[derive(Resource, Default)]
+    struct Undos(usize);
+
+    fn count_undos(mut requests: MessageReader<UndoCommand>, mut undos: ResMut<Undos>) {
+        undos.0 += requests.read().count();
+    }
+
+    #[test]
+    fn only_a_player_intent_asks_for_an_undo() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Undos>()
+            .add_message::<PlayerIntent>()
+            .add_message::<UndoCommand>()
+            .add_systems(Update, (interrupt_system, count_undos).chain());
+
+        app.update();
+        assert_eq!(app.world().resource::<Undos>().0, 0, "没人表态就不该撤销");
+
+        app.world_mut().write_message(PlayerIntent);
+        app.update();
+        assert_eq!(
+            app.world().resource::<Undos>().0,
+            1,
+            "一句玩家意图就够时间线撤掉那条还没到点的行动"
         );
     }
 }

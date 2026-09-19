@@ -140,12 +140,12 @@ pub fn roll_executor_system(
         if !schedule.due(now) {
             continue;
         }
-        let mut busy_until = now;
+        let mut effect_delay = 0.0;
         if let Ok((mut velocity, mut stamina, transform)) = actors.get_mut(schedule.actor) {
             stamina.try_spend(ROLL_COST);
             let to_goal = roll.to_cell.center() - transform.translation.xz();
             velocity.0 = ground_direction(to_goal) * ROLL_SPEED;
-            busy_until = now + to_goal.length() / ROLL_SPEED;
+            effect_delay = to_goal.length() / ROLL_SPEED;
             commands.entity(schedule.actor).insert((
                 crate::movement::MoveGoal { cell: roll.to_cell },
                 crate::movement::DodgingOnArrival {
@@ -153,7 +153,7 @@ pub fn roll_executor_system(
                 },
             ));
         }
-        let recovery = DecisionSlot::recovering(schedule, now, busy_until);
+        let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(recovery);
@@ -234,7 +234,7 @@ pub fn parry_executor_system(
                 expires_at: now + PARRY_SECS,
             });
         }
-        let recovery = DecisionSlot::recovering(schedule, now, now);
+        let recovery = DecisionSlot::recovering(schedule, now, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(recovery);

@@ -5,30 +5,43 @@
 
 use bevy::prelude::*;
 
-/// 玩家请求暂停 / 继续（空格）。
+/// 停表 / 解冻请求。
 ///
-/// 写：[`crate::input`]（空格只翻译）；消费：
-/// [`compute_manual_pause`](super::systems::compute_manual_pause)。
-/// **空格只表示暂停**，不触发任何行动；真正的停表发生在 `apply_clock`。
-#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TogglePause;
-
-/// 停表 / 解冻请求：按**原因**加减，而不是直接开关时钟。
+/// **断言式**：谁这一帧还想让世界停着，就写一条 [`PauseRequest::Pause`]。
+/// 不需要谁去"撤销"自己的原因——下一帧不再断言，原因自然消失
+/// （[`PauseReasons`](super::resources::PauseReasons) 每帧重建）。
+/// 「等玩家决策」与「威胁逼近」因此可以叠加、互不覆盖，也不会出现
+/// "原因留在集合里没人摘"的幽灵冻结。
 ///
-/// 写：时间线自己的 `compute_*` 系统与 `combat::reaction::detect_threat_system`；
-/// 消费：[`process_pause_requests`](super::systems::process_pause_requests)
-/// （累积成 [`PauseReasons`](super::resources::PauseReasons)），
+/// 写：[`crate::input`]（手动暂停，哪个键由输入域自己定）、时间线的
+/// [`compute_player_awaiting_system`](super::systems::compute_player_awaiting_system)、
+/// `combat::reaction::detect_threat_system`；
+/// 消费：[`process_pause_requests`](super::systems::process_pause_requests)，
 /// 再由 [`apply_clock`](super::systems::apply_clock) 落到 `Time<Virtual>`。
 ///
-/// 原因用字符串是为了让「谁停了世界」一目了然（HUD 直接显示 `labels()`），
-/// 而且新原因不需要改任何枚举：加一个常量 + 一个 `compute_*` 系统即可。
-#[derive(Message, Debug, Clone, PartialEq, Eq)]
+/// 原因只是**给人看的**（HUD 直接显示 `labels()`），所以是 `&'static str` 常量：
+/// 加一个新原因不需要改任何枚举，只要一个常量加一个断言点，且每帧断言零分配。
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PauseRequest {
-    /// 加上一个暂停原因
-    Pause(String),
-    /// 撤掉一个暂停原因
-    Resume(String),
+    /// 这一帧仍然想停表，原因是 `reason`
+    Pause(&'static str),
+    /// 解冻：虚拟时间立刻流动，并清空已经收集到的原因
+    Resume,
 }
+
+/// 「这一帧玩家表达了一个新意图」。
+///
+/// 写：[`crate::input`]（方向键 / 技能键）与 [`crate::interaction`]（左键点击）；
+/// 消费：[`interrupt_system`](super::systems::interrupt_system)——它把玩家那条
+/// **还没到点**的行动撤掉，好让同一帧稍后运行的声明系统抢到空的决策槽。
+///
+/// 为什么需要这条消息：声明系统看到"槽被占着"只会回一句
+/// [`ActionBlocked`]，而玩家的真实意思是"我要改手"。而"这一帧有没有新意图"
+/// 只有输入层知道——各领域的动作命令是下游派生的，晚一帧才出现，
+/// 监听它们会把"刚由自己的意图声明出来的行动"当成新意图撤掉。
+/// 时间线因此不必认识 `MoveCommand` / `RollCommand` / `UseSelectedSkill` 这些词汇。
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayerIntent;
 
 /// 玩家要求「用 1 点 Focus 换前摇归零」（`Shift` + 决策键）。
 ///
@@ -109,4 +122,17 @@ pub struct InterruptEvent {
     pub source: Entity,
     /// 打断力度
     pub power: i32,
+}
+
+/// 后摇结束、决策槽回到 `Empty`（发给**行动者**）。
+///
+/// 写：[`recovery_system`](super::systems::recovery_system)；
+/// 消费：关心「又轮到它决策了」的领域——目前是 `combat::defense`（回 1 点精力）。
+///
+/// 用 `EntityEvent` 而不是让时间线直接改资源：资源归各自的领域管，
+/// 时间线只宣布「槽空了」这件事。
+#[derive(EntityEvent, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecisionReady {
+    /// 重新拿到决策权的行动者
+    pub entity: Entity,
 }

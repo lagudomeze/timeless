@@ -26,8 +26,12 @@
 //! [`DecisionSlot`](crate::timeline::DecisionSlot) 与
 //! [`InputDriven`](crate::timeline::InputDriven)——前者是「能不能决策」，
 //! 后者是「决策来自玩家输入」）。
-//! 反向仍然禁止：**没有任何领域依赖 `spawn`**——所以改角色配置永远不会
+//! 反向仍然禁止：**没有任何领域依赖 `spawn` 的组装逻辑**——所以改角色配置永远不会
 //! 波及战斗、移动、渲染的规则。
+//!
+//! 唯一的例外是一条**消息**：`F5` 的触发键住在 [`crate::input`]，它写
+//! [`ResetBattle`]，本域只消费——和所有其它按键一样，输入层只翻译、不执行。
+//!
 //! 攻击实体（箭矢、近战横扫）不在这里，它是技能的产物，工厂归
 //! [`crate::combat::skills`]。
 
@@ -47,7 +51,7 @@ pub use assembly::setup_scene;
 pub use enemy::enemy_scene;
 pub use player::player_scene;
 pub use plugin::SpawnPlugin;
-pub use restart::{ResetBattle, reset_battle_system, restart_input_system};
+pub use restart::{ResetBattle, reset_battle_system};
 pub use unit::unit_scene;
 
 /// 某一格的**中心**在地表上的世界坐标（单位的出生点）。

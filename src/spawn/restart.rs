@@ -2,7 +2,9 @@
 //!
 //! 它没有自己的数据模型：只是「清场 + 用同一套工厂重新组装」这段功能胶水，
 //! 所以既不归 ECS 数据域，也不归表现域，跟着组装车间走。
-//! 触发键（`F5`）与消费系统同属本文件：功能自己负责翻译按键、自己负责落地。
+//!
+//! **不认识按键**：触发键（`F5`）住在 [`crate::input`]，那里只把它翻成
+//! [`ResetBattle`]；本文件只消费这条消息。
 
 use bevy::prelude::*;
 
@@ -14,21 +16,9 @@ use crate::world::TerrainConfig;
 use super::enemy::enemy_scene;
 use super::player::player_scene;
 
-/// 请求重置战斗（写：R 键；消费：[`reset_battle_system`]）。
+/// 请求重置战斗（写：[`crate::input`] 的 F5；消费：[`reset_battle_system`]）。
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResetBattle;
-
-/// `F5` → [`ResetBattle`]（只翻译，不改状态）。
-///
-/// 原来是 `R`，但 `R` 现在让给了技能热键（`Q/W/E/R`）。
-pub fn restart_input_system(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut commands: MessageWriter<ResetBattle>,
-) {
-    if keys.just_pressed(KeyCode::F5) {
-        commands.write(ResetBattle);
-    }
-}
 
 /// 清场目标：单位（`Faction` / `Collidable`）、攻击实体（`Projectile`）
 /// 与时间线上没执行的行动（`ScheduledAction`）。
