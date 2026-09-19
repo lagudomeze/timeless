@@ -6,36 +6,13 @@
 
 use bevy::prelude::*;
 
-/// 行动的可取消规则（挂在行动实体上，替代旧的 `ActionCost` /
-/// `CancelCost` / `Uncancellable` 三件套）。
+/// 「这条行动不给撤」。
+///
+/// 撤销的**代价**不在这里：花了什么、退多少、收多少手续费，都由花钱的那个领域
+/// 订阅 [`ActionCancelled`](super::ActionCancelled) 自己算——行动实体上只留
+/// "能不能撤"这一条规则。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum Cancellable {
-    /// 免费撤销：还退什么也没花，收了也没扣
-    #[default]
-    Free,
-    /// 撤销要退 `refund`、再扣 `penalty`（声明时就扣了资源的动作）
-    Cost { refund: u32, penalty: u32 },
-    /// 根本不给撤（跳跃那种「起跳就谁都别想插队」）
-    Never,
-}
-
-impl Cancellable {
-    /// 撤销时退还多少资源。
-    pub fn refund(self) -> u32 {
-        match self {
-            Self::Cost { refund, .. } => refund,
-            Self::Free | Self::Never => 0,
-        }
-    }
-
-    /// 撤销本身要付多少代价。
-    pub fn penalty(self) -> u32 {
-        match self {
-            Self::Cost { penalty, .. } => penalty,
-            Self::Free | Self::Never => 0,
-        }
-    }
-}
+pub struct Uncancellable;
 
 /// 「这个单位的决策来自玩家输入」。
 ///
@@ -44,19 +21,3 @@ impl Cancellable {
 /// `Faction` 管**战斗目标过滤**，`InputDriven` 管**输入归属**，两者语义不同。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct InputDriven;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cancellable_carries_its_own_refund_and_penalty() {
-        assert_eq!(Cancellable::Free.refund(), 0);
-        assert_eq!(Cancellable::Never.penalty(), 0);
-        let cost = Cancellable::Cost {
-            refund: 2,
-            penalty: 1,
-        };
-        assert_eq!((cost.refund(), cost.penalty()), (2, 1));
-    }
-}

@@ -15,11 +15,10 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
+use crate::combat::defense::Stamina;
 use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
-use crate::timeline::{
-    Cancellable, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
-};
+use crate::timeline::{DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction};
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
 use super::events::{FireCommand, MeleeCommand};
@@ -33,12 +32,15 @@ pub struct ShootAction;
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MeleeAction;
 
+/// 撤销一次近战要付的精力：抡出去再收招，比火球轻（见
+/// [`refund_melee_observer`]）。
+pub const MELEE_CANCEL_PENALTY: u32 = 1;
+
 /// 射击行动工厂。
 pub fn shoot_action_scene(schedule: ScheduledAction) -> impl Scene {
     bsn! {
         ShootAction
         template_value(schedule)
-        template_value(Cancellable::Free)
     }
 }
 
@@ -58,8 +60,23 @@ pub fn melee_action_scene(
         MeleeAction
         template_value(threatens)
         template_value(schedule)
-        // 抡出去再收招要付一点精力（比火球轻）
-        template_value(Cancellable::Cost { refund: 0, penalty: 1 })
+    }
+}
+
+/// 撤销近战：抡出去再收招要付一点精力。
+///
+/// 退多少、收多少归**花钱的那个领域**：时间线只触发
+/// [`ActionCancelled`](crate::timeline::ActionCancelled)，这里自己认载荷。
+pub fn refund_melee_observer(
+    cancelled: On<crate::timeline::ActionCancelled>,
+    actions: Query<(), With<MeleeAction>>,
+    mut units: Query<&mut Stamina>,
+) {
+    if actions.get(cancelled.entity).is_err() {
+        return; // 被撤的不是近战
+    }
+    if let Ok(mut stamina) = units.get_mut(cancelled.actor) {
+        stamina.try_spend(MELEE_CANCEL_PENALTY);
     }
 }
 
@@ -218,5 +235,51 @@ pub fn melee_action_executor_system(
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(recovery);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::timeline::ActionCancelled;
+
+    /// 撤销近战要付 1 点收招费：规则住在花钱的领域，时间线只负责广播。
+    #[test]
+    fn cancelling_a_melee_costs_one_stamina() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_observer(refund_melee_observer);
+        let actor = app.world_mut().spawn(Stamina::new(3)).id();
+        let melee = app.world_mut().spawn(MeleeAction).id();
+
+        app.world_mut().trigger(ActionCancelled {
+            entity: melee,
+            actor,
+        });
+        app.world_mut().flush();
+
+        assert_eq!(
+            app.world().get::<Stamina>(actor).unwrap().current,
+            3 - MELEE_CANCEL_PENALTY,
+            "抡出去再收招要付一点精力"
+        );
+    }
+
+    /// 精力不够也拦不住改主意：只扣到 0。
+    #[test]
+    fn the_melee_cancel_cost_never_goes_below_zero() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_observer(refund_melee_observer);
+        let actor = app.world_mut().spawn(Stamina::new(0)).id();
+        let melee = app.world_mut().spawn(MeleeAction).id();
+
+        app.world_mut().trigger(ActionCancelled {
+            entity: melee,
+            actor,
+        });
+        app.world_mut().flush();
+
+        assert_eq!(app.world().get::<Stamina>(actor).unwrap().current, 0);
     }
 }

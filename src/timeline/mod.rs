@@ -55,7 +55,7 @@ pub mod schedule;
 pub mod systems;
 pub mod timing;
 
-pub use components::{Cancellable, InputDriven};
+pub use components::{InputDriven, Uncancellable};
 pub use decision::DecisionSlot;
 pub use events::{
     ActionBlocked, ActionCancelled, BlockReason, DecisionReady, InterruptEvent, PauseRequest,

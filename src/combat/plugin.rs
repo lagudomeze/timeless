@@ -9,7 +9,7 @@ use super::CombatSet;
 use super::defense::{
     ParryCommand, RollCommand, declare_parry_system, declare_roll_system,
     expire_defense_markers_system, parry_executor_system, recover_stamina_observer,
-    refund_cancelled_actions_system, roll_executor_system,
+    roll_executor_system,
 };
 use super::formula::apply_physical_hits_system;
 use super::health::{DamageEvent, DeathEvent, apply_damage_system, despawn_dead_system};
@@ -19,7 +19,8 @@ use super::skills::{
     CycleSkill, FireCommand, MeleeCommand, MenuSelection, ProjectileArrived, SelectSkill,
     UseSelectedSkill, cycle_skill_system, declare_fireball_system, declare_melee_system,
     explosion_system, fireball_action_executor_system, melee_action_executor_system,
-    projectile_arrival_system, select_skill_system, use_selected_skill_system,
+    projectile_arrival_system, refund_fireball_observer, refund_melee_observer,
+    select_skill_system, use_selected_skill_system,
 };
 use super::targeting::{detect_collisions_system, detect_melee_system};
 
@@ -46,7 +47,9 @@ impl Plugin for CombatPlugin {
             .add_message::<SelectSkill>()
             .add_message::<CycleSkill>()
             .add_message::<UseSelectedSkill>()
-            // 撤销退款 / 后摇结束回精力：都是 EntityEvent 订阅，不留集中式的收尾
+            // EntityEvent 订阅：撤销退款（谁收钱谁退）+ 后摇结束回精力
+            .add_observer(refund_fireball_observer)
+            .add_observer(refund_melee_observer)
             .add_observer(recover_stamina_observer)
             .add_systems(
                 Update,
@@ -55,8 +58,6 @@ impl Plugin for CombatPlugin {
                     detect_threat_system,
                     // 防御标记先过期，本帧到期的无敌帧不该再生效
                     expire_defense_markers_system,
-                    // 撤销的退款：本帧退掉，别让玩家先看到扣费又看到退还
-                    refund_cancelled_actions_system,
                     // 菜单先更新选择，再按选择派发成各领域的指令
                     (select_skill_system, cycle_skill_system),
                     use_selected_skill_system,

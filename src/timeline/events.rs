@@ -89,19 +89,23 @@ pub enum BlockReason {
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UndoCommand;
 
-/// 一条玩家行动被撤销了（写：[`undo_system`](super::systems::undo_system)；
-/// 消费：资源所属的领域，目前是 `combat::defense` 退精力）。
+/// 一条行动被撤销了（发给**行动实体**）。
 ///
-/// 为什么要广播而不是直接退：撤销要退资源、而资源归各自领域管——时间线只负责
-/// "把这条行动撤掉"，退多少、退给谁由资源的拥有者决定。
-#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+/// 写：[`undo_system`](super::systems::undo_system)；
+/// 消费：花钱的那个领域——目前是 `combat::skills`（火球退 2 收 2、近战收 1）。
+///
+/// 用 `EntityEvent` 而不是广播 Message：撤销**一定**落在某一条具体行动上，
+/// 而"退多少、收多少"只有看得到那条行动载荷的领域才知道——时间线不认识
+/// [`FireballAction`](crate::combat::skills::FireballAction)。
+///
+/// ⚠️ **触发必须排在 `despawn` 之前**：Observer 是在命令应用阶段**当场**跑的，
+/// 排在销毁之后就读不到行动实体身上的载荷了（表现为"退款静默丢失"）。
+#[derive(EntityEvent, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionCancelled {
+    /// 被撤销的行动实体（`EntityEvent` 的目标实体）
+    pub entity: Entity,
     /// 被撤销行动的行动者
     pub actor: Entity,
-    /// 需要退还的资源量（来自行动上的 [`Cancellable`](super::Cancellable)）
-    pub refund: u32,
-    /// 取消本身的代价（来自同一个 [`Cancellable`](super::Cancellable)；0 = 免费）
-    pub penalty: u32,
 }
 
 /// 一次打断：**命中打过来**，把目标那条还没到点的行动打掉。

@@ -9,7 +9,7 @@
 
 use bevy::prelude::*;
 
-use super::components::{Cancellable, InputDriven};
+use super::components::{InputDriven, Uncancellable};
 use super::decision::DecisionSlot;
 use super::events::{
     ActionCancelled, DecisionReady, InterruptEvent, PauseRequest, PlayerIntent, UndoCommand,
@@ -63,48 +63,44 @@ pub fn interrupt_system(
     undo.write(UndoCommand);
 }
 
-/// 撤销：把玩家那条**还没到点**的行动撤掉——销毁行动实体、清空决策槽，
-/// 并广播 [`ActionCancelled`] 让资源所属的领域退还花费。
+/// 撤销：把玩家那条**还没到点**的行动撤掉——触发 [`ActionCancelled`]、销毁
+/// 行动实体、清空决策槽。
 ///
 /// 「还没到点」= `now < execute_at`。到点的行动这一帧就落地，撤不掉；
 /// 没有可撤的行动时什么也不做（右键空放不报错，也不提示）。
 ///
 /// 只撤**玩家**的行动：AI 的行动挂在同一条时间线上，但"谁能按键撤销"只有 PC
 /// （和"谁能按键决策"是同一条约定：认 [`InputDriven`]）。
+///
+/// 挂着 [`Uncancellable`] 的行动直接跳过（跳跃那种"起跳就谁都别想插队"）。
 pub fn undo_system(
     mut commands: Commands,
     mut requests: MessageReader<UndoCommand>,
     drivers: Query<(), With<InputDriven>>,
-    actions: Query<(Entity, &ScheduledAction, Option<&Cancellable>)>,
+    actions: Query<(Entity, &ScheduledAction), Without<Uncancellable>>,
     time: Res<Time<Virtual>>,
-    mut cancelled: MessageWriter<ActionCancelled>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
     let now = time.elapsed_secs();
-    for (entity, schedule, cancellable) in &actions {
+    for (entity, schedule) in &actions {
         if !schedule.pending(now) {
             continue; // 本帧就要执行，来不及撤
-        }
-        // 行动自己说不给撤（跳跃那种）：连右键也撤不掉
-        let cancellable = cancellable.copied().unwrap_or_default();
-        if cancellable == Cancellable::Never {
-            continue;
         }
         if drivers.get(schedule.actor).is_err() {
             continue; // AI 的行动只能被「打断」，不能被右键撤
         }
+        // 先触发再销毁：Observer 当场跑，排在 despawn 之后就读不到载荷了
+        commands.trigger(ActionCancelled {
+            entity,
+            actor: schedule.actor,
+        });
         commands.entity(entity).despawn();
         // 行动者可能已经死了：往不存在的实体上写命令会让 Bevy 直接 panic
         if let Ok(mut actor) = commands.get_entity(schedule.actor) {
             actor.insert(DecisionSlot::Empty);
         }
-        cancelled.write(ActionCancelled {
-            actor: schedule.actor,
-            refund: cancellable.refund(),
-            penalty: cancellable.penalty(),
-        });
         break; // 一次决策只有一条行动
     }
 }
@@ -259,7 +255,8 @@ mod tests {
             .add_message::<PauseRequest>()
             .add_message::<UseFocus>()
             .add_message::<UndoCommand>()
-            .add_message::<ActionCancelled>()
+            .init_resource::<Cancellations>()
+            .add_observer(record_cancellation)
             .add_observer(interrupt_observer)
             .add_systems(
                 Update,
@@ -285,6 +282,14 @@ mod tests {
     /// （空格切换它，然后每帧断言 [`MANUAL`]）。
     #[derive(Resource, Default)]
     struct ManualLatch(bool);
+
+    /// 记下本帧收到过哪些撤销广播（真实的消费者住在花钱的领域里）。
+    #[derive(Resource, Default)]
+    struct Cancellations(Vec<(Entity, Entity)>);
+
+    fn record_cancellation(cancelled: On<ActionCancelled>, mut recorded: ResMut<Cancellations>) {
+        recorded.0.push((cancelled.entity, cancelled.actor));
+    }
 
     fn assert_manual(latch: Res<ManualLatch>, mut pause: MessageWriter<PauseRequest>) {
         if latch.0 {
@@ -458,9 +463,13 @@ mod tests {
         );
     }
 
-    /// 撤销：销毁行动实体、清空决策槽、按 `Cancellable` 广播退款。
+    /// 撤销：广播 [`ActionCancelled`]、销毁行动实体、清空决策槽。
+    ///
+    /// 退多少归花钱的领域（见 `combat::skills` 的退款 Observer），这里只保证
+    /// **广播打在行动实体上、而且发生在销毁之前**——排在销毁之后的话，
+    /// Observer 已经读不到载荷，退款会静默丢失。
     #[test]
-    fn undo_clears_the_slot_and_reports_the_cost() {
+    fn undo_broadcasts_the_cancellation_before_despawning() {
         let mut app = clock_app();
         let player = app
             .world_mut()
@@ -468,18 +477,17 @@ mod tests {
             .id();
         let action = app
             .world_mut()
-            .spawn((
-                ScheduledAction::declared_at(player, timing::SHOOT, 0.0),
-                Cancellable::Cost {
-                    refund: 2,
-                    penalty: 1,
-                },
-            ))
+            .spawn(ScheduledAction::declared_at(player, timing::SHOOT, 0.0))
             .id();
 
         app.world_mut().write_message(UndoCommand);
         app.update();
 
+        assert_eq!(
+            app.world().resource::<Cancellations>().0,
+            vec![(action, player)],
+            "撤销要广播在行动实体上，并带上行动者"
+        );
         assert!(
             app.world().get_entity(action).is_err(),
             "撤销要把行动实体销毁"
@@ -488,6 +496,40 @@ mod tests {
             app.world().get::<DecisionSlot>(player).copied(),
             Some(DecisionSlot::Empty),
             "撤销之后应当立刻能重新决策"
+        );
+    }
+
+    /// 挂着 [`Uncancellable`] 的行动：连右键也撤不掉（跳跃那种"起跳不插队"）。
+    #[test]
+    fn an_uncancellable_action_survives_the_undo() {
+        let mut app = clock_app();
+        let player = app
+            .world_mut()
+            .spawn((InputDriven, DecisionSlot::Windup))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((
+                ScheduledAction::declared_at(player, timing::JUMP, 0.0),
+                Uncancellable,
+            ))
+            .id();
+
+        app.world_mut().write_message(UndoCommand);
+        app.update();
+
+        assert!(
+            app.world().get_entity(action).is_ok(),
+            "不可撤销的行动不该被右键打掉"
+        );
+        assert!(
+            app.world().resource::<Cancellations>().0.is_empty(),
+            "没撤掉就不该广播撤销"
+        );
+        assert_eq!(
+            app.world().get::<DecisionSlot>(player).copied(),
+            Some(DecisionSlot::Windup),
+            "行动还在，决策槽也还占着"
         );
     }
 

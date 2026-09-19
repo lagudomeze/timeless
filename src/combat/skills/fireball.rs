@@ -17,9 +17,7 @@ use crate::combat::attributes::{AttackFrame, HitRadius, InterruptPower, Physical
 use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
-use crate::timeline::{
-    Cancellable, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
-};
+use crate::timeline::{DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction};
 
 use super::events::{FireCommand, MeleeCommand};
 
@@ -64,10 +62,7 @@ pub const FIREBALL_COST: u32 = 2;
 /// 火球的打断力度：出手重，但正在前摇时最怕被打断（见 `timing::SHOOT`）。
 pub const FIREBALL_POWER: i32 = 2;
 
-/// 火球行动工厂：载荷 + 威胁声明（飞过的格 + 落点）+ 调度数据 + 取消规则。
-///
-/// 「撤销的代价 = 一次技能的钱」：声明时就扣了 2 点精力，撤销原样退回但再收 2 点，
-/// 因此大招不能白打断。
+/// 火球行动工厂：载荷 + 威胁声明（飞过的格 + 落点）+ 调度数据。
 pub fn fireball_action_scene(
     from_cell: Cell,
     target_cell: Cell,
@@ -80,11 +75,27 @@ pub fn fireball_action_scene(
         FireballAction { target_cell: {target_cell} }
         template_value(threatens)
         template_value(schedule)
-        template_value(Cancellable::Cost {
-            refund: FIREBALL_COST,
-            penalty: FIREBALL_COST,
-        })
     }
+}
+
+/// 撤销火球：声明时扣掉的精力原样退回，再收同样多的手续费。
+///
+/// 「退 2 又收 2」是故意的：撤销这一步本身要有分量，否则大招可以随手撤掉重来。
+/// 规则归**花钱的那个领域**——时间线只触发
+/// [`ActionCancelled`](crate::timeline::ActionCancelled)，这里自己认载荷。
+pub fn refund_fireball_observer(
+    cancelled: On<crate::timeline::ActionCancelled>,
+    actions: Query<(), With<FireballAction>>,
+    mut units: Query<&mut crate::combat::defense::Stamina>,
+) {
+    if actions.get(cancelled.entity).is_err() {
+        return; // 被撤的不是火球
+    }
+    let Ok(mut stamina) = units.get_mut(cancelled.actor) else {
+        return; // 行动者可能已经阵亡
+    };
+    stamina.regen(FIREBALL_COST);
+    stamina.try_spend(FIREBALL_COST);
 }
 
 /// 火球实体工厂：朝目标格飞行的投射物（到达后由到达系统广播）。
@@ -401,6 +412,50 @@ mod tests {
             FIREBALL_RADIUS,
             crate::timeline::CELL_SIZE * 1.5,
             "1.5 格的世界距离"
+        );
+    }
+
+    /// 撤销火球：退出手时扣的 2 点，再收 2 点手续费 → 净额不变。
+    ///
+    /// 退多少由**花钱的领域**决定：时间线只广播"这条行动被撤了"。
+    #[test]
+    fn cancelling_a_fireball_refunds_and_recharges_the_same_amount() {
+        use crate::combat::defense::Stamina;
+        use crate::timeline::ActionCancelled;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_observer(refund_fireball_observer);
+        let actor = app.world_mut().spawn(Stamina::new(3)).id();
+        // 声明那一刻已经扣掉了 FIREBALL_COST
+        app.world_mut()
+            .get_mut::<Stamina>(actor)
+            .unwrap()
+            .try_spend(FIREBALL_COST);
+        let fireball = app.world_mut().spawn(FireballAction::default()).id();
+
+        app.world_mut().trigger(ActionCancelled {
+            entity: fireball,
+            actor,
+        });
+        app.world_mut().flush();
+        assert_eq!(
+            app.world().get::<Stamina>(actor).unwrap().current,
+            1,
+            "退 2 收 2：撤销一次火球的净额不变"
+        );
+
+        // 被撤的不是火球（别的载荷）：一分不动
+        let other = app.world_mut().spawn_empty().id();
+        app.world_mut().trigger(ActionCancelled {
+            entity: other,
+            actor,
+        });
+        app.world_mut().flush();
+        assert_eq!(
+            app.world().get::<Stamina>(actor).unwrap().current,
+            1,
+            "别的行动被撤不该动火球的账"
         );
     }
 }

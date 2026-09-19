@@ -13,9 +13,7 @@ use bevy::prelude::*;
 
 use super::ClockSet;
 use super::TimelineSet;
-use super::events::{
-    ActionBlocked, ActionCancelled, PauseRequest, PlayerIntent, UndoCommand, UseFocus,
-};
+use super::events::{ActionBlocked, PauseRequest, PlayerIntent, UndoCommand, UseFocus};
 use super::resources::{Focus, FocusIntent, PauseReasons};
 use super::systems::{
     apply_clock, compute_player_awaiting_system, interrupt_observer, interrupt_system,
@@ -40,8 +38,7 @@ impl Plugin for TimelinePlugin {
             // 提示消息：写方是各声明系统，消费方是 HUD
             .add_message::<ActionBlocked>()
             .add_message::<UndoCommand>()
-            // 撤销的退款广播：写方是本域，消费方是资源所属领域（combat::defense）
-            .add_message::<ActionCancelled>()
+            // 撤销：undo_system 触发 EntityEvent，花钱的领域各自订阅退款
             // 打断：命中结算触发 EntityEvent，本域的 Observer 当场处理
             .add_observer(interrupt_observer)
             .add_systems(

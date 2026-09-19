@@ -10,7 +10,7 @@
 use bevy::prelude::*;
 
 use crate::timeline::{
-    ActionBlocked, Cancellable, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+    ActionBlocked, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction, Uncancellable,
     timing,
 };
 
@@ -49,12 +49,11 @@ pub fn step_from_axis(axis: Vec2) -> (i32, i32) {
     }
 }
 
-/// 移动行动工厂：载荷 + 调度数据 + 可取消规则（移动随时可以改主意，撤销免费）。
+/// 移动行动工厂：载荷 + 调度数据（移动随时可以改主意，撤销免费）。
 pub fn move_action_scene(from_cell: Cell, to_cell: Cell, schedule: ScheduledAction) -> impl Scene {
     bsn! {
         MoveAction { from_cell: {from_cell}, to_cell: {to_cell} }
         template_value(schedule)
-        template_value(Cancellable::Free)
     }
 }
 
@@ -78,7 +77,6 @@ pub fn roll_action_scene(from_cell: Cell, to_cell: Cell, schedule: ScheduledActi
     bsn! {
         RollAction { from_cell: {from_cell}, to_cell: {to_cell} }
         template_value(schedule)
-        template_value(Cancellable::Free)
     }
 }
 
@@ -88,7 +86,7 @@ pub fn jump_action_scene(schedule: ScheduledAction) -> impl Scene {
         JumpAction
         template_value(schedule)
         // 起跳就谁都别想插队：跳跃**不给取消**（前摇里也撤不掉）
-        template_value(Cancellable::Never)
+        template_value(Uncancellable)
     }
 }
 

@@ -1,4 +1,4 @@
-//! 防御域的标记清理、撤销退款与精力回复。
+//! 防御域的标记清理与精力回复。
 //!
 //! 纯逻辑（防御判定 / 反制伤害）住在
 //! [`crate::combat::formula::domain`]；系统层只做两件事：
@@ -7,8 +7,8 @@
 //!    [`apply_physical_hits_system`](crate::combat::formula::apply_physical_hits_system) 里）；
 //! 2. 清理短命标记（[`expire_defense_markers_system`]）。
 //!
-//! 「谁能拿回资源」的两条路都是**订阅**：撤销订阅 `ActionCancelled`，
-//! 重新可决策订阅 `DecisionReady`——资源归本域，时间线不反向依赖它。
+//! 本域出的钱（翻滚 / 招架）在执行时才扣，撤销无从退起；火球那种**声明时扣费**
+//! 的退款归花钱的领域（[`crate::combat::skills`]）。这里只留"重新可决策 → 回精力"。
 
 use bevy::prelude::*;
 
@@ -29,26 +29,6 @@ pub fn recover_stamina_observer(
 ) {
     if let Ok(mut stamina) = units.get_mut(ready.entity) {
         stamina.regen(STAMINA_REGEN_PER_DECISION);
-    }
-}
-
-/// 撤销行动时退还精力（`ActionCancelled` → `Stamina`）。
-///
-/// 撤销本身归时间线管（它知道"哪条行动还没到点"），**退多少、退给谁**归资源的
-/// 拥有者管——这里只负责把广播变成一次 `regen`。
-pub fn refund_cancelled_actions_system(
-    mut cancelled: MessageReader<crate::timeline::ActionCancelled>,
-    mut units: Query<&mut Stamina>,
-) {
-    for event in cancelled.read() {
-        if event.refund == 0 && event.penalty == 0 {
-            continue;
-        }
-        if let Ok(mut stamina) = units.get_mut(event.actor) {
-            stamina.regen(event.refund);
-            // 取消本身的代价：够就扣，不够就只扣到 0（**不拦着玩家改主意**）
-            stamina.try_spend(event.penalty);
-        }
     }
 }
 
