@@ -24,7 +24,7 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::timeline::{ActionTiming, DecisionSlot, PauseReasons, ScheduledAction};
+use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, PauseReasons, ScheduledAction};
 
 use super::{HudCache, faction_color_alpha, hud_text_tinted};
 
@@ -503,7 +503,7 @@ pub fn update_timeline_system(
     now: Res<Time<Virtual>>,
     actors: Query<(Entity, &Faction)>,
     slots: Query<&DecisionSlot>,
-    actions: Query<(&ScheduledAction, &ActionTiming, &ChildOf)>,
+    actions: Query<(&ScheduledAction, &ActionTiming, &ActionOf)>,
     mut cache: ResMut<HudCache>,
     mut states: StateTextQuery<'_, '_>,
     mut lane_labels: LaneLabelQuery<'_, '_>,
@@ -536,10 +536,10 @@ pub fn update_timeline_system(
     // 2. 每个单位只画自己那一行：行动色块 = 这段"被占住"的时间（从声明时刻长出去）
     let now_seconds = now.elapsed_secs();
     let mut lanes: Vec<Vec<TimelineSlot>> = vec![Vec::new(); LANE_POOL];
-    for (schedule, timing, child_of) in &actions {
+    for (schedule, timing, action_of) in &actions {
         let Some(lane) = lane_actor
             .iter()
-            .position(|actor| *actor == Some(child_of.parent()))
+            .position(|actor| *actor == Some(action_of.actor()))
         else {
             continue; // 行动者不在花名册里（刚销毁 / 还没组装）
         };
@@ -824,7 +824,7 @@ mod tests {
         // 敌人先声明（0.5s），玩家后声明（2.0s）
         for (actor, declared_at) in [(enemy, 0.5), (player, 2.0)] {
             app.world_mut().spawn((
-                ChildOf(actor),
+                ActionOf(actor),
                 MOVE_TIMING,
                 ScheduledAction::declared_at(MOVE_TIMING, declared_at),
             ));
@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(display(&app, block), Display::None, "没排期就不占横轴");
 
         app.world_mut().spawn((
-            ChildOf(player),
+            ActionOf(player),
             MOVE_TIMING,
             ScheduledAction::declared_at(MOVE_TIMING, 0.0),
         ));
@@ -963,7 +963,7 @@ mod tests {
         );
 
         app.world_mut().spawn((
-            ChildOf(player),
+            ActionOf(player),
             MOVE_TIMING,
             ScheduledAction::declared_at(MOVE_TIMING, 0.5),
         ));
@@ -996,7 +996,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(player),
+                ActionOf(player),
                 MOVE_TIMING,
                 ScheduledAction::declared_at(MOVE_TIMING, 0.5),
             ))

@@ -19,8 +19,10 @@
 //! | [`DecisionSlot::Recovery`] | 后摇中 | 无 | ✗ | ✗ |
 //!
 //! 本域只做调度，**不感知载荷**：行动 = 独立实体，实体上只有调度数据
-//! [`ScheduledAction`] + 载荷 + 可选的 [`Uncancellable`]，并以 `ChildOf` 挂在
-//! 行动者之下。执行器住在各自的领域里（[`crate::movement`] 与 [`crate::combat`]），
+//! [`ScheduledAction`] + 载荷 + 可选的 [`Uncancellable`]，归属用自定义关系
+//! [`ActionOf`] / [`Actions`]（**不是** `ChildOf`：行动没有 `Transform`，
+//! 归属是纯逻辑，见 `docs/relations.md`）。执行器住在各自的领域里
+//! （[`crate::movement`] 与 [`crate::combat`]），
 //! 新增动作时调度器一行不改；收尾也**不集中**——执行器自己销毁行动实体、
 //! 自己把行动者推进后摇。
 //!
@@ -53,6 +55,7 @@
 //! | 文件 | 回答什么问题 |
 //! | :--- | :--- |
 //! | [`decision`] | 谁能决策（槽 + 入口）；这一手怎么被撤掉 / 收尾（undo / recovery） |
+//! | [`ownership`] | 这一手是谁的（`ActionOf` / `Actions`）；「行动者没了，行动也跟着没」 |
 //! | [`schedule`] | 行动实体身上与时间有关的数据：这一手何时落地、这类动作的节奏、能不能撤 |
 //! | [`clock`] | 世界什么时候冻结：原因集合 + 请求 + 三个系统 |
 //! | [`focus`] | Focus 一族（⚠️ 不是时间线的概念，见该文件顶部的警告） |
@@ -65,6 +68,7 @@ pub mod clock;
 pub mod decision;
 pub mod events;
 pub mod focus;
+pub mod ownership;
 pub mod plugin;
 pub mod schedule;
 
@@ -77,6 +81,7 @@ pub use events::{
 };
 pub use focus::{FOCUS_MAX, FOCUS_RECOVER_INTERVAL, Focus, FocusIntent};
 pub use focus::{recover_focus_system, track_focus_intent_system};
+pub use ownership::{ActionOf, Actions};
 pub use plugin::TimelinePlugin;
 pub use schedule::{ActionTiming, ScheduledAction, Uncancellable};
 

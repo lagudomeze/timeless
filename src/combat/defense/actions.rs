@@ -10,7 +10,8 @@ use bevy::prelude::*;
 use crate::combat::Faction;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
 use crate::timeline::{
-    ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
+    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
+    ScheduledAction,
 };
 
 use super::components::{ParryAction, Parrying};
@@ -134,16 +135,16 @@ pub fn roll_executor_system(
         &ActionTiming,
         &crate::movement::RollAction,
         &ScheduledAction,
-        &ChildOf,
+        &ActionOf,
     )>,
     mut actors: Query<(&mut Velocity, &mut Stamina, &Transform), With<Cell>>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, timing, roll, schedule, child_of) in &actions {
+    for (entity, timing, roll, schedule, action_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        let actor = child_of.parent();
+        let actor = action_of.actor();
         let mut effect_delay = 0.0;
         if let Ok((mut velocity, mut stamina, transform)) = actors.get_mut(actor) {
             stamina.try_spend(ROLL_COST);
@@ -220,16 +221,16 @@ pub fn parry_executor_system(
         &ActionTiming,
         &ParryAction,
         &ScheduledAction,
-        &ChildOf,
+        &ActionOf,
     )>,
     mut actors: Query<&mut Stamina>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, timing, parry, schedule, child_of) in &actions {
+    for (entity, timing, parry, schedule, action_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        let actor = child_of.parent();
+        let actor = action_of.actor();
         if let Ok(mut stamina) = actors.get_mut(actor) {
             stamina.try_spend(PARRY_COST);
             commands.entity(actor).insert(Parrying {
@@ -283,9 +284,9 @@ mod tests {
         assert_eq!(rolls.len(), 1, "一次按键只该产生一条翻滚");
         let actor = app
             .world()
-            .get::<ChildOf>(rolls[0])
-            .expect("行动实体应当是行动者的子实体")
-            .parent();
+            .get::<ActionOf>(rolls[0])
+            .expect("行动实体应当记得自己归谁")
+            .actor();
         assert_eq!(actor, player, "翻滚必须挂在玩家身上");
         assert_ne!(actor, enemy, "敌人的决策槽不该被玩家的按键消耗");
     }

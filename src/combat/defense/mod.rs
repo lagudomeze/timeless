@@ -12,6 +12,7 @@
 //! （唯一扣血点）。本域**不认识护甲**，伤害公式也**不认识防御**——
 //! 两边在领域层用 [`DefenseState`](crate::combat::formula::DefenseState) 交接。
 
+use crate::timeline::ActionOf;
 use bevy::prelude::*;
 
 pub mod actions;
@@ -37,7 +38,7 @@ pub fn parry_action_scene(
     actor: Entity,
 ) -> impl Scene {
     bsn! {
-        ChildOf({actor})
+        ActionOf({actor})
         ParryAction {
             target_attack: {target_attack},
         }

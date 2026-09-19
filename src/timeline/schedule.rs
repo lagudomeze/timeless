@@ -7,12 +7,13 @@
 //! 调度器只认识这里的东西；「这行动是什么」由载荷组件决定（[`crate::movement::MoveAction`]、
 //! [`crate::combat::skills::FireballAction`]、[`crate::combat::skills::MeleeAction`]…），
 //! 调度器永远不读它们。行动者的三阶段在 [`DecisionSlot`](super::DecisionSlot)（那是
-//! [`decision`](super::decision) 的事）；「这行动是谁的」由父子关系回答，「谁能撤它」
-//! 由 [`Uncancellable`] 回答——这里放的是几个方面都要读的**规则与数据**。
+//! [`decision`](super::decision) 的事）；「这行动是谁的」由 [`ActionOf`](super::ActionOf)
+//! 回答，「谁能撤它」由 [`Uncancellable`] 回答——这里放的是几个方面都要读的**规则与数据**。
 //!
-//! **行动者不在这里**：行动实体是行动者的**子实体**（Bevy 的 `ChildOf` 关系），
-//! 「这条行动是谁的」由父子关系直接回答。父节点被销毁时子实体跟着销毁（`Children`
-//! 是 linked spawn），因此不存在"行动者死了、行动还在半空"这种孤儿状态。
+//! **行动者不在这里**：归属是独立的关系组件 [`ActionOf`](super::ActionOf) /
+//! [`Actions`](super::Actions)（见 [`ownership`](super::ownership)），不是 `ChildOf`：
+//! 行动实体没有 `Transform`，归属是纯逻辑。`Actions` 标了 `linked_spawn`，行动者被
+//! 销毁时名下行动跟着销毁，因此不存在"行动者死了、行动还在半空"这种孤儿状态。
 //!
 //! **节奏是另一个组件**：前摇 / 后摇住在行动实体自己的 [`ActionTiming`] 组件上
 //! （它是载荷的一部分），需要它的地方（执行器算忙碌窗口、HUD 画时间轴色块）直接读

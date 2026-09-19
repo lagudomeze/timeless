@@ -21,9 +21,9 @@ pub struct ResetBattle;
 
 /// 清场目标：单位（`Faction` / `Collidable`）与攻击实体（`Projectile`）。
 ///
-/// 时间线上没执行的行动**不用单独列**：它们是行动者的子实体，人没了行动跟着没
-/// （`Children` 是 linked spawn）。反过来若把 `With<ScheduledAction>` 也写进来，
-/// 同一个实体就会被 despawn 两次。
+/// 时间线上没执行的行动**不用单独列**：它们归行动者所有，人没了行动跟着没
+/// （`ActionOf` 的 `Actions` 是 linked spawn）。反过来若把 `With<ScheduledAction>`
+/// 也写进来，同一个实体就会被 despawn 两次。
 type ResetQuery<'w, 's> =
     Query<'w, 's, Entity, Or<(With<Faction>, With<Projectile>, With<Collidable>)>>;
 

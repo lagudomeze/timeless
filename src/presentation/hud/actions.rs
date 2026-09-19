@@ -12,7 +12,7 @@ use crate::combat::Faction;
 use crate::combat::defense::ParryAction;
 use crate::combat::skills::{FireballAction, MeleeAction, ShootAction};
 use crate::movement::{JumpAction, MoveAction, RollAction};
-use crate::timeline::ScheduledAction;
+use crate::timeline::{ActionOf, ScheduledAction};
 
 use super::HudCache;
 
@@ -42,7 +42,7 @@ fn slot(faction: Faction) -> usize {
 pub fn update_action_labels_system(
     now: Res<Time<Virtual>>,
     units: Query<(Entity, &Faction)>,
-    actions: Query<(Entity, &ScheduledAction, &ChildOf)>,
+    actions: Query<(Entity, &ScheduledAction, &ActionOf)>,
     movements: Query<&MoveAction>,
     jumps: Query<&JumpAction>,
     rolls: Query<&RollAction>,
@@ -87,7 +87,7 @@ fn action_text(
     faction: Faction,
     now: f32,
     units: &Query<(Entity, &Faction)>,
-    actions: &Query<(Entity, &ScheduledAction, &ChildOf)>,
+    actions: &Query<(Entity, &ScheduledAction, &ActionOf)>,
     movements: &Query<&MoveAction>,
     jumps: &Query<&JumpAction>,
     rolls: &Query<&RollAction>,
@@ -103,10 +103,10 @@ fn action_text(
     else {
         return "down".to_string();
     };
-    // 行动者 = 行动实体的父节点
+    // 行动者 = 行动实体记着的归属方
     let Some((action, schedule, _)) = actions
         .iter()
-        .find(|(_, _, child_of)| child_of.parent() == actor)
+        .find(|(_, _, action_of)| action_of.actor() == actor)
     else {
         return "act: -".to_string();
     };
@@ -199,7 +199,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(player),
+                ActionOf(player),
                 MoveAction::default(),
                 ScheduledAction::declared_at(MOVE_TIMING, 0.0),
             ))
@@ -247,7 +247,7 @@ mod tests {
         );
 
         app.world_mut().spawn((
-            ChildOf(player),
+            ActionOf(player),
             JumpAction,
             ScheduledAction::declared_at(JUMP_TIMING, 0.0),
         ));

@@ -243,6 +243,7 @@ pub fn enemy_declare_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::ActionOf;
 
     fn decision(distance: f32, range_world: f32, health_ratio: f32) -> Decision {
         Decision {
@@ -356,7 +357,7 @@ mod tests {
 
         // 一发「正在前摇」的攻击把敌人脚下的格写进威胁 → 意图变成 Dodge
         app.world_mut().spawn((
-            ChildOf(player),
+            ActionOf(player),
             ScheduledAction::declared_at(MELEE_TIMING, 0.0),
             Threatens {
                 cells: vec![enemy_cell],
@@ -371,7 +372,7 @@ mod tests {
             .collect();
         assert_eq!(rolls.len(), 1, "敌人应当自己声明一条翻滚");
         assert_eq!(
-            app.world().get::<ChildOf>(rolls[0]).unwrap().parent(),
+            app.world().get::<ActionOf>(rolls[0]).unwrap().actor(),
             enemy,
             "行动必须挂在敌人自己身上"
         );

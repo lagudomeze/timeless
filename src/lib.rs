@@ -176,8 +176,8 @@ mod tests {
     };
     use crate::movement::{Cell, Jumping, MOVE_TIMING, MoveAction, MoveSpeed, Velocity};
     use crate::timeline::{
-        DecisionSlot, FOCUS_MAX, Focus, InputDriven, PauseReasons, ScheduledAction, THREAT,
-        UndoCommand,
+        ActionOf, DecisionSlot, FOCUS_MAX, Focus, InputDriven, PauseReasons, ScheduledAction,
+        THREAT, UndoCommand,
     };
     use crate::world::{TerrainConfig, ground_position};
 
@@ -950,7 +950,7 @@ mod tests {
         let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
         // 敌人正在前摇、且瞄着玩家脚下的格
         app.world_mut().spawn((
-            ChildOf(enemy),
+            ActionOf(enemy),
             ScheduledAction::declared_at(FIREBALL_TIMING, 0.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
@@ -993,7 +993,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(enemy),
+                ActionOf(enemy),
                 FIREBALL_TIMING,
                 ScheduledAction::declared_at(FIREBALL_TIMING, 0.0),
             ))
@@ -1038,7 +1038,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(target),
+                ActionOf(target),
                 MOVE_TIMING,
                 schedule,
                 MoveAction::default(),
@@ -1129,9 +1129,9 @@ mod tests {
         );
     }
 
-    /// 阵亡的行动者不会留下孤儿行动：没落地的行动是它的**子实体**，跟着一起走。
+    /// 阵亡的行动者不会留下孤儿行动：没落地的行动归它所有（`ActionOf`），跟着一起走。
     ///
-    /// 这条守着 `ChildOf` 带来的结构性保证——旧模型里"人死了、那一手还在时间线上"
+    /// 这条守着 `ActionOf` 带来的结构性保证——旧模型里"人死了、那一手还在时间线上"
     /// 要靠收尾处的 `get_entity` 守卫兜住，现在它压根构造不出来。
     #[test]
     fn a_dead_actor_takes_its_pending_action_with_it() {
@@ -1140,7 +1140,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(enemy),
+                ActionOf(enemy),
                 ScheduledAction::declared_at(FIREBALL_TIMING, 0.0),
                 FireballAction::default(),
             ))
@@ -1159,7 +1159,7 @@ mod tests {
         assert!(app.world().get_entity(enemy).is_err(), "致命伤应当销毁敌人");
         assert!(
             app.world().get_entity(action).is_err(),
-            "行动是行动者的子实体：人没了，那一手也不该留在时间线上"
+            "行动归行动者所有：人没了，那一手也不该留在时间线上"
         );
     }
 

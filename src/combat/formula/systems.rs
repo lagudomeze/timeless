@@ -17,7 +17,7 @@ use crate::combat::health::DamageEvent;
 use crate::combat::lifecycle::{HitOnce, Projectile};
 use crate::combat::targeting::CollisionTarget;
 use crate::movement::Velocity;
-use crate::timeline::{ActionTiming, DecisionSlot, ScheduledAction};
+use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, ScheduledAction};
 
 use super::domain::{DefenseState, counter_damage, interrupt_lands, resolve_defense};
 use super::events::InterruptEvent;
@@ -151,7 +151,7 @@ fn roll_3d5() -> i32 {
 pub fn interrupt_observer(
     trigger: On<InterruptEvent>,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &ActionTiming, &ChildOf)>,
+    actions: Query<(Entity, &ScheduledAction, &ActionTiming, &ActionOf)>,
     mut commands: Commands,
 ) {
     let power = trigger.power;
@@ -163,7 +163,7 @@ pub fn interrupt_observer(
     let now = time.elapsed_secs();
     let Some((action, _, timing, _)) = actions
         .iter()
-        .find(|(_, schedule, _, child_of)| child_of.parent() == target && schedule.pending(now))
+        .find(|(_, schedule, _, action_of)| action_of.actor() == target && schedule.pending(now))
     else {
         return; // 来不及：这一手已经落地，或者本来就没事可打断
     };
@@ -212,7 +212,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(target),
+                ActionOf(target),
                 TEST_TIMING,
                 ScheduledAction::declared_at(TEST_TIMING, 0.0),
             ))
@@ -255,7 +255,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(target),
+                ActionOf(target),
                 TEST_TIMING,
                 ScheduledAction::declared_at(TEST_TIMING, -1.0),
             ))

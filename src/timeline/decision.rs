@@ -29,7 +29,7 @@
 //! **声明的入口只有 [`FirstReady::first_ready`] 一个**：「槽必须是 `Empty`」这条判据与
 //! 「被拒时告诉 HUD 为什么」都写在那里，各领域不再各抄一份。
 //!
-//! 决策来自玩家输入的单位由 [`InputDriven`] 标记：「这行动是谁的」由父子关系回答，
+//! 决策来自玩家输入的单位由 [`InputDriven`] 标记：「这行动是谁的」由 [`ActionOf`] 回答，
 //! 「这个单位听玩家的」则由这个标记回答。
 //!
 //! ## 这一手怎么被撤掉 / 收尾
@@ -55,6 +55,7 @@
 use bevy::prelude::*;
 
 use super::events::{ActionBlocked, ActionCancelled, DecisionReady, PlayerIntent, UndoCommand};
+use super::ownership::ActionOf;
 use super::schedule::{ActionTiming, ScheduledAction, Uncancellable};
 
 /// 行动者的决策槽状态机。
@@ -205,7 +206,7 @@ pub fn undo_system(
     mut requests: MessageReader<UndoCommand>,
     mut intents: MessageReader<PlayerIntent>,
     drivers: Query<(), With<InputDriven>>,
-    actions: Query<(Entity, &ScheduledAction, &ChildOf), Without<Uncancellable>>,
+    actions: Query<(Entity, &ScheduledAction, &ActionOf), Without<Uncancellable>>,
     time: Res<Time<Virtual>>,
 ) {
     // 撤销有两个来源：玩家右键（UndoCommand），或玩家表达了新意图（PlayerIntent）
@@ -215,9 +216,9 @@ pub fn undo_system(
         return;
     }
     let now = time.elapsed_secs();
-    for (entity, schedule, child_of) in &actions {
+    for (entity, schedule, action_of) in &actions {
         // 行动者 = 父实体：归属由关系回答，不必在调度数据里再抄一份
-        let actor = child_of.parent();
+        let actor = action_of.actor();
         if !schedule.pending(now) {
             continue; // 本帧就要执行，来不及撤
         }
@@ -392,7 +393,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(player),
+                ActionOf(player),
                 ScheduledAction::declared_at(TEST_TIMING, 0.0),
             ))
             .id();
@@ -427,7 +428,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(player),
+                ActionOf(player),
                 ScheduledAction::declared_at(TEST_TIMING, 0.0),
                 Uncancellable,
             ))
@@ -462,7 +463,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(player),
+                ActionOf(player),
                 ScheduledAction::declared_at(TEST_TIMING, 0.0),
             ))
             .id();
@@ -498,7 +499,7 @@ mod tests {
             .spawn((InputDriven, DecisionSlot::Windup))
             .id();
         app.world_mut().spawn((
-            ChildOf(player),
+            ActionOf(player),
             ScheduledAction::declared_at(TEST_TIMING, 0.0),
         ));
 

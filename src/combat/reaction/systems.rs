@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 use crate::combat::Faction;
 use crate::movement::Cell;
-use crate::timeline::{InputDriven, PauseRequest, ScheduledAction, THREAT};
+use crate::timeline::{ActionOf, InputDriven, PauseRequest, ScheduledAction, THREAT};
 
 use super::components::{TargetCell, ThreatWindow, Threatens};
 
@@ -27,8 +27,8 @@ use super::components::{TargetCell, ThreatWindow, Threatens};
 /// 否则双方都在冻结里，威胁永远不会自己消失。
 #[allow(clippy::too_many_arguments)]
 pub fn detect_threat_system(
-    threats: Query<(&ScheduledAction, &Threatens, &ChildOf)>,
-    actions: Query<(&ScheduledAction, &ChildOf)>,
+    threats: Query<(&ScheduledAction, &Threatens, &ActionOf)>,
+    actions: Query<(&ScheduledAction, &ActionOf)>,
     projectiles: Query<(&TargetCell, &Faction)>,
     players: Query<(&Cell, &Faction), With<InputDriven>>,
     actors: Query<&Faction>,
@@ -42,9 +42,9 @@ pub fn detect_threat_system(
     let player_factions: Vec<Faction> = players.iter().map(|(_, faction)| *faction).collect();
     let hostile = |faction: &Faction| !player_factions.contains(faction);
 
-    let threatened = threats.iter().any(|(schedule, threat, child_of)| {
+    let threatened = threats.iter().any(|(schedule, threat, action_of)| {
         schedule.pending(now)
-            && actors.get(child_of.parent()).is_ok_and(hostile)
+            && actors.get(action_of.actor()).is_ok_and(hostile)
             && threat.cells.iter().any(|cell| player_cells.contains(cell))
     }) || projectiles
         .iter()
@@ -54,10 +54,10 @@ pub fn detect_threat_system(
     // 因此只能比实体身份，不能比时间戳。
     let player_action = actions
         .iter()
-        .find(|(schedule, child_of)| {
-            schedule.pending(now) && drivers.get(child_of.parent()).is_ok()
+        .find(|(schedule, action_of)| {
+            schedule.pending(now) && drivers.get(action_of.actor()).is_ok()
         })
-        .map(|(_, child_of)| child_of.parent());
+        .map(|(_, action_of)| action_of.actor());
 
     // 威胁消失：复位（下一次威胁会重新开窗）。不再断言，原因下一帧自然消失
     if !threatened {
@@ -142,7 +142,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(enemy),
+                ActionOf(enemy),
                 ScheduledAction::declared_at(TEST_TIMING, 0.0),
                 Threatens {
                     cells: vec![Cell::new(2, 2)],
@@ -174,7 +174,7 @@ mod tests {
         let mut app = threat_app();
         let player = spawn_player(&mut app, Cell::new(0, 0));
         app.world_mut().spawn((
-            ChildOf(player),
+            ActionOf(player),
             ScheduledAction::declared_at(TEST_TIMING, 0.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
@@ -209,7 +209,7 @@ mod tests {
         let player = spawn_player(&mut app, Cell::new(0, 0));
         let enemy = spawn_enemy(&mut app);
         app.world_mut().spawn((
-            ChildOf(enemy),
+            ActionOf(enemy),
             ScheduledAction::declared_at(TEST_TIMING, 0.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
@@ -227,7 +227,7 @@ mod tests {
 
         // 玩家举起一招（换了一手）
         app.world_mut().spawn((
-            ChildOf(player),
+            ActionOf(player),
             ScheduledAction::declared_at(TEST_TIMING, 1.0),
         ));
         app.world_mut().resource_mut::<Captured>().0.clear();
@@ -251,7 +251,7 @@ mod tests {
         spawn_player(&mut app, Cell::new(0, 0));
         let enemy = spawn_enemy(&mut app);
         app.world_mut().spawn((
-            ChildOf(enemy),
+            ActionOf(enemy),
             ScheduledAction::declared_at(TEST_TIMING, 0.0),
             Threatens {
                 cells: vec![Cell::new(5, 5)],

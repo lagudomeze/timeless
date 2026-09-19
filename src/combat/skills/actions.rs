@@ -19,7 +19,8 @@ use crate::combat::defense::Stamina;
 use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
 use crate::timeline::{
-    ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
+    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
+    ScheduledAction,
 };
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
@@ -51,7 +52,7 @@ pub fn shoot_action_scene(
     actor: Entity,
 ) -> impl Scene {
     bsn! {
-        ChildOf({actor})
+        ActionOf({actor})
         ShootAction
         template_value(timing)
         template_value(schedule)
@@ -73,7 +74,7 @@ pub fn melee_action_scene(
         cells: melee_arc_cells(from_cell, target_cell),
     };
     bsn! {
-        ChildOf({actor})
+        ActionOf({actor})
         MeleeAction
         template_value(threatens)
         template_value(timing)
@@ -203,16 +204,16 @@ pub fn shoot_action_executor_system(
         &ActionTiming,
         &ScheduledAction,
         &ShootAction,
-        &ChildOf,
+        &ActionOf,
     )>,
     units: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, timing, schedule, _, child_of) in &actions {
+    for (entity, timing, schedule, _, action_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        let actor = child_of.parent();
+        let actor = action_of.actor();
         let mut effect_delay = 0.0;
         if let Ok((transform, faction)) = units.get(actor) {
             let origin = transform.translation;
@@ -242,16 +243,16 @@ pub fn melee_action_executor_system(
         &ActionTiming,
         &ScheduledAction,
         &MeleeAction,
-        &ChildOf,
+        &ActionOf,
     )>,
     units: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, timing, schedule, _, child_of) in &actions {
+    for (entity, timing, schedule, _, action_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        let actor = child_of.parent();
+        let actor = action_of.actor();
         if let Ok((transform, faction)) = units.get(actor) {
             let origin = transform.translation;
             let faction = *faction;

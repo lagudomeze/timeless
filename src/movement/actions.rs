@@ -10,8 +10,8 @@
 use bevy::prelude::*;
 
 use crate::timeline::{
-    ActionBlocked, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
-    ScheduledAction, Uncancellable,
+    ActionBlocked, ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent,
+    InputDriven, ScheduledAction, Uncancellable,
 };
 
 use super::cell::{Cell, MoveGoal};
@@ -61,7 +61,7 @@ pub fn move_action_scene(
     actor: Entity,
 ) -> impl Scene {
     bsn! {
-        ChildOf({actor})
+        ActionOf({actor})
         MoveAction { from_cell: {from_cell}, to_cell: {to_cell} }
         template_value(timing)
         template_value(schedule)
@@ -98,7 +98,7 @@ pub fn roll_action_scene(
     actor: Entity,
 ) -> impl Scene {
     bsn! {
-        ChildOf({actor})
+        ActionOf({actor})
         RollAction { from_cell: {from_cell}, to_cell: {to_cell} }
         template_value(timing)
         template_value(schedule)
@@ -112,7 +112,7 @@ pub fn jump_action_scene(
     actor: Entity,
 ) -> impl Scene {
     bsn! {
-        ChildOf({actor})
+        ActionOf({actor})
         JumpAction
         template_value(timing)
         template_value(schedule)
@@ -216,16 +216,16 @@ pub fn move_action_executor_system(
         &MoveAction,
         &ActionTiming,
         &ScheduledAction,
-        &ChildOf,
+        &ActionOf,
     )>,
     mut actors: Query<(&Cell, &MoveSpeed, &mut Velocity, &Transform)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, action, timing, schedule, child_of) in &actions {
+    for (entity, action, timing, schedule, action_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        let actor = child_of.parent();
+        let actor = action_of.actor();
         let mut effect_delay = 0.0;
         if let Ok((_, speed, mut velocity, transform)) = actors.get_mut(actor) {
             let to_goal = action.to_cell.center() - transform.translation.xz();
@@ -274,16 +274,16 @@ pub fn jump_action_executor_system(
         &ActionTiming,
         &ScheduledAction,
         &JumpAction,
-        &ChildOf,
+        &ActionOf,
     )>,
     actors: Query<&Transform>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, timing, schedule, _, child_of) in &actions {
+    for (entity, timing, schedule, _, action_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        let actor = child_of.parent();
+        let actor = action_of.actor();
         if let Ok(transform) = actors.get(actor) {
             commands.entity(actor).insert(Jumping {
                 ground_y: transform.translation.y,
@@ -392,7 +392,7 @@ mod tests {
             ))
             .id();
         app.world_mut().spawn((
-            ChildOf(actor),
+            ActionOf(actor),
             MOVE_TIMING,
             MoveAction {
                 from_cell: Cell::new(0, 0),
@@ -423,7 +423,7 @@ mod tests {
 
     /// 行动者阵亡 = 那条还没落地的行动跟着消失。
     ///
-    /// 这条取代了旧的「行动者没了、执行器别 panic」：有了父子关系，
+    /// 这条取代了旧的「行动者没了、执行器别 panic」：归属关系标了 `linked_spawn`，
     /// "行动者死了但行动还在时间线上"这种状态在**结构上**就不存在了，
     /// 收尾里的 `get_entity` 守卫于是只防意外，不再是必经路径。
     #[test]
@@ -435,7 +435,7 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ChildOf(actor),
+                ActionOf(actor),
                 MOVE_TIMING,
                 MoveAction::default(),
                 // 声明于 -1s：如果没有跟着销毁，这一帧就会被执行
@@ -447,7 +447,7 @@ mod tests {
 
         assert!(
             app.world().get_entity(action).is_err(),
-            "行动者是行动实体的父节点：父节点销毁，行动跟着销毁"
+            "行动者是这条行动的归属方：行动者销毁，行动跟着销毁（linked_spawn）"
         );
 
         app.update(); // 没了行动，执行器这一帧什么也不该做（更不该 panic）

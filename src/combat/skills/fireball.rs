@@ -18,7 +18,8 @@ use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
 use crate::timeline::{
-    ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
+    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
+    ScheduledAction,
 };
 
 use super::actions::MELEE_TIMING;
@@ -79,7 +80,7 @@ pub fn fireball_action_scene(
         cells: trajectory_cells(from_cell, target_cell),
     };
     bsn! {
-        ChildOf({actor})
+        ActionOf({actor})
         FireballAction { target_cell: {target_cell} }
         template_value(threatens)
         template_value(timing)
@@ -304,16 +305,16 @@ pub fn fireball_action_executor_system(
         &ActionTiming,
         &ScheduledAction,
         &FireballAction,
-        &ChildOf,
+        &ActionOf,
     )>,
     actors: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, timing, schedule, action, child_of) in &actions {
+    for (entity, timing, schedule, action, action_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        let actor = child_of.parent();
+        let actor = action_of.actor();
         let mut effect_delay = 0.0;
         // 发射：从行动者**当前位置**朝锁定的格扔出投射物
         if let Ok((transform, faction)) = actors.get(actor) {
