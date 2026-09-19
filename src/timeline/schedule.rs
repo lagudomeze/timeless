@@ -1,17 +1,23 @@
-//! 行动实体的调度数据：**这一手什么时候落地**，多难被打断。
+//! 行动实体身上**与时间有关的数据**：
+//!
+//! - [`ScheduledAction`]：**这一手什么时候落地**（声明时算出来的时间戳）；
+//! - [`ActionTiming`]：**这类动作的节奏**（前摇 / 后摇 / 打断抗性），值归各领域；
+//! - [`Uncancellable`]：**能不能撤**这一条规则标记。
 //!
 //! 调度器只认识这里的东西；「这行动是什么」由载荷组件决定（[`crate::movement::MoveAction`]、
 //! [`crate::combat::skills::FireballAction`]、[`crate::combat::skills::MeleeAction`]…），
-//! 调度器永远不读它们。
+//! 调度器永远不读它们。行动者的三阶段在 [`DecisionSlot`](super::DecisionSlot)（那是
+//! [`decision`](super::decision) 的事）；「这行动是谁的」由父子关系回答，「谁能撤它」
+//! 由 [`Uncancellable`] 回答——这里放的是几个方面都要读的**规则与数据**。
 //!
 //! **行动者不在这里**：行动实体是行动者的**子实体**（Bevy 的 `ChildOf` 关系），
 //! 「这条行动是谁的」由父子关系直接回答。父节点被销毁时子实体跟着销毁（`Children`
 //! 是 linked spawn），因此不存在"行动者死了、行动还在半空"这种孤儿状态。
 //!
-//! **节奏也不在这里**：前摇 / 后摇住在行动实体自己的
-//! [`ActionTiming`](super::ActionTiming) 组件上（它是载荷的一部分），需要它的地方
-//! （执行器算忙碌窗口、HUD 画时间轴色块）直接读那个组件。这里只留这一手**声明时
-//! 算出来**的两个数：什么时候落地、多难被打断。
+//! **节奏是另一个组件**：前摇 / 后摇住在行动实体自己的 [`ActionTiming`] 组件上
+//! （它是载荷的一部分），需要它的地方（执行器算忙碌窗口、HUD 画时间轴色块）直接读
+//! 那个组件。[`ScheduledAction`] 只留这一手**声明时算出来**的两个数：什么时候落地、
+//! 多难被打断。
 //!
 //! 无回合模型里没有「提交」这一步：声明时刻即前摇起点，
 //! `execute_at = 声明时刻 + windup`；执行器只看 `now >= execute_at`。
@@ -19,8 +25,7 @@
 
 use bevy::prelude::*;
 
-use super::resources::Focus;
-use super::timing::ActionTiming;
+use super::focus::Focus;
 
 /// 一条行动的调度状态。
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
@@ -90,6 +95,60 @@ impl ScheduledAction {
         now > self.execute_at
     }
 }
+
+/// 单个动作的固定节奏 + 打断抗性。
+///
+/// 没有状态机：`windup` 决定「什么时候到点」，`recovery` 决定「忙到什么时候」，
+/// `interrupt_resist` 决定被打断时掷骰防守方那一侧的底数
+/// （见 [`InterruptEvent`](crate::timeline::InterruptEvent)）。
+///
+/// **它描述的是载荷，不是调度器**：具体值归各领域（`movement` 的移动 / 跳跃 / 翻滚、
+/// `combat::skills` 的近战 / 火球 / 箭矢、`combat::defense` 的招架）。
+///
+/// 声明时它被挂在**行动实体**上（和载荷一起，由场景工厂负责），于是：
+/// 执行器算忙碌窗口、HUD 画时间轴色块都从这里读，不用在别处再抄一份；
+/// 而 [`ScheduledAction`] 只剩这一手自己的时间戳。
+///
+/// **动作节奏的契约**：时间线只认这个形状，而 `ActionTiming` 这一族**只有类型，
+/// 没有数值**。windup / recovery / interrupt_resist 是**载荷自己的属性**，因此具体值
+/// （`MOVE_TIMING`、`FIREBALL_TIMING`…）住在各自的领域里，和载荷类型放在一起——
+/// 这样新增一个动作时，时间线一行都不用改。
+///
+/// 数值后续外置成 `.ron`（见 [TODO.md](../../../TODO.md)），届时每个领域的常量
+/// 换成从配置读，`ActionTiming` 的形状不变。
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
+pub struct ActionTiming {
+    /// 前摇（虚拟秒）：声明时刻 + 前摇 = 执行时刻。
+    pub windup: f32,
+    /// 后摇（虚拟秒）：执行时刻 + 后摇 = 重新可决策时刻。
+    pub recovery: f32,
+    /// 打断抗性：掷骰对抗时加在防守方那一侧（越大越难被打断）。
+    pub interrupt_resist: i32,
+}
+
+impl ActionTiming {
+    /// 常量构造（`const` 便于各领域直接写常量表）。
+    pub const fn new(windup: f32, recovery: f32, interrupt_resist: i32) -> Self {
+        Self {
+            windup,
+            recovery,
+            interrupt_resist,
+        }
+    }
+
+    /// 从声明到重新可决策的总时长。
+    pub fn total(&self) -> f32 {
+        self.windup + self.recovery
+    }
+}
+
+/// 「这条行动不给撤」。
+///
+/// 撤销的**代价**不在这里：花了什么、退多少、收多少手续费，都由花钱的那个领域
+/// 订阅 [`ActionCancelled`](super::ActionCancelled) 自己算——行动实体上只留
+/// "能不能撤"这一条规则。
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Uncancellable;
 
 #[cfg(test)]
 mod tests {

@@ -126,8 +126,7 @@ ChunkUnloadEvent -> despawn_chunk_surfaces_system（清理网格）
 ```text
 compute_player_awaiting_system 玩家决策槽空着 -> 每帧断言 "slot_empty"
 track_focus_intent_system      Shift + 决策键 -> FocusIntent（只在本帧有效）
-interrupt_system               本帧有 PlayerIntent -> 写 UndoCommand
-undo_system                    右键 / 打断：销毁还没到点的玩家行动 + 清空决策槽 + trigger ActionCancelled
+undo_system                    右键 / 换手（PlayerIntent）：销毁还没到点的玩家行动 + 清空决策槽 + trigger ActionCancelled
 recovery_system                后摇到点 -> 决策槽置 Empty + trigger DecisionReady
 recover_focus_system           每 10 虚拟秒回 1 点 Focus
 
@@ -360,8 +359,7 @@ UnitSprites   --> unit_scene  --^
 | :--- | :--- | :--- |
 | `compute_player_awaiting_system` | `DecisionSlot`、`InputDriven` | `PauseRequest`（每帧断言 `"slot_empty"`） |
 | `track_focus_intent_system` | `UseFocus` | `FocusIntent` |
-| `interrupt_system` | `PlayerIntent`（输入层的唯一一条意图消息） | `UndoCommand` |
-| `undo_system` | `UndoCommand`、`ScheduledAction`（`pending`）、`ChildOf`（取行动者）、`Uncancellable`（`Without`）、`InputDriven` | trigger `ActionCancelled`、销毁行动实体、`DecisionSlot::Empty` |
+| `undo_system` | `UndoCommand`（右键）、`PlayerIntent`（换手，两者在这一条系统里汇合）、`ScheduledAction`（`pending`）、`ChildOf`（取行动者）、`Uncancellable`（`Without`）、`InputDriven` | trigger `ActionCancelled`、销毁行动实体、`DecisionSlot::Empty` |
 | `recovery_system` | `DecisionSlot`（只处理 `Recovery`）、`Time<Virtual>` | `DecisionSlot::Empty`、trigger `DecisionReady` |
 | `recover_focus_system` | `Time<Virtual>` | `Focus` |
 | `process_pause_requests` / `apply_clock` | `PauseRequest` / `PauseReasons` | `PauseReasons`（每帧 `clear` 后重建）/ `Time<Virtual>`（**唯一**写时钟的地方） |

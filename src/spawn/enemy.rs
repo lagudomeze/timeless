@@ -20,7 +20,7 @@ pub const ENEMY_SPAWN: Cell = Cell::new(3, 3);
 /// 敌人场景：幽灵精灵（换贴图即可换怪物，逻辑零件不动）。
 ///
 /// 没有独立冷却组件：敌人「多久能再决策」由它上一个动作的后摇决定
-/// （见 [`crate::timeline::timing`]）。
+/// （见 [`crate::timeline::ActionTiming`]）。
 pub fn enemy_scene(terrain: &TerrainConfig, sprites: &UnitSprites) -> impl Scene {
     let position = cell_ground(terrain, ENEMY_SPAWN);
     bsn! {

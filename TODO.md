@@ -157,6 +157,22 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       各写一遍（其中 8 个是活路径、1 个是未注册的 `declare_skill_system`），现在收成一处。
       验收：181 测试全绿（179 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过 /
       `cargo run` 无 panic。
+- [x] **M20 时间线整理：声明的另一半 + 按概念分文件**（提交 57df65e / 本次）：
+      ① `timeline::attach_action(commands, actor, action)` 补上"声明"的另一半——
+      `first_ready` 管「谁」，它管「账怎么记」（挂成行动者的子实体 + 决策槽推进 `Windup`）。
+      这两句原来在 **8 处**一字不差，且横跨玩家路径与 AI 路径，其中三个是两边共用的工厂。
+      ② `timeline/` 从 **9 个文件收到 7 个**，每个文件回答一个问题：
+      `decision.rs`（谁能决策 + 决策的一生：`undo_system` / `recovery_system`）、
+      `schedule.rs`（这一手何时落地：`ScheduledAction` / `ActionTiming` / `Uncancellable`）、
+      `clock.rs`（世界何时冻结：`PauseRequest` / `PauseReasons` / 三个原因常量 + 三个系统）、
+      `focus.rs`（⚠️ Focus 一族，**待搬去 combat**）、`events.rs`（其余跨领域契约）。
+      删掉 `components.rs`（23 行碎片）/ `timing.rs`（49 行碎片）/ `systems.rs`（8 个不相干的
+      系统堆在一起）；**系统跟着它操作的数据走**，AGENTS.md 的文件约定同步改成
+      「按概念分文件，系统跟着数据走」。
+      ③ `interrupt_system` 并进 `undo_system`：它的名字骗人（真正的打断 `InterruptEvent`
+      已搬去 `combat`），实际做的是"玩家表达了新意图 → 撤掉旧那一手"。现在 `undo_system`
+      直接收两个来源（`UndoCommand` 右键 / `PlayerIntent` 换手），少一条消息转发。
+      验收：181 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过 / `cargo run` 无 panic。
 - [x] **CJK 字体**：`assets/fonts/NotoSansSC-Regular.otf`（OFL-1.1），
       HUD 显式指定，战斗日志中文不再显示成豆腐块。
 - [x] **文档整合**：文档收敛为「入口 + 架构 + 时间线 + 组件对照 + 设计 + 素材 +

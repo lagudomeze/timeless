@@ -62,6 +62,6 @@ impl Default for AttackFrame {
 /// 打断力度（攻击实体挂载）：命中时用它和目标的**打断抗性**掷骰对抗。
 ///
 /// `0` = 这一击不尝试打断（对抗由
-/// [`interrupt_observer`](crate::timeline::interrupt_observer) 完成）。
+/// [`interrupt_observer`](crate::combat::formula::interrupt_observer) 完成）。
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct InterruptPower(pub i32);

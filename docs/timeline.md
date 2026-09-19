@@ -122,7 +122,7 @@ pub struct ActionTiming {        // 也在行动实体身上：**载荷自己的
 | 火球 | `FIREBALL_TIMING` | `combat/skills/fireball.rs` | 0.30s | 0.50s | 2 |
 | 招架 | `PARRY_TIMING` | `combat/defense/actions.rs` | 0.05s | 0.25s | 2 |
 
-> 为什么不放在 `timeline/timing.rs`：那样「新增一个动作」就必须回头改时间线，
+> 为什么不集中放在 `timeline/` 里：那样「新增一个动作」就必须回头改时间线，
 > 而时间线自己的承诺是**不感知载荷**。常量跟着载荷走之后，加动作只是
 > 「载荷 + 场景工厂 + 执行器 + 声明系统」四件事，调度器一行不改。
 > 声明系统要做的第一件事是 `players.iter().first_ready(&mut blocked)`（`timeline::FirstReady`）：
@@ -340,7 +340,7 @@ enemy_declare_system（把 Intent 翻成行动实体）
 | 新动作（冲刺、陷阱、召唤） | 新载荷 + 场景工厂 + 执行器 + 它自己的 `*_TIMING`（写在载荷旁边） | 不用 |
 | 新攻击方式 | 新目标获取系统（挂 `CollisionTarget`）+ 复用伤害链 +（**记得**挂 `Threatens`） | 不用 |
 | 新元素伤害 | 新组件 + 一个同形的命中系统 + 挂在工厂上 | 不用 |
-| 新的暂停原因 | `timeline::resources` 加常量 + 一个 `compute_*` 系统 | 不用 |
+| 新的暂停原因 | `timeline/clock.rs` 加常量 + 一个断言点 | 不用 |
 | 新消耗资源（弹药 / 架势） | 新组件 + 消费 `ActionCancelled` 的系统 | 不用 |
 | 多敌人 / 新怪物 | `spawn` 加一组零件；AI 把「最近」换成威胁排序 | 不用 |
 | 实时压力模式 | 后摇改用 `Time<Real>` 基准，其余不动 | 不用 |

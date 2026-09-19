@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! TimelineSet（帧中）：断言暂停原因（空槽）→ 记 Focus 意图
-//!                     → 打断 → 撤销 → 后摇恢复 → Focus 回复
+//!                     → 撤销（右键与玩家新意图在此汇合）→ 后摇恢复 → Focus 回复
 //! ClockSet  （帧末）：暂停请求 → 原因集合（每帧重建）→ apply_clock（唯一的时钟写入）
 //! ```
 //!
@@ -13,12 +13,12 @@ use bevy::prelude::*;
 
 use super::ClockSet;
 use super::TimelineSet;
-use super::events::{ActionBlocked, PauseRequest, PlayerIntent, UndoCommand, UseFocus};
-use super::resources::{Focus, FocusIntent, PauseReasons};
-use super::systems::{
-    apply_clock, compute_player_awaiting_system, interrupt_system, process_pause_requests,
-    recover_focus_system, recovery_system, undo_system,
+use super::clock::{
+    PauseReasons, PauseRequest, apply_clock, compute_player_awaiting_system, process_pause_requests,
 };
+use super::decision::{recovery_system, undo_system};
+use super::events::{ActionBlocked, PlayerIntent, UndoCommand, UseFocus};
+use super::focus::{Focus, FocusIntent, recover_focus_system, track_focus_intent_system};
 
 /// 无回合时间线插件。
 #[derive(Debug, Default)]
@@ -31,7 +31,7 @@ impl Plugin for TimelinePlugin {
             .init_resource::<FocusIntent>()
             // 暂停断言：写方是 input（手动）、本域的等输入系统、combat 的威胁检测
             .add_message::<PauseRequest>()
-            // 玩家意图：写方是 input / interaction，消费方是本域的打断系统
+            // 玩家意图：写方是 input / interaction，消费方是本域的撤销系统
             .add_message::<PlayerIntent>()
             // Focus 换前摇：写方是 input（Shift + 决策键），消费方是本域
             .add_message::<UseFocus>()
@@ -46,9 +46,8 @@ impl Plugin for TimelinePlugin {
                     // 暂停原因先算：后面的声明系统不需要知道冻结与否
                     compute_player_awaiting_system,
                     // Focus 意图只在本帧有效，慢一拍就会扣错账
-                    super::systems::track_focus_intent_system,
-                    // 打断 = 写一条撤销请求，紧跟其后的撤销系统接手
-                    interrupt_system,
+                    track_focus_intent_system,
+                    // 撤销：右键与玩家新意图在这一条系统里汇合
                     undo_system,
                     // 后摇恢复放最后：本帧执行器刚挂上的后摇不会被立刻摘掉
                     recovery_system,

@@ -1,7 +1,7 @@
 //! # timeline — 无回合时间线（能决策就决策）
 //!
 //! 没有阶段、没有轮次、没有状态标记：**每个单位只要决策槽是空的就能决策**，
-//! 节奏由每个动作自带的前摇 + 后摇决定（[`timing`]）。
+//! 节奏由每个动作自带的前摇 + 后摇决定（[`ActionTiming`]）。
 //!
 //! ```text
 //! [Empty] ──声明──▶ [Windup + 行动实体] ──到点──▶ 执行器落地 ──▶ [Recovery { until }]
@@ -45,34 +45,40 @@
 //!
 //! 决策按**格子**、命中按**真实距离**，格边长见
 //! [`crate::movement::CELL_SIZE`]（格尺度是移动领域的真相，本域只是读它）。
+//!
+//! ## 文件地图
+//!
+//! 每个文件回答一个问题：
+//!
+//! | 文件 | 回答什么问题 |
+//! | :--- | :--- |
+//! | [`decision`] | 谁能决策（槽 + 入口）；这一手怎么被撤掉 / 收尾（undo / recovery） |
+//! | [`schedule`] | 行动实体身上与时间有关的数据：这一手何时落地、这类动作的节奏、能不能撤 |
+//! | [`clock`] | 世界什么时候冻结：原因集合 + 请求 + 三个系统 |
+//! | [`focus`] | Focus 一族（⚠️ 不是时间线的概念，见该文件顶部的警告） |
+//! | [`events`] | 时间线**对外**的跨领域契约：别人怎么跟它说话、它怎么通知别人 |
+//! | [`plugin`] | 接线：注册资源 / 消息 / 观察者，声明两段系统链 |
 
 use bevy::prelude::*;
 
-pub mod components;
+pub mod clock;
 pub mod decision;
 pub mod events;
+pub mod focus;
 pub mod plugin;
-pub mod resources;
 pub mod schedule;
-pub mod systems;
-pub mod timing;
 
-pub use components::{InputDriven, Uncancellable};
-pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, attach_action};
+pub use clock::{MANUAL, PauseReasons, PauseRequest, SLOT_EMPTY, THREAT};
+pub use clock::{apply_clock, compute_player_awaiting_system, process_pause_requests};
+pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven, attach_action};
+pub use decision::{recovery_system, undo_system};
 pub use events::{
-    ActionBlocked, ActionCancelled, BlockReason, DecisionReady, PauseRequest, PlayerIntent,
-    UndoCommand, UseFocus,
+    ActionBlocked, ActionCancelled, BlockReason, DecisionReady, PlayerIntent, UndoCommand, UseFocus,
 };
+pub use focus::{FOCUS_MAX, FOCUS_RECOVER_INTERVAL, Focus, FocusIntent};
+pub use focus::{recover_focus_system, track_focus_intent_system};
 pub use plugin::TimelinePlugin;
-pub use resources::{
-    FOCUS_MAX, FOCUS_RECOVER_INTERVAL, Focus, FocusIntent, MANUAL, PauseReasons, SLOT_EMPTY, THREAT,
-};
-pub use schedule::ScheduledAction;
-pub use systems::{
-    apply_clock, compute_player_awaiting_system, interrupt_system, process_pause_requests,
-    recover_focus_system, recovery_system, track_focus_intent_system, undo_system,
-};
-pub use timing::ActionTiming;
+pub use schedule::{ActionTiming, ScheduledAction, Uncancellable};
 
 /// 时间线在 `Update` 中的系统集（排在输入之后、AI 与执行器之前）。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,3 +87,61 @@ pub struct TimelineSet;
 /// 钟表系统集：每帧**最后**一段，唯一的 `Time<Virtual>` 写入点。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClockSet;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
+
+    use super::clock::{ManualLatch, assert_manual};
+    use super::*;
+
+    /// 记下本帧收到过哪些撤销广播（真实的消费者住在花钱的领域里）。
+    #[derive(Resource, Default)]
+    pub(crate) struct Cancellations(pub(crate) Vec<(Entity, Entity)>);
+
+    pub(crate) fn record_cancellation(
+        cancelled: On<ActionCancelled>,
+        mut recorded: ResMut<Cancellations>,
+    ) {
+        recorded.0.push((cancelled.entity, cancelled.actor));
+    }
+
+    /// 只装时间线自己的东西：手动步进 100ms/帧 + 本域全部资源、消息、系统与观察者。
+    /// 各文件的单测复用它，保证跑的是真实的域内顺序。
+    pub fn timeline_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                100,
+            )))
+            .init_resource::<PauseReasons>()
+            .init_resource::<ManualLatch>()
+            .init_resource::<Focus>()
+            .init_resource::<FocusIntent>()
+            .add_message::<PauseRequest>()
+            .add_message::<PlayerIntent>()
+            .add_message::<UseFocus>()
+            .add_message::<UndoCommand>()
+            .init_resource::<Cancellations>()
+            .add_observer(record_cancellation)
+            .add_systems(
+                Update,
+                (
+                    (
+                        assert_manual,
+                        compute_player_awaiting_system,
+                        track_focus_intent_system,
+                        undo_system,
+                        recovery_system,
+                        recover_focus_system,
+                    )
+                        .chain(),
+                    // 钟表在最后：顺序与生产流水线（TimelineSet → ClockSet）一致
+                    (process_pause_requests, apply_clock).chain(),
+                )
+                    .chain(),
+            );
+        app
+    }
+}

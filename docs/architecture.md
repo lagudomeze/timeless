@@ -91,14 +91,16 @@ src/
 │   ├── reaction/               #   Threatens / TargetCell / ThreatWindow + 威胁检测
 │   ├── skills/                 #   registry / menu / melee / arrow / fireball / explosion / actions
 │   └── plugin.rs               #   CombatPlugin（战斗流水线）
-├── timeline/
-│   ├── timing.rs               #   ActionTiming 的**形状**（具体数值归各领域的载荷）
-│   ├── decision.rs             #   DecisionSlot 三态（Empty / Windup / Recovery）+ recovering()
-│   ├── schedule.rs             #   ScheduledAction（这一手什么时候落地）
-│   ├── components.rs           #   Uncancellable / InputDriven（行动实体与行动者的标记）
-│   ├── resources.rs            #   PauseReasons / Focus / FocusIntent
-│   ├── events.rs               #   PauseRequest / PlayerIntent / UseFocus / ActionBlocked / UndoCommand / ActionCancelled / DecisionReady
-│   ├── systems.rs              #   暂停原因 / Focus / 撤销 / 后摇 / apply_clock
+├── timeline/                   # 每个文件回答一个问题
+│   ├── decision.rs             #   谁能决策：DecisionSlot 三态 / InputDriven /
+│   │                           #   FirstReady+HasDecisionSlot（声明入口）/ attach_action
+│   │                           #   + 决策的一生：undo_system / recovery_system
+│   ├── schedule.rs             #   这一手何时落地：ScheduledAction / ActionTiming / Uncancellable
+│   ├── clock.rs                #   世界何时冻结：PauseRequest / PauseReasons / 三个原因常量
+│   │                           #   + compute_player_awaiting / process_pause_requests / apply_clock
+│   ├── focus.rs                #   ⚠️ Focus 一族（玩家的游戏资源，待搬去 combat）
+│   ├── events.rs               #   其余跨领域契约：PlayerIntent / UseFocus / ActionBlocked /
+│   │                           #   UndoCommand / ActionCancelled / DecisionReady
 │   └── plugin.rs
 ├── ai/{components,systems,plugin}.rs
 ├── input/{keyboard,pointer,plugin}.rs   # 键盘 / 鼠标 → 消息（只翻译）
@@ -153,7 +155,7 @@ WorldSet ───────────────────────�
 | `RollCommand` / `ParryCommand` | `input` / `menu` 派发 | `combat::defense` 的声明系统 |
 | `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` / `interaction` | `combat::skills::menu` |
 | `PointerCommand` | `input` | `interaction::pointer_command_system` |
-| `PlayerIntent` | `input`（键盘）/ `interaction`（左键） | `timeline::interrupt_system`（撤掉玩家那条还没到点的行动） |
+| `PlayerIntent` | `input`（键盘）/ `interaction`（左键） | `timeline::undo_system`（撤掉玩家那条还没到点的行动，与右键同一条路） |
 | `UseFocus` / `UndoCommand` | `input` / `interaction` | `timeline` |
 | `PauseRequest` | `input`（手动）/ `timeline` 的等输入系统 / `combat::reaction` | `timeline::process_pause_requests` → `apply_clock` |
 | `InterruptEvent`（**EntityEvent**，住 `combat::formula`） | 命中系统 `apply_physical_hits_system` | `combat::formula::interrupt_observer`（判定与落地都在战斗域） |

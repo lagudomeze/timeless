@@ -1,38 +1,19 @@
-//! 时间线消息与事件。
+//! 时间线**对外**的跨领域契约：**别人怎么跟它说话**（[`PlayerIntent`] / [`UseFocus`] /
+//! [`UndoCommand`]，以及提示用的 [`ActionBlocked`]），**它怎么通知别人**（[`ActionCancelled`] /
+//! [`DecisionReady`]）。
+//!
+//! 停表请求 [`PauseRequest`](super::clock::PauseRequest) 与它的原因集合是一个自成一体的
+//! 话题（世界什么时候冻结），因此和它的系统一起住在 [`clock`](super::clock) 里。
 //!
 //! 批量、解耦的广播走 **Message**；「即时、针对具体实体」的响应走 **EntityEvent**——
 //! 两者不混用（打断就是后者：它必须当场决定那条行动还在不在）。
 
 use bevy::prelude::*;
 
-/// 停表 / 解冻请求。
-///
-/// **断言式**：谁这一帧还想让世界停着，就写一条 [`PauseRequest::Pause`]。
-/// 不需要谁去"撤销"自己的原因——下一帧不再断言，原因自然消失
-/// （[`PauseReasons`](super::resources::PauseReasons) 每帧重建）。
-/// 「等玩家决策」与「威胁逼近」因此可以叠加、互不覆盖，也不会出现
-/// "原因留在集合里没人摘"的幽灵冻结。
-///
-/// 写：[`crate::input`]（手动暂停，哪个键由输入域自己定）、时间线的
-/// [`compute_player_awaiting_system`](super::systems::compute_player_awaiting_system)、
-/// `combat::reaction::detect_threat_system`；
-/// 消费：[`process_pause_requests`](super::systems::process_pause_requests)，
-/// 再由 [`apply_clock`](super::systems::apply_clock) 落到 `Time<Virtual>`。
-///
-/// 原因只是**给人看的**（HUD 直接显示 `labels()`），所以是 `&'static str` 常量：
-/// 加一个新原因不需要改任何枚举，只要一个常量加一个断言点，且每帧断言零分配。
-#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PauseRequest {
-    /// 这一帧仍然想停表，原因是 `reason`
-    Pause(&'static str),
-    /// 解冻：虚拟时间立刻流动，并清空已经收集到的原因
-    Resume,
-}
-
 /// 「这一帧玩家表达了一个新意图」。
 ///
 /// 写：[`crate::input`]（方向键 / 技能键）与 [`crate::interaction`]（左键点击）；
-/// 消费：[`interrupt_system`](super::systems::interrupt_system)——它把玩家那条
+/// 消费：[`undo_system`](super::decision::undo_system)——它把玩家那条
 /// **还没到点**的行动撤掉，好让同一帧稍后运行的声明系统抢到空的决策槽。
 ///
 /// 为什么需要这条消息：声明系统看到"槽被占着"只会回一句
@@ -46,8 +27,8 @@ pub struct PlayerIntent;
 /// 玩家要求「用 1 点 Focus 换前摇归零」（`Shift` + 决策键）。
 ///
 /// 写：[`crate::input`]；消费：
-/// [`track_focus_intent_system`](super::systems::track_focus_intent_system)——
-/// 它只把这个意图记进 [`FocusIntent`](super::resources::FocusIntent)，
+/// [`track_focus_intent_system`](super::focus::track_focus_intent_system)——
+/// 它只把这个意图记进 [`FocusIntent`](super::focus::FocusIntent)，
 /// 玩家真的声明了行动才会扣费（光按 Shift 不花 Focus）。
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UseFocus;
@@ -84,14 +65,15 @@ pub enum BlockReason {
 
 /// 玩家请求撤销**那条还没到点的玩家行动**。
 ///
-/// 写：鼠标右键（`interaction`）/ 打断系统 / 将来可能的 `Esc`；
-/// 消费：[`undo_system`](super::systems::undo_system)。
+/// 写：鼠标右键（`interaction`）/ 将来可能的 `Esc`；
+/// 消费：[`undo_system`](super::decision::undo_system)——玩家新意图
+/// （[`PlayerIntent`]）是撤销的另一个来源，两条在这里汇合。
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UndoCommand;
 
 /// 一条行动被撤销了（发给**行动实体**）。
 ///
-/// 写：[`undo_system`](super::systems::undo_system)；
+/// 写：[`undo_system`](super::decision::undo_system)；
 /// 消费：花钱的那个领域——目前是 `combat::skills`（火球退 2 收 2、近战收 1）。
 ///
 /// 用 `EntityEvent` 而不是广播 Message：撤销**一定**落在某一条具体行动上，
@@ -110,7 +92,7 @@ pub struct ActionCancelled {
 
 /// 后摇结束、决策槽回到 `Empty`（发给**行动者**）。
 ///
-/// 写：[`recovery_system`](super::systems::recovery_system)；
+/// 写：[`recovery_system`](super::decision::recovery_system)；
 /// 消费：关心「又轮到它决策了」的领域——目前是 `combat::defense`（回 1 点精力）。
 ///
 /// 用 `EntityEvent` 而不是让时间线直接改资源：资源归各自的领域管，

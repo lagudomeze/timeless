@@ -31,7 +31,7 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 178 通过（176 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 181 通过（179 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check                           # 格式校验
 ```
@@ -70,7 +70,7 @@ cargo fmt --check                           # 格式校验
 - **消息定义与消费它的系统同属一个领域**：如 `MoveCommand` 与 `declare_move_system`
   在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/skills/`、
   `PauseRequest` / `PlayerIntent` / `UndoCommand` 与
-  `compute_player_awaiting_system` / `interrupt_system` / `undo_system` /
+  `compute_player_awaiting_system` / `undo_system` /
   `process_pause_requests` 在 `timeline/`、
   `PointerCommand` 与 `pointer_command_system` 在 `interaction/`。
   其他领域需要该操作时只写消息，不重复实现。
@@ -86,8 +86,11 @@ cargo fmt --check                           # 格式校验
 - `main.rs` 只组装插件（引擎插件 + `GamePlugin`）；跨领域的执行顺序只在
   `lib.rs::configure_pipeline` 里用 `SystemSet` 声明一次，领域内部顺序由各自
   `plugin.rs` 维护（测试复用同一入口，保证跑的是真实流水线顺序）。
-- 领域内部按职责分文件：`components.rs` / `events.rs`（消息）/ `systems.rs` /
-  `resources.rs`；`mod.rs` 只做 `pub mod` + `pub use` 门面。
+- 领域内部按**概念**分文件，一个文件回答一个问题；`components.rs` / `events.rs`（消息）/
+  `resources.rs` / `systems.rs` 是默认分法，但当某个概念的数据与它的系统天然成对时，
+  可以合成一个文件（如 `timeline/decision.rs` 同时装 `DecisionSlot` 与 `undo_system`）。
+  **系统跟着它操作的数据走**，不要为了凑一个 `systems.rs` 把不相干的系统堆在一起。
+  `mod.rs` 只做 `pub mod` + `pub use` 门面。
 - **角色实体不是模块**：零件归各领域（`Health` → combat、`Velocity` → movement、
   `EnemyBrain` → ai、`ChunkLoader` → world），组装归 `spawn/`（`unit_scene` 给共用
   零件，`player.rs` / `enemy.rs` 追加驱动源）；**没有任何领域依赖 `spawn` 的组装逻辑**
