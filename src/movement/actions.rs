@@ -10,8 +10,8 @@
 use bevy::prelude::*;
 
 use crate::timeline::{
-    ActionBlocked, ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent,
-    InputDriven, ScheduledAction, Uncancellable,
+    ActionBlocked, ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven,
+    PendingFocus, ScheduledAction, Uncancellable,
 };
 
 use super::cell::{Cell, MoveGoal};
@@ -138,7 +138,7 @@ pub fn declare_move_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     mut focus: ResMut<Focus>,
-    intent: Res<FocusIntent>,
+    pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<MoveCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
     players: Query<(Entity, &Cell, &DecisionSlot), With<InputDriven>>,
@@ -157,7 +157,7 @@ pub fn declare_move_system(
 
     let to_cell = Cell::new(cell.x + dx, cell.z + dz);
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, pending_focus.wants());
     commands.spawn_scene(move_action_scene(
         *cell,
         to_cell,
@@ -177,7 +177,7 @@ pub fn declare_move_to_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     mut focus: ResMut<Focus>,
-    intent: Res<FocusIntent>,
+    pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<MoveToCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
     players: Query<(Entity, &Cell, &DecisionSlot), With<InputDriven>>,
@@ -192,7 +192,7 @@ pub fn declare_move_to_system(
         return; // 点自己脚下：不浪费一次决策
     }
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, pending_focus.wants());
     commands.spawn_scene(move_action_scene(
         *cell,
         target,
@@ -248,7 +248,7 @@ pub fn declare_jump_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     mut focus: ResMut<Focus>,
-    intent: Res<FocusIntent>,
+    pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<JumpCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
     players: Query<(Entity, &DecisionSlot), With<InputDriven>>,
@@ -260,7 +260,7 @@ pub fn declare_jump_system(
         return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(JUMP_TIMING, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(JUMP_TIMING, now, &mut focus, pending_focus.wants());
     commands.spawn_scene(jump_action_scene(JUMP_TIMING, schedule, player));
     commands.entity(player).insert(DecisionSlot::Windup);
 }

@@ -1,9 +1,10 @@
-//! ⚠️ **这一族不是时间线的概念**：`Focus` 是玩家的**游戏资源**（和 `combat::defense`
-//! 的 `Stamina` 同类），按计划要搬去 `combat` 并改成挂在单位身上的组件。
+//! ⚠️ **这一族不是时间线的概念**：`Focus` 是玩家的**反制资源**（和 `combat::defense`
+//! 的 `Stamina` 同类），按计划要搬去 `combat` 并改成挂在单位身上的组件
+//! （见 `docs/combat.md` 第五节、`TODO.md` 的工程债）。
 //! 它现在寄住在这里，只是因为搬迁会和 `spawn` / HUD / 8 个声明点一起动，
-//! 所以单独排了一步（见 TODO.md 的 M20）。
+//! 所以单独排了一步。
 //!
-//! 时间线里寄住的 Focus 一族：资源 [`Focus`] + 意图 [`FocusIntent`]
+//! 时间线里寄住的 Focus 一族：资源 [`Focus`] + 本帧请求 [`PendingFocus`]
 //! （暂停原因集合不在这里，见 [`clock`](super::clock)）。
 
 use bevy::prelude::*;
@@ -18,7 +19,7 @@ pub const FOCUS_RECOVER_INTERVAL: f32 = 10.0;
 /// 反应资源：**1 点 Focus = 把一次声明的前摇归零**。
 ///
 /// 它买的是「反应速度」而不是数值：威胁压过来时，只有攒着 Focus 的人才来得及
-/// 在同一瞬间改手（见 [docs/timeline.md](../../../docs/timeline.md) 第六节）。
+/// 在同一瞬间改手（见 `docs/combat.md` 第五节）。
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Focus {
     pub current: u32,
@@ -57,17 +58,24 @@ impl Focus {
 
 /// 本帧玩家有没有要求「用 Focus 换前摇归零」（`Shift` + 决策键）。
 ///
-/// 由 [`track_focus_intent_system`](crate::timeline::track_focus_intent_system) 每帧写入，
+/// 由 [`track_pending_focus_system`](crate::timeline::track_pending_focus_system) 每帧写入，
 /// 声明系统读它——真正的扣费发生在声明那一刻（没声明就不花）。
 #[derive(Resource, Debug, Default, Clone, Copy)]
-pub struct FocusIntent(pub bool);
+pub struct PendingFocus(pub bool);
+
+impl PendingFocus {
+    /// 本帧玩家要不要为这一手付 Focus。
+    pub fn wants(&self) -> bool {
+        self.0
+    }
+}
 
 /// 玩家想不想用 Focus 换前摇（本帧有效）：`Shift` + 决策键 → [`UseFocus`]。
-pub fn track_focus_intent_system(
+pub fn track_pending_focus_system(
     mut requests: MessageReader<UseFocus>,
-    mut intent: ResMut<FocusIntent>,
+    mut pending_focus: ResMut<PendingFocus>,
 ) {
-    intent.0 = requests.read().last().is_some();
+    pending_focus.0 = requests.read().last().is_some();
 }
 
 /// Focus 回复：每 [`FOCUS_RECOVER_INTERVAL`] 虚拟秒回 1 点。
@@ -136,18 +144,18 @@ mod tests {
         );
     }
 
-    /// 玩家想用 Focus 换前摇时，意图只在本帧有效。
+    /// 玩家想用 Focus 换前摇时，这个请求只在本帧有效。
     #[test]
-    fn focus_intent_lasts_exactly_one_frame() {
+    fn a_focus_request_lasts_exactly_one_frame() {
         let mut app = timeline_app();
         app.world_mut().write_message(UseFocus);
         app.update();
-        assert!(app.world().resource::<FocusIntent>().0);
+        assert!(app.world().resource::<PendingFocus>().wants());
 
         app.update();
         assert!(
-            !app.world().resource::<FocusIntent>().0,
-            "上一帧的意图不该延续到下一帧"
+            !app.world().resource::<PendingFocus>().wants(),
+            "上一帧的请求不该延续到下一帧"
         );
     }
 }

@@ -18,7 +18,7 @@ use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
 use crate::timeline::{
-    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
+    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, PendingFocus,
     ScheduledAction,
 };
 
@@ -175,7 +175,7 @@ pub fn declare_fireball_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     mut focus: ResMut<Focus>,
-    intent: Res<FocusIntent>,
+    pending_focus: Res<PendingFocus>,
     mut fires: MessageReader<FireCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     mut players: FireballPlayer<'_, '_>,
@@ -213,7 +213,8 @@ pub fn declare_fireball_system(
 
     stamina.try_spend(FIREBALL_COST);
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, intent.0);
+    let schedule =
+        ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, pending_focus.wants());
     declare_fireball_at(
         &mut commands,
         player,
@@ -230,7 +231,7 @@ pub fn declare_melee_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     mut focus: ResMut<Focus>,
-    intent: Res<FocusIntent>,
+    pending_focus: Res<PendingFocus>,
     mut melees: MessageReader<MeleeCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     players: Query<(Entity, &Cell, &Transform, &Faction, &DecisionSlot), With<InputDriven>>,
@@ -254,7 +255,8 @@ pub fn declare_melee_system(
         .map(|(target, _)| Cell::from_world(target.translation))
         .unwrap_or(*cell);
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, intent.0);
+    let schedule =
+        ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, pending_focus.wants());
     super::actions::declare_melee_at(
         &mut commands,
         player,

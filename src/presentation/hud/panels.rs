@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-use crate::ai::Intent;
+use crate::ai::Tactic;
 use crate::combat::defense::{Dodging, Parrying, Stamina};
 use crate::combat::{Faction, Health};
 use crate::movement::{Cell, Jumping};
@@ -214,7 +214,7 @@ struct UnitRow {
     dodging: bool,
     parrying: bool,
     airborne: bool,
-    intent: Option<Intent>,
+    tactic: Option<Tactic>,
 }
 
 /// 面板快照缓存：与上一帧完全相同就整帧不碰 UI。
@@ -251,8 +251,8 @@ impl UnitRow {
         if let Some(distance) = to_player {
             line.push_str(&format!(" · dist {distance:.1}"));
         }
-        if let Some(intent) = self.intent {
-            line.push_str(&format!(" · {}", intent_label(intent)));
+        if let Some(tactic) = self.tactic {
+            line.push_str(&format!(" · {}", tactic_label(tactic)));
         }
         line
     }
@@ -271,15 +271,15 @@ impl UnitRow {
     }
 }
 
-/// 敌人意图的可读标签。
-pub fn intent_label(intent: Intent) -> &'static str {
-    match intent {
-        Intent::Idle => "idle",
-        Intent::Approach => "approach",
-        Intent::Melee => "melee",
-        Intent::Shoot => "shoot",
-        Intent::Retreat => "retreat",
-        Intent::Dodge => "dodge",
+/// 敌人战术的可读标签。
+pub fn tactic_label(tactic: Tactic) -> &'static str {
+    match tactic {
+        Tactic::Idle => "idle",
+        Tactic::Approach => "approach",
+        Tactic::Melee => "melee",
+        Tactic::Shoot => "shoot",
+        Tactic::Retreat => "retreat",
+        Tactic::Dodge => "dodge",
     }
 }
 
@@ -310,7 +310,7 @@ pub fn update_unit_panels_system(
     dodging: Query<(), With<Dodging>>,
     parrying: Query<(), With<Parrying>>,
     airborne: Query<(), With<Jumping>>,
-    intents: Query<&Intent>,
+    tactics: Query<&Tactic>,
 ) {
     let rows: Vec<UnitRow> = units
         .iter()
@@ -325,7 +325,7 @@ pub fn update_unit_panels_system(
                 dodging: dodging.get(entity).is_ok(),
                 parrying: parrying.get(entity).is_ok(),
                 airborne: airborne.get(entity).is_ok(),
-                intent: intents.get(entity).ok().copied(),
+                tactic: tactics.get(entity).ok().copied(),
             },
         )
         .collect();
@@ -403,7 +403,7 @@ mod tests {
             dodging: true,
             parrying: false,
             airborne: false,
-            intent: Some(Intent::Approach),
+            tactic: Some(Tactic::Approach),
         };
         let line = row.state_line(Some(7.12));
         assert!(line.contains("ENEMY"), "{line}");

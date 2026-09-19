@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use crate::combat::Faction;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
 use crate::timeline::{
-    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
+    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, PendingFocus,
     ScheduledAction,
 };
 
@@ -83,7 +83,7 @@ pub fn declare_roll_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     mut focus: ResMut<Focus>,
-    intent: Res<FocusIntent>,
+    pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<RollCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     rollers: Query<(Entity, &Cell, &Stamina, &Transform, &DecisionSlot), With<InputDriven>>,
@@ -109,7 +109,7 @@ pub fn declare_roll_system(
             .iter()
             .map(|(other, faction)| (other.translation, *faction)),
     );
-    let schedule = ScheduledAction::with_focus(ROLL_TIMING, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(ROLL_TIMING, now, &mut focus, pending_focus.wants());
     declare_roll(
         &mut commands,
         entity,
@@ -175,7 +175,7 @@ pub fn declare_parry_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     mut focus: ResMut<Focus>,
-    intent: Res<FocusIntent>,
+    pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<ParryCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     players: Query<(Entity, &Stamina, &DecisionSlot), With<InputDriven>>,
@@ -202,7 +202,8 @@ pub fn declare_parry_system(
     };
 
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(PARRY_TIMING, now, &mut focus, intent.0);
+    let schedule =
+        ScheduledAction::with_focus(PARRY_TIMING, now, &mut focus, pending_focus.wants());
     commands.spawn_scene(crate::combat::defense::parry_action_scene(
         target_attack,
         PARRY_TIMING,

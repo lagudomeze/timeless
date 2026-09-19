@@ -115,7 +115,7 @@ impl ScheduledAction {
 /// （`MOVE_TIMING`、`FIREBALL_TIMING`…）住在各自的领域里，和载荷类型放在一起——
 /// 这样新增一个动作时，时间线一行都不用改。
 ///
-/// 数值后续外置成 `.ron`（见 [TODO.md](../../../TODO.md)），届时每个领域的常量
+/// 数值后续外置成 `.ron`（见 [TODO.md](../../TODO.md)），届时每个领域的常量
 /// 换成从配置读，`ActionTiming` 的形状不变。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
 pub struct ActionTiming {

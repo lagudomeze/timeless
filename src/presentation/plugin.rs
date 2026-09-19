@@ -33,9 +33,9 @@ impl Plugin for PresentationPlugin {
             // 直接定位「玩家 HP 条」「技能槽 3」这类实体，配合各节点的 `Name`
             // 就不必再靠实体 ID 反推 UI 树。
             .register_type::<Faction>()
-            // AI 状态也进反射：排查"敌人为什么不动"时能直接读意图
+            // AI 状态也进反射：排查"敌人为什么不动"时能直接读战术
             .register_type::<crate::ai::EnemyBrain>()
-            .register_type::<crate::ai::Intent>()
+            .register_type::<crate::ai::Tactic>()
             .register_type::<hud::layout::HudRoot>()
             .register_type::<hud::panels::UnitPanel>()
             .register_type::<hud::panels::PanelBar>()

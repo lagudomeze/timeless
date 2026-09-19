@@ -1,6 +1,6 @@
 //! 单位外观：面向相机的 2D 精灵 + 贴地的黑色阴影。
 //!
-//! 伪 3D 方案（见 [docs/assets.md](../../../docs/assets.md)）：树木 / 石头继续用
+//! 伪 3D 方案（见 [docs/assets.md](../../docs/assets.md)）：树木 / 石头继续用
 //! 3D 模型，玩家 / 敌人换成 2D 纸片。两个约定决定了这里的写法：
 //!
 //! - **纸片绕 Y 轴对准相机**：单位自己不转身（移动只改位置），精灵每帧只调偏航角、
@@ -75,7 +75,7 @@ impl UnitSprites {
 /// 预载单位外观（Startup，必须早于 [`AssemblySet`](crate::spawn::AssemblySet) 的组装）。
 ///
 /// 像素图一律用最近邻采样：16px 的原图要拉到 1.8 格，线性过滤会把它糊掉
-/// （见 [docs/assets.md](../../../docs/assets.md)）。
+/// （见 [docs/assets.md](../../docs/assets.md)）。
 pub fn load_unit_sprites(commands: &mut Commands, assets: &AssetServer) {
     let pixel = |path: &'static str| {
         assets

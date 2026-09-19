@@ -38,15 +38,15 @@
 //!
 //! 1. [`UndoCommand`](super::events::UndoCommand)：玩家右键（`interaction`），
 //!    将来可能的 `Esc`；
-//! 2. [`PlayerIntent`](super::events::PlayerIntent)：玩家这一帧表达了新意图
+//! 2. [`PlayerTakeover`](super::events::PlayerTakeover)：玩家这一帧自己动手了
 //!    （方向键 / 技能键 / 左键点击）。「随时可以改主意」就靠它——它曾经由一个
 //!    名叫 `interrupt_system` 的系统翻译成 `UndoCommand`，现在直接和右键汇合，
 //!    因为两者要做的判定完全一样。
 //!
-//! ⚠️ **只读输入层的意图**：`MoveCommand` / `RollCommand` / `UseSelectedSkill`
+//! ⚠️ **只读输入层的事实**：`MoveCommand` / `RollCommand` / `UseSelectedSkill`
 //! 这些是各领域的动作消息，时间线不该认识它们的词汇；而 `FireCommand` /
 //! `MeleeCommand` 更是下游派生的，晚一帧才出现——监听它们会把"刚刚由自己的
-//! 意图声明出来的行动"当成新意图撤掉（火球永远发不出去）。
+//! 声明出来的行动"当成改主意撤掉（火球永远发不出去）。
 //!
 //! 两条纪律里的第二条——**收尾不集中**：执行器自己写 [`ScheduledAction`] 的判据、
 //! 自己销毁行动实体、自己把行动者推进 `Recovery`——时间线只提供数据与判定函数，
@@ -54,7 +54,7 @@
 
 use bevy::prelude::*;
 
-use super::events::{ActionBlocked, ActionCancelled, DecisionReady, PlayerIntent, UndoCommand};
+use super::events::{ActionBlocked, ActionCancelled, DecisionReady, PlayerTakeover, UndoCommand};
 use super::ownership::ActionOf;
 use super::schedule::{ActionTiming, ScheduledAction, Uncancellable};
 
@@ -186,9 +186,9 @@ pub struct InputDriven;
 /// 撤销有两个来源，缺一不可：
 ///
 /// 1. 显式请求 [`UndoCommand`]：鼠标右键（`interaction`）、将来可能的 `Esc`；
-/// 2. **玩家表达了新意图** [`PlayerIntent`]：这是「随时可以改主意」的机制——
+/// 2. **玩家自己动手了** [`PlayerTakeover`]：这是「随时可以改主意」的机制——
 ///    声明系统看到"槽被占着"只会回一句 [`ActionBlocked`]，而玩家的真实意思是
-///    "我要改手"。两个来源都读**这一帧的消息**，因此新意图抢在声明系统之前
+///    "我要改手"。两个来源都读**这一帧的消息**，因此改主意抢在声明系统之前
 ///    把槽腾出来（本系统排在 [`TimelineSet`](super::TimelineSet) 里声明系统之前）。
 ///
 /// 判定是纯谓词，两条同时满足才触发：① 撤销来源出现了（见上）；② 玩家有一条未执行
@@ -204,15 +204,15 @@ pub struct InputDriven;
 pub fn undo_system(
     mut commands: Commands,
     mut requests: MessageReader<UndoCommand>,
-    mut intents: MessageReader<PlayerIntent>,
+    mut takeovers: MessageReader<PlayerTakeover>,
     drivers: Query<(), With<InputDriven>>,
     actions: Query<(Entity, &ScheduledAction, &ActionOf), Without<Uncancellable>>,
     time: Res<Time<Virtual>>,
 ) {
-    // 撤销有两个来源：玩家右键（UndoCommand），或玩家表达了新意图（PlayerIntent）
+    // 撤销有两个来源：玩家右键（UndoCommand），或玩家自己动手了（PlayerTakeover）
     let explicit = requests.read().last().is_some();
-    let new_intent = intents.read().last().is_some();
-    if !explicit && !new_intent {
+    let player_took_over = takeovers.read().last().is_some();
+    if !explicit && !player_took_over {
         return;
     }
     let now = time.elapsed_secs();
@@ -482,7 +482,7 @@ mod tests {
         );
     }
 
-    /// 撤销只认**输入层的意图**这一条消息：时间线不认识各领域的命令词汇。
+    /// 撤销只认**输入层的事实**这一条消息：时间线不认识各领域的命令词汇。
     #[derive(Resource, Default)]
     struct Undos(usize);
 
@@ -506,12 +506,12 @@ mod tests {
         app.update();
         assert_eq!(app.world().resource::<Undos>().0, 0, "没人表态就不该撤销");
 
-        app.world_mut().write_message(PlayerIntent);
+        app.world_mut().write_message(PlayerTakeover);
         app.update();
         assert_eq!(
             app.world().resource::<Undos>().0,
             1,
-            "一句玩家意图就够时间线撤掉那条还没到点的行动"
+            "一句「玩家动手了」就够时间线撤掉那条还没到点的行动"
         );
     }
 }

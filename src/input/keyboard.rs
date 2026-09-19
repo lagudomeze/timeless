@@ -8,7 +8,7 @@ use crate::combat::skills::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill
 use crate::movement::{JumpCommand, MoveCommand};
 use crate::presentation::{CameraRig, ToggleHelp};
 use crate::spawn::ResetBattle;
-use crate::timeline::{MANUAL, PauseReasons, PauseRequest, PlayerIntent, UseFocus};
+use crate::timeline::{MANUAL, PauseReasons, PauseRequest, PlayerTakeover, UseFocus};
 
 /// `Q/W/E/R` 的技能热键绑定（默认值；用户自定义留到配置外置那一步）。
 ///
@@ -55,7 +55,7 @@ pub fn player_move_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     cameras: Query<&Transform, With<CameraRig>>,
     mut moves: MessageWriter<MoveCommand>,
-    mut intents: MessageWriter<PlayerIntent>,
+    mut takeovers: MessageWriter<PlayerTakeover>,
     mut last_axis: Local<Vec2>,
 ) {
     let mut screen = Vec2::ZERO;
@@ -88,7 +88,7 @@ pub fn player_move_input_system(
     moves.write(MoveCommand {
         axis: basis.axis(screen),
     });
-    intents.write(PlayerIntent);
+    takeovers.write(PlayerTakeover);
 }
 
 /// 相机的「地面基」：屏幕向右 / 屏幕向上分别对应哪个世界方向（都投影到地面）。
@@ -135,11 +135,11 @@ pub fn player_skill_input_system(
     mut uses: MessageWriter<UseSelectedSkill>,
     mut jumps: MessageWriter<JumpCommand>,
     mut parry_commands: MessageWriter<ParryCommand>,
-    mut intents: MessageWriter<PlayerIntent>,
+    mut takeovers: MessageWriter<PlayerTakeover>,
 ) {
     if keys.just_pressed(KeyCode::KeyC) {
         jumps.write(JumpCommand);
-        intents.write(PlayerIntent);
+        takeovers.write(PlayerTakeover);
     }
     for (key, action) in &binds.entries {
         if !keys.just_pressed(*key) {
@@ -150,12 +150,12 @@ pub fn player_skill_input_system(
                 if let Some(index) = crate::combat::skills::index_of(*kind) {
                     selects.write(SelectSkill(index));
                     uses.write(UseSelectedSkill::default());
-                    intents.write(PlayerIntent);
+                    takeovers.write(PlayerTakeover);
                 }
             }
             HotkeyAction::Parry => {
                 parry_commands.write(ParryCommand);
-                intents.write(PlayerIntent);
+                takeovers.write(PlayerTakeover);
             }
         }
     }
@@ -257,7 +257,7 @@ pub fn skill_menu_input_system(
     mut selects: MessageWriter<SelectSkill>,
     mut cycles: MessageWriter<CycleSkill>,
     mut uses: MessageWriter<UseSelectedSkill>,
-    mut intents: MessageWriter<PlayerIntent>,
+    mut takeovers: MessageWriter<PlayerTakeover>,
 ) {
     // 直接执行那一格（选中 + 用一次）
     let direct = [
@@ -270,11 +270,11 @@ pub fn skill_menu_input_system(
         if keys.just_pressed(key) {
             selects.write(SelectSkill(index));
             uses.write(UseSelectedSkill::default());
-            intents.write(PlayerIntent);
+            takeovers.write(PlayerTakeover);
         }
     }
 
-    // 循环：Shift + Tab = 反向。**只选不执行**，因此不算新意图
+    // 循环：Shift + Tab = 反向。**只选不执行**，因此不算「玩家动手了」
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if keys.just_pressed(KeyCode::Tab) {
         cycles.write(CycleSkill { forward: !shift });
@@ -288,11 +288,11 @@ pub fn skill_menu_input_system(
 pub fn skill_use_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut uses: MessageWriter<UseSelectedSkill>,
-    mut intents: MessageWriter<PlayerIntent>,
+    mut takeovers: MessageWriter<PlayerTakeover>,
 ) {
     if keys.just_pressed(KeyCode::KeyG) {
         uses.write(UseSelectedSkill::default());
-        intents.write(PlayerIntent);
+        takeovers.write(PlayerTakeover);
     }
 }
 

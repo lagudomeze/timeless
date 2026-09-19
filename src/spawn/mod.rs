@@ -9,7 +9,7 @@
 //! | `Faction` / `Collidable` | [`crate::combat`] |
 //! | `Velocity` / `MoveSpeed` / `Cell` | [`crate::movement`] |
 //! | `DecisionSlot`（决策槽）/ `InputDriven`（输入归属） | [`crate::timeline`] |
-//! | `EnemyBrain` / `Intent` | [`crate::ai`] |
+//! | `EnemyBrain` / `Tactic` | [`crate::ai`] |
 //! | `ChunkLoader` | [`crate::world`] |
 //! | 模型 / 相机 / 装饰 / 日志 | [`crate::presentation`] |
 //!

@@ -5,14 +5,14 @@ use bevy::prelude::*;
 /// 敌人决策参数。
 ///
 /// 无回合模型下敌人靠自己的节奏决策：决策槽一空
-/// （[`DecisionSlot::Empty`](crate::timeline::DecisionSlot::Empty)）就选一个意图。
+/// （[`DecisionSlot::Empty`](crate::timeline::DecisionSlot::Empty)）就选一个战术。
 /// 「射程」不在这里——那是**武器**的属性（[`AttackRange`](crate::combat::AttackRange)）。
 ///
-/// **`#[require(Intent)]`**：两个 AI 系统都要求 `&mut Intent`，少了它 AI 会**静默地
+/// **`#[require(Tactic)]`**：两个 AI 系统都要求 `&mut Tactic`，少了它 AI 会**静默地
 /// 一行都不执行**（敌人站着不动）。用 `require` 声明这条依赖，组装层就不可能再漏。
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq)]
 #[reflect(Component)]
-#[require(Intent)]
+#[require(Tactic)]
 pub struct EnemyBrain {
     /// 超过这个距离（世界单位）就只想靠近
     pub engage_range: f32,
@@ -29,10 +29,13 @@ impl Default for EnemyBrain {
     }
 }
 
-/// 敌人本次决策选出的意图（HUD / 死亡复盘读它）。
+/// 敌人本次决策选出的**战术**（HUD / 死亡复盘读它）。
+///
+/// 战术只回答「打算干什么」，不回答「什么时候出手」——把它落到一手具体行动是下一层
+/// （`Situation` → `Tactic` → `Intent` → 行动实体，见 `docs/timeline.md` 第二节）。
 #[derive(Component, Reflect, Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[reflect(Component)]
-pub enum Intent {
+pub enum Tactic {
     /// 目标太远：按兵不动
     #[default]
     Idle,

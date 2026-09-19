@@ -16,7 +16,7 @@ use super::pointer::{
 ///
 /// 消息本身由**消费它们的领域**注册：`MoveCommand` → movement、
 /// `FireCommand` / `MeleeCommand` / 技能菜单消息 → combat、
-/// `PauseRequest` / `PlayerIntent` / `UseFocus` → timeline、
+/// `PauseRequest` / `PlayerTakeover` / `UseFocus` → timeline、
 /// `PointerCommand` → interaction、`PanCamera` / `ZoomCamera` → presentation、
 /// `ResetBattle` → spawn。
 /// 生产者只引用消息类型，不引用消费系统；因此单独装本插件会缺消息
@@ -42,7 +42,7 @@ impl Plugin for InputPlugin {
                 // 空格 = 暂停 / 继续；F5 = 重置战斗（都只写消息）
                 pause_input_system,
                 restart_input_system,
-                // Shift + 决策键 = 用 Focus 换前摇（只写意图，扣费在声明那一刻）
+                // Shift + 决策键 = 用 Focus 换前摇（只写请求，扣费在声明那一刻）
                 focus_intent_input_system,
                 camera_pan_input_system,
                 // 滚轮 → `ZoomCamera`（拉近 / 拉远）

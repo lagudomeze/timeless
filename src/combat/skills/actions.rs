@@ -19,7 +19,7 @@ use crate::combat::defense::Stamina;
 use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
 use crate::timeline::{
-    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
+    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, PendingFocus,
     ScheduledAction,
 };
 
@@ -126,7 +126,7 @@ pub fn declare_skill_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     mut focus: ResMut<Focus>,
-    intent: Res<FocusIntent>,
+    pending_focus: Res<PendingFocus>,
     mut fires: MessageReader<FireCommand>,
     mut melees: MessageReader<MeleeCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
@@ -149,7 +149,8 @@ pub fn declare_skill_system(
         .or_else(|| nearest_enemy_cell(&units, transform.translation, *faction))
         .unwrap_or(*cell);
     if melee {
-        let schedule = ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, intent.0);
+        let schedule =
+            ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, pending_focus.wants());
         declare_melee_at(
             &mut commands,
             player,
@@ -165,7 +166,7 @@ pub fn declare_skill_system(
             *cell,
             target_cell,
             FIREBALL_TIMING,
-            ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, intent.0),
+            ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, pending_focus.wants()),
         );
     }
 }

@@ -8,7 +8,7 @@
 //! 键盘 ─▶ input（翻译） ─▶ MoveCommand ─────────────────▶ movement 消费（声明移动）
 //!      │                ─▶ SelectSkill / UseSelectedSkill ▶ combat::skills 消费
 //!      │                ─▶ ParryCommand / RollCommand ────▶ combat::defense 消费
-//!      │                ─▶ PlayerIntent / UseFocus ────────▶ timeline 消费
+//!      │                ─▶ PlayerTakeover / UseFocus ────────▶ timeline 消费
 //!      │                ─▶ ResetBattle ────────────────────▶ spawn 消费（重置战斗）
 //!      └ 鼠标 ─▶ input（翻译） ─▶ PointerCommand ─▶ interaction 消费（解释成移动 / 技能 / 撤销）
 //!                            ─▶ ZoomCamera / PanCamera ─▶ presentation 消费
