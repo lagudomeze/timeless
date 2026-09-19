@@ -1,8 +1,12 @@
-//! 行动实体的调度数据：**谁**在**什么时候**执行，后摇多长，多难被打断。
+//! 行动实体的调度数据：**什么时候**执行，后摇多长，多难被打断。
 //!
 //! 调度器只认识这里的东西；「这行动是什么」由载荷组件决定（[`crate::movement::MoveAction`]、
 //! [`crate::combat::skills::FireballAction`]、[`crate::combat::skills::MeleeAction`]…），
 //! 调度器永远不读它们。
+//!
+//! **行动者不在这里**：行动实体是行动者的**子实体**（Bevy 的 `ChildOf` 关系），
+//! 「这条行动是谁的」由父子关系直接回答。父节点被销毁时子实体跟着销毁（`Children`
+//! 是 linked spawn），因此不存在"行动者死了、行动还在半空"这种孤儿状态。
 //!
 //! 无回合模型里没有「提交」这一步：声明时刻即前摇起点，
 //! `execute_at = declared_at + windup`；执行器只看 `now >= execute_at`。
@@ -16,8 +20,6 @@ use super::timing::ActionTiming;
 /// 行动实体的调度数据。
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct ScheduledAction {
-    /// 行动者（单位实体）
-    pub actor: Entity,
     /// 声明时刻（虚拟秒）
     pub declared_at: f32,
     /// 执行时刻（虚拟秒）
@@ -32,7 +34,6 @@ impl Default for ScheduledAction {
     /// 只为满足 BSN 模板约束而存在；真实值一律用 [`ScheduledAction::declared_at`] 构造。
     fn default() -> Self {
         Self {
-            actor: Entity::PLACEHOLDER,
             declared_at: 0.0,
             execute_at: f32::INFINITY,
             recovery: 0.0,
@@ -43,9 +44,8 @@ impl Default for ScheduledAction {
 
 impl ScheduledAction {
     /// 声明：按「现在 + 前摇」定下执行时刻。
-    pub fn declared_at(actor: Entity, timing: ActionTiming, now: f32) -> Self {
+    pub fn declared_at(timing: ActionTiming, now: f32) -> Self {
         Self {
-            actor,
             declared_at: now,
             execute_at: now + timing.windup,
             recovery: timing.recovery,
@@ -60,13 +60,12 @@ impl ScheduledAction {
     /// 执行器先跑）。这一帧延迟就是「瞬时生效」的全部代价：语义上它不算前摇，
     /// 因此谁也来不及在它落地前把它撤掉或打断。
     pub fn with_focus(
-        actor: Entity,
         timing: ActionTiming,
         now: f32,
         focus: &mut Focus,
         zero_windup: bool,
     ) -> Self {
-        let mut schedule = Self::declared_at(actor, timing, now);
+        let mut schedule = Self::declared_at(timing, now);
         if zero_windup && focus.spend() {
             schedule = schedule.with_zero_windup();
         }
@@ -117,7 +116,7 @@ mod tests {
 
     #[test]
     fn schedule_derives_everything_from_the_declaration_time() {
-        let schedule = ScheduledAction::declared_at(Entity::PLACEHOLDER, timing::MELEE, 2.0);
+        let schedule = ScheduledAction::declared_at(timing::MELEE, 2.0);
         assert!(
             (schedule.windup() - timing::MELEE.windup).abs() < 1e-5,
             "前摇 = execute_at - declared_at"
@@ -134,8 +133,7 @@ mod tests {
     #[test]
     fn focus_zeroes_the_windup_and_spends_a_point() {
         let mut focus = Focus::default();
-        let schedule =
-            ScheduledAction::with_focus(Entity::PLACEHOLDER, timing::SHOOT, 5.0, &mut focus, true);
+        let schedule = ScheduledAction::with_focus(timing::SHOOT, 5.0, &mut focus, true);
         assert_eq!(
             schedule.execute_at, 5.0,
             "用 Focus 换来的就是「现在就落地」"
@@ -147,8 +145,7 @@ mod tests {
     #[test]
     fn focus_is_not_spent_when_the_player_does_not_ask_for_it() {
         let mut focus = Focus::default();
-        let schedule =
-            ScheduledAction::with_focus(Entity::PLACEHOLDER, timing::SHOOT, 5.0, &mut focus, false);
+        let schedule = ScheduledAction::with_focus(timing::SHOOT, 5.0, &mut focus, false);
         assert!((schedule.windup() - timing::SHOOT.windup).abs() < 1e-5);
         assert_eq!(focus.current, crate::timeline::FOCUS_MAX);
     }
@@ -156,8 +153,7 @@ mod tests {
     #[test]
     fn an_empty_focus_pool_falls_back_to_the_normal_windup() {
         let mut focus = Focus { current: 0, max: 3 };
-        let schedule =
-            ScheduledAction::with_focus(Entity::PLACEHOLDER, timing::SHOOT, 5.0, &mut focus, true);
+        let schedule = ScheduledAction::with_focus(timing::SHOOT, 5.0, &mut focus, true);
         assert!(
             (schedule.windup() - timing::SHOOT.windup).abs() < 1e-5,
             "没有余量就只能排前摇"

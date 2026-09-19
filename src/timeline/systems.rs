@@ -77,29 +77,28 @@ pub fn undo_system(
     mut commands: Commands,
     mut requests: MessageReader<UndoCommand>,
     drivers: Query<(), With<InputDriven>>,
-    actions: Query<(Entity, &ScheduledAction), Without<Uncancellable>>,
+    actions: Query<(Entity, &ScheduledAction, &ChildOf), Without<Uncancellable>>,
     time: Res<Time<Virtual>>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
     let now = time.elapsed_secs();
-    for (entity, schedule) in &actions {
+    for (entity, schedule, child_of) in &actions {
+        // 行动者 = 父实体：归属由关系回答，不必在调度数据里再抄一份
+        let actor = child_of.parent();
         if !schedule.pending(now) {
             continue; // 本帧就要执行，来不及撤
         }
-        if drivers.get(schedule.actor).is_err() {
+        if drivers.get(actor).is_err() {
             continue; // AI 的行动只能被「打断」，不能被右键撤
         }
         // 先触发再销毁：Observer 当场跑，排在 despawn 之后就读不到载荷了
-        commands.trigger(ActionCancelled {
-            entity,
-            actor: schedule.actor,
-        });
+        commands.trigger(ActionCancelled { entity, actor });
         commands.entity(entity).despawn();
         // 行动者可能已经死了：往不存在的实体上写命令会让 Bevy 直接 panic
-        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(DecisionSlot::Empty);
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(DecisionSlot::Empty);
         }
         break; // 一次决策只有一条行动
     }
@@ -203,7 +202,7 @@ pub fn roll_3d5() -> i32 {
 pub fn interrupt_observer(
     trigger: On<InterruptEvent>,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction)>,
+    actions: Query<(Entity, &ScheduledAction, &ChildOf)>,
     mut commands: Commands,
 ) {
     let power = trigger.power;
@@ -213,9 +212,9 @@ pub fn interrupt_observer(
     let target = trigger.entity;
     let source = trigger.source;
     let now = time.elapsed_secs();
-    let Some((action, schedule)) = actions
+    let Some((action, schedule, _)) = actions
         .iter()
-        .find(|(_, schedule)| schedule.actor == target && schedule.pending(now))
+        .find(|(_, schedule, child_of)| child_of.parent() == target && schedule.pending(now))
     else {
         return; // 来不及：这一手已经落地，或者本来就没事可打断
     };
@@ -477,7 +476,10 @@ mod tests {
             .id();
         let action = app
             .world_mut()
-            .spawn(ScheduledAction::declared_at(player, timing::SHOOT, 0.0))
+            .spawn((
+                ChildOf(player),
+                ScheduledAction::declared_at(timing::SHOOT, 0.0),
+            ))
             .id();
 
         app.world_mut().write_message(UndoCommand);
@@ -510,7 +512,8 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
-                ScheduledAction::declared_at(player, timing::JUMP, 0.0),
+                ChildOf(player),
+                ScheduledAction::declared_at(timing::JUMP, 0.0),
                 Uncancellable,
             ))
             .id();
@@ -543,7 +546,10 @@ mod tests {
             .id();
         let action = app
             .world_mut()
-            .spawn(ScheduledAction::declared_at(player, timing::MOVE, 0.0))
+            .spawn((
+                ChildOf(player),
+                ScheduledAction::declared_at(timing::MOVE, 0.0),
+            ))
             .id();
 
         // 世界走了 1 秒：0.15s 的前摇早就过了
@@ -567,7 +573,10 @@ mod tests {
         let target = app.world_mut().spawn(DecisionSlot::Windup).id();
         let action = app
             .world_mut()
-            .spawn(ScheduledAction::declared_at(target, timing::MELEE, 0.0))
+            .spawn((
+                ChildOf(target),
+                ScheduledAction::declared_at(timing::MELEE, 0.0),
+            ))
             .id();
         let source = app.world_mut().spawn_empty().id();
 
@@ -605,7 +614,10 @@ mod tests {
         let target = app.world_mut().spawn(DecisionSlot::Windup).id();
         let action = app
             .world_mut()
-            .spawn(ScheduledAction::declared_at(target, timing::MOVE, 0.0))
+            .spawn((
+                ChildOf(target),
+                ScheduledAction::declared_at(timing::MOVE, 0.0),
+            ))
             .id();
         let source = app.world_mut().spawn_empty().id();
 

@@ -183,7 +183,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     Cell::new(cell.x + dx, cell.z + dz),
-                    ScheduledAction::declared_at(entity, timing::ROLL, now),
+                    ScheduledAction::declared_at(timing::ROLL, now),
                 );
             }
             Intent::Approach | Intent::Retreat => {
@@ -200,12 +200,17 @@ pub fn enemy_declare_system(
                     continue;
                 }
                 let to_cell = Cell::new(cell.x + dx, cell.z + dz);
-                commands.spawn_scene(move_action_scene(
-                    *cell,
-                    to_cell,
-                    ScheduledAction::declared_at(entity, timing::MOVE, now),
-                ));
-                commands.entity(entity).insert(DecisionSlot::Windup);
+                let action = commands
+                    .spawn_scene(move_action_scene(
+                        *cell,
+                        to_cell,
+                        ScheduledAction::declared_at(timing::MOVE, now),
+                    ))
+                    .id();
+                commands
+                    .entity(entity)
+                    .add_child(action)
+                    .insert(DecisionSlot::Windup);
             }
             Intent::Melee => {
                 declare_melee_at(
@@ -213,7 +218,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     target.map(|(_, cell)| cell).unwrap_or(*cell),
-                    ScheduledAction::declared_at(entity, timing::MELEE, now),
+                    ScheduledAction::declared_at(timing::MELEE, now),
                 );
             }
             Intent::Shoot => {
@@ -225,7 +230,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     target_cell,
-                    ScheduledAction::declared_at(entity, timing::SHOOT, now),
+                    ScheduledAction::declared_at(timing::SHOOT, now),
                 );
             }
         }
@@ -348,7 +353,8 @@ mod tests {
 
         // 一发「正在前摇」的攻击把敌人脚下的格写进威胁 → 意图变成 Dodge
         app.world_mut().spawn((
-            ScheduledAction::declared_at(player, timing::MELEE, 0.0),
+            ChildOf(player),
+            ScheduledAction::declared_at(timing::MELEE, 0.0),
             Threatens {
                 cells: vec![enemy_cell],
             },
@@ -362,7 +368,7 @@ mod tests {
             .collect();
         assert_eq!(rolls.len(), 1, "敌人应当自己声明一条翻滚");
         assert_eq!(
-            app.world().get::<ScheduledAction>(rolls[0]).unwrap().actor,
+            app.world().get::<ChildOf>(rolls[0]).unwrap().parent(),
             enemy,
             "行动必须挂在敌人自己身上"
         );

@@ -64,7 +64,11 @@ pub fn declare_roll(
             from_cell, to_cell, schedule,
         ))
         .id();
-    commands.entity(actor).insert(DecisionSlot::Windup);
+    // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
+    commands
+        .entity(actor)
+        .add_child(action)
+        .insert(DecisionSlot::Windup);
     action
 }
 
@@ -106,13 +110,8 @@ pub fn declare_roll_system(
             .iter()
             .map(|(other, faction)| (other.translation, *faction)),
     );
-    let schedule = ScheduledAction::with_focus(
-        entity,
-        crate::timeline::timing::ROLL,
-        now,
-        &mut focus,
-        intent.0,
-    );
+    let schedule =
+        ScheduledAction::with_focus(crate::timeline::timing::ROLL, now, &mut focus, intent.0);
     declare_roll(
         &mut commands,
         entity,
@@ -132,21 +131,27 @@ pub fn declare_roll_system(
 pub fn roll_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &crate::movement::RollAction, &ScheduledAction)>,
+    actions: Query<(
+        Entity,
+        &crate::movement::RollAction,
+        &ScheduledAction,
+        &ChildOf,
+    )>,
     mut actors: Query<(&mut Velocity, &mut Stamina, &Transform), With<Cell>>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, roll, schedule) in &actions {
+    for (entity, roll, schedule, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
+        let actor = child_of.parent();
         let mut effect_delay = 0.0;
-        if let Ok((mut velocity, mut stamina, transform)) = actors.get_mut(schedule.actor) {
+        if let Ok((mut velocity, mut stamina, transform)) = actors.get_mut(actor) {
             stamina.try_spend(ROLL_COST);
             let to_goal = roll.to_cell.center() - transform.translation.xz();
             velocity.0 = ground_direction(to_goal) * ROLL_SPEED;
             effect_delay = to_goal.length() / ROLL_SPEED;
-            commands.entity(schedule.actor).insert((
+            commands.entity(actor).insert((
                 crate::movement::MoveGoal { cell: roll.to_cell },
                 crate::movement::DodgingOnArrival {
                     expires_at: now + DODGE_SECS,
@@ -155,8 +160,8 @@ pub fn roll_executor_system(
         }
         let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
         commands.entity(entity).despawn();
-        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(recovery);
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(recovery);
         }
     }
 }
@@ -201,43 +206,44 @@ pub fn declare_parry_system(
     };
 
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(
-        player,
-        crate::timeline::timing::PARRY,
-        now,
-        &mut focus,
-        intent.0,
-    );
-    commands.spawn_scene(crate::combat::defense::parry_action_scene(
-        target_attack,
-        schedule,
-    ));
-    commands.entity(player).insert(DecisionSlot::Windup);
+    let schedule =
+        ScheduledAction::with_focus(crate::timeline::timing::PARRY, now, &mut focus, intent.0);
+    let action = commands
+        .spawn_scene(crate::combat::defense::parry_action_scene(
+            target_attack,
+            schedule,
+        ))
+        .id();
+    commands
+        .entity(player)
+        .add_child(action)
+        .insert(DecisionSlot::Windup);
 }
 
 /// 执行招架：给行动者挂 [`Parrying`]，绑定被挡的那次攻击。
 pub fn parry_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ParryAction, &ScheduledAction)>,
+    actions: Query<(Entity, &ParryAction, &ScheduledAction, &ChildOf)>,
     mut actors: Query<&mut Stamina>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, parry, schedule) in &actions {
+    for (entity, parry, schedule, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        if let Ok(mut stamina) = actors.get_mut(schedule.actor) {
+        let actor = child_of.parent();
+        if let Ok(mut stamina) = actors.get_mut(actor) {
             stamina.try_spend(PARRY_COST);
-            commands.entity(schedule.actor).insert(Parrying {
+            commands.entity(actor).insert(Parrying {
                 target_attack: parry.target_attack,
                 expires_at: now + PARRY_SECS,
             });
         }
         let recovery = DecisionSlot::recovering(schedule, now, 0.0);
         commands.entity(entity).despawn();
-        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(recovery);
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(recovery);
         }
     }
 }
@@ -280,9 +286,9 @@ mod tests {
         assert_eq!(rolls.len(), 1, "一次按键只该产生一条翻滚");
         let actor = app
             .world()
-            .get::<ScheduledAction>(rolls[0])
-            .expect("行动实体应当带调度数据")
-            .actor;
+            .get::<ChildOf>(rolls[0])
+            .expect("行动实体应当是行动者的子实体")
+            .parent();
         assert_eq!(actor, player, "翻滚必须挂在玩家身上");
         assert_ne!(actor, enemy, "敌人的决策槽不该被玩家的按键消耗");
     }

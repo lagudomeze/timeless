@@ -10,7 +10,6 @@ use bevy::prelude::*;
 
 use crate::combat::{Collidable, Faction, Projectile};
 use crate::presentation::UnitSprites;
-use crate::timeline::ScheduledAction;
 use crate::world::TerrainConfig;
 
 use super::enemy::enemy_scene;
@@ -20,19 +19,13 @@ use super::player::player_scene;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ResetBattle;
 
-/// 清场目标：单位（`Faction` / `Collidable`）、攻击实体（`Projectile`）
-/// 与时间线上没执行的行动（`ScheduledAction`）。
-type ResetQuery<'w, 's> = Query<
-    'w,
-    's,
-    Entity,
-    Or<(
-        With<Faction>,
-        With<Projectile>,
-        With<Collidable>,
-        With<ScheduledAction>,
-    )>,
->;
+/// 清场目标：单位（`Faction` / `Collidable`）与攻击实体（`Projectile`）。
+///
+/// 时间线上没执行的行动**不用单独列**：它们是行动者的子实体，人没了行动跟着没
+/// （`Children` 是 linked spawn）。反过来若把 `With<ScheduledAction>` 也写进来，
+/// 同一个实体就会被 despawn 两次。
+type ResetQuery<'w, 's> =
+    Query<'w, 's, Entity, Or<(With<Faction>, With<Projectile>, With<Collidable>)>>;
 
 /// 清掉所有单位与攻击实体，再用同一组工厂重建：状态自然回到初始值。
 ///

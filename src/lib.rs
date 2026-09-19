@@ -946,7 +946,8 @@ mod tests {
         let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
         // 敌人正在前摇、且瞄着玩家脚下的格
         app.world_mut().spawn((
-            ScheduledAction::declared_at(enemy, timing::SHOOT, 0.0),
+            ChildOf(enemy),
+            ScheduledAction::declared_at(timing::SHOOT, 0.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
             },
@@ -987,7 +988,10 @@ mod tests {
         let enemy = spawn_enemy(&mut app, Cell::new(0, 0), Vec3::new(0.0, 0.0, 0.0));
         let action = app
             .world_mut()
-            .spawn(ScheduledAction::declared_at(enemy, timing::SHOOT, 0.0))
+            .spawn((
+                ChildOf(enemy),
+                ScheduledAction::declared_at(timing::SHOOT, 0.0),
+            ))
             .id();
         // 玩家抡过来的横扫：力度 100 → 掷骰对抗必赢
         app.world_mut().spawn((
@@ -1024,11 +1028,11 @@ mod tests {
         let mut app = test_app();
         let target = spawn_enemy(&mut app, Cell::new(0, 0), Vec3::new(0.0, 0.0, 0.0));
         // 声明于 -1.0s 的行动：它在「现在」早就到点了
-        let schedule = ScheduledAction::declared_at(target, timing::MOVE, -1.0);
+        let schedule = ScheduledAction::declared_at(timing::MOVE, -1.0);
         assert!(!schedule.pending(0.0), "这条行动应当已经到点");
         let action = app
             .world_mut()
-            .spawn((schedule, MoveAction::default()))
+            .spawn((ChildOf(target), schedule, MoveAction::default()))
             .id();
         let source = app.world_mut().spawn_empty().id();
 
@@ -1053,12 +1057,17 @@ mod tests {
         let enemy = spawn_enemy(&mut app, Cell::new(4, 0), Vec3::new(9.0, 0.0, 1.0));
 
         // 一条「立刻落地」的火球行动：射手这一帧就出手
-        let schedule = ScheduledAction::declared_at(player, timing::SHOOT, 0.0).with_zero_windup();
-        let _ = app.world_mut().spawn_scene(fireball_action_scene(
-            Cell::new(0, 0),
-            Cell::new(4, 0),
-            schedule,
-        ));
+        let schedule = ScheduledAction::declared_at(timing::SHOOT, 0.0).with_zero_windup();
+        let action = app
+            .world_mut()
+            .spawn_scene(fireball_action_scene(
+                Cell::new(0, 0),
+                Cell::new(4, 0),
+                schedule,
+            ))
+            .expect("火球行动场景应当能实例化")
+            .id();
+        app.world_mut().entity_mut(action).insert(ChildOf(player));
         app.world_mut()
             .entity_mut(player)
             .insert(DecisionSlot::Windup);
@@ -1108,6 +1117,40 @@ mod tests {
         assert!(
             app.world().get_entity(victim).is_err(),
             "生命归零的实体应当被销毁"
+        );
+    }
+
+    /// 阵亡的行动者不会留下孤儿行动：没落地的行动是它的**子实体**，跟着一起走。
+    ///
+    /// 这条守着 `ChildOf` 带来的结构性保证——旧模型里"人死了、那一手还在时间线上"
+    /// 要靠收尾处的 `get_entity` 守卫兜住，现在它压根构造不出来。
+    #[test]
+    fn a_dead_actor_takes_its_pending_action_with_it() {
+        let mut app = test_app();
+        let enemy = spawn_enemy(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let action = app
+            .world_mut()
+            .spawn((
+                ChildOf(enemy),
+                ScheduledAction::declared_at(timing::SHOOT, 0.0),
+                FireballAction::default(),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(enemy)
+            .insert(DecisionSlot::Windup);
+
+        app.world_mut().write_message(DamageEvent {
+            source: None,
+            target: enemy,
+            amount: 999,
+        });
+        app.update(); // 扣血 → DeathEvent → despawn_dead
+
+        assert!(app.world().get_entity(enemy).is_err(), "致命伤应当销毁敌人");
+        assert!(
+            app.world().get_entity(action).is_err(),
+            "行动是行动者的子实体：人没了，那一手也不该留在时间线上"
         );
     }
 

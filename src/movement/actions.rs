@@ -130,9 +130,14 @@ pub fn declare_move_system(
 
     let to_cell = Cell::new(cell.x + dx, cell.z + dz);
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(player, timing::MOVE, now, &mut focus, intent.0);
-    commands.spawn_scene(move_action_scene(*cell, to_cell, schedule));
-    commands.entity(player).insert(DecisionSlot::Windup);
+    let schedule = ScheduledAction::with_focus(timing::MOVE, now, &mut focus, intent.0);
+    let action = commands
+        .spawn_scene(move_action_scene(*cell, to_cell, schedule))
+        .id();
+    commands
+        .entity(player)
+        .add_child(action)
+        .insert(DecisionSlot::Windup);
 }
 
 /// 声明移动（点地板）：`MoveToCommand` → 朝目标格走**一条直线**的行动。
@@ -163,9 +168,14 @@ pub fn declare_move_to_system(
         return; // 点自己脚下：不浪费一次决策
     }
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(player, timing::MOVE, now, &mut focus, intent.0);
-    commands.spawn_scene(move_action_scene(*cell, target, schedule));
-    commands.entity(player).insert(DecisionSlot::Windup);
+    let schedule = ScheduledAction::with_focus(timing::MOVE, now, &mut focus, intent.0);
+    let action = commands
+        .spawn_scene(move_action_scene(*cell, target, schedule))
+        .id();
+    commands
+        .entity(player)
+        .add_child(action)
+        .insert(DecisionSlot::Windup);
 }
 
 /// 执行：到点的移动行动 → 朝**目标格中心**设速度，到位后由 `move_entities_system` 停下。
@@ -176,27 +186,28 @@ pub fn declare_move_to_system(
 pub fn move_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &MoveAction, &ScheduledAction)>,
+    actions: Query<(Entity, &MoveAction, &ScheduledAction, &ChildOf)>,
     mut actors: Query<(&Cell, &MoveSpeed, &mut Velocity, &Transform)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, action, schedule) in &actions {
+    for (entity, action, schedule, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
+        let actor = child_of.parent();
         let mut effect_delay = 0.0;
-        if let Ok((_, speed, mut velocity, transform)) = actors.get_mut(schedule.actor) {
+        if let Ok((_, speed, mut velocity, transform)) = actors.get_mut(actor) {
             let to_goal = action.to_cell.center() - transform.translation.xz();
             velocity.0 = ground_direction(to_goal) * speed.0;
             effect_delay = to_goal.length() / speed.0.max(f32::EPSILON);
-            commands.entity(schedule.actor).insert(MoveGoal {
+            commands.entity(actor).insert(MoveGoal {
                 cell: action.to_cell,
             });
         }
         let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
         commands.entity(entity).despawn();
-        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(recovery);
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(recovery);
         }
     }
 }
@@ -222,25 +233,29 @@ pub fn declare_jump_system(
         return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(player, timing::JUMP, now, &mut focus, intent.0);
-    commands.spawn_scene(jump_action_scene(schedule));
-    commands.entity(player).insert(DecisionSlot::Windup);
+    let schedule = ScheduledAction::with_focus(timing::JUMP, now, &mut focus, intent.0);
+    let action = commands.spawn_scene(jump_action_scene(schedule)).id();
+    commands
+        .entity(player)
+        .add_child(action)
+        .insert(DecisionSlot::Windup);
 }
 
 /// 执行：到点后给行动者一个向上初速度，剩下交给 [`jump_motion_system`]。
 pub fn jump_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &JumpAction)>,
+    actions: Query<(Entity, &ScheduledAction, &JumpAction, &ChildOf)>,
     actors: Query<&Transform>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, schedule, _) in &actions {
+    for (entity, schedule, _, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        if let Ok(transform) = actors.get(schedule.actor) {
-            commands.entity(schedule.actor).insert(Jumping {
+        let actor = child_of.parent();
+        if let Ok(transform) = actors.get(actor) {
+            commands.entity(actor).insert(Jumping {
                 ground_y: transform.translation.y,
                 velocity: JUMP_SPEED,
             });
@@ -248,8 +263,8 @@ pub fn jump_action_executor_system(
         // 后摇（0.60s）覆盖整条弹道：落地那一刻才重新可决策
         let recovery = DecisionSlot::recovering(schedule, now, 0.0);
         commands.entity(entity).despawn();
-        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(recovery);
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(recovery);
         }
     }
 }
@@ -347,12 +362,13 @@ mod tests {
             ))
             .id();
         app.world_mut().spawn((
+            ChildOf(actor),
             MoveAction {
                 from_cell: Cell::new(0, 0),
                 to_cell: Cell::new(0, 1),
             },
             // 声明于 -1s：这条行动在"现在"已经到点了，执行器这一帧就该处理它
-            ScheduledAction::declared_at(actor, timing::MOVE, -1.0),
+            ScheduledAction::declared_at(timing::MOVE, -1.0),
         ));
 
         app.update();
@@ -374,9 +390,13 @@ mod tests {
         );
     }
 
-    /// 同帧阵亡的行动者：收尾不能 panic（历史 bug：命令应用阶段直接崩进程）。
+    /// 行动者阵亡 = 那条还没落地的行动跟着消失。
+    ///
+    /// 这条取代了旧的「行动者没了、执行器别 panic」：有了父子关系，
+    /// "行动者死了但行动还在时间线上"这种状态在**结构上**就不存在了，
+    /// 收尾里的 `get_entity` 守卫于是只防意外，不再是必经路径。
     #[test]
-    fn finishing_an_action_for_a_dead_actor_is_safe() {
+    fn an_action_dies_with_its_actor() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_systems(Update, move_action_executor_system);
@@ -384,18 +404,20 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
+                ChildOf(actor),
                 MoveAction::default(),
-                // 声明于 -1s：立刻可执行（这条测试只关心收尾窗口有多长）
-                ScheduledAction::declared_at(actor, timing::MOVE, -1.0),
+                // 声明于 -1s：如果没有跟着销毁，这一帧就会被执行
+                ScheduledAction::declared_at(timing::MOVE, -1.0),
             ))
             .id();
-        app.world_mut().entity_mut(actor).despawn();
 
-        app.update(); // 没守住 `get_entity` 的话，这一步就 panic
+        app.world_mut().entity_mut(actor).despawn();
 
         assert!(
             app.world().get_entity(action).is_err(),
-            "行动实体照常销毁，行动者没了也不该崩"
+            "行动者是行动实体的父节点：父节点销毁，行动跟着销毁"
         );
+
+        app.update(); // 没了行动，执行器这一帧什么也不该做（更不该 panic）
     }
 }

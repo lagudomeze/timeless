@@ -205,13 +205,8 @@ pub fn declare_fireball_system(
 
     stamina.try_spend(FIREBALL_COST);
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(
-        player,
-        crate::timeline::timing::SHOOT,
-        now,
-        &mut focus,
-        intent.0,
-    );
+    let schedule =
+        ScheduledAction::with_focus(crate::timeline::timing::SHOOT, now, &mut focus, intent.0);
     declare_fireball_at(&mut commands, player, *cell, target_cell, schedule);
 }
 
@@ -248,13 +243,8 @@ pub fn declare_melee_system(
         .map(|(target, _)| Cell::from_world(target.translation))
         .unwrap_or(*cell);
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(
-        player,
-        crate::timeline::timing::MELEE,
-        now,
-        &mut focus,
-        intent.0,
-    );
+    let schedule =
+        ScheduledAction::with_focus(crate::timeline::timing::MELEE, now, &mut focus, intent.0);
     super::actions::declare_melee_at(&mut commands, player, *cell, target_cell, schedule);
 }
 
@@ -274,7 +264,11 @@ pub fn declare_fireball_at(
     let action = commands
         .spawn_scene(fireball_action_scene(from_cell, target_cell, schedule))
         .id();
-    commands.entity(actor).insert(DecisionSlot::Windup);
+    // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
+    commands
+        .entity(actor)
+        .add_child(action)
+        .insert(DecisionSlot::Windup);
     action
 }
 
@@ -286,17 +280,18 @@ pub fn declare_fireball_at(
 pub fn fireball_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &FireballAction)>,
+    actions: Query<(Entity, &ScheduledAction, &FireballAction, &ChildOf)>,
     actors: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, schedule, action) in &actions {
+    for (entity, schedule, action, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
+        let actor = child_of.parent();
         let mut effect_delay = 0.0;
         // 发射：从行动者**当前位置**朝锁定的格扔出投射物
-        if let Ok((transform, faction)) = actors.get(schedule.actor) {
+        if let Ok((transform, faction)) = actors.get(actor) {
             let origin = Vec3::new(
                 transform.translation.x,
                 transform.translation.y + SHOOT_HEIGHT,
@@ -307,8 +302,8 @@ pub fn fireball_action_executor_system(
         }
         let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
         commands.entity(entity).despawn();
-        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(recovery);
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(recovery);
         }
     }
 }

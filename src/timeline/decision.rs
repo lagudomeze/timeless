@@ -77,7 +77,7 @@ mod tests {
     /// 后摇取「一个后摇」与「效果还要多久」里更晚的那个。
     #[test]
     fn the_recovery_window_ends_at_the_later_of_effect_and_recovery() {
-        let schedule = ScheduledAction::declared_at(Entity::PLACEHOLDER, timing::MOVE, 0.0);
+        let schedule = ScheduledAction::declared_at(timing::MOVE, 0.0);
 
         // 效果比后摇晚（移动 / 火球）：忙到效果真的发生
         assert_eq!(

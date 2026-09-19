@@ -42,7 +42,7 @@ fn slot(faction: Faction) -> usize {
 pub fn update_action_labels_system(
     now: Res<Time<Virtual>>,
     units: Query<(Entity, &Faction)>,
-    actions: Query<(Entity, &ScheduledAction)>,
+    actions: Query<(Entity, &ScheduledAction, &ChildOf)>,
     movements: Query<&MoveAction>,
     jumps: Query<&JumpAction>,
     rolls: Query<&RollAction>,
@@ -87,7 +87,7 @@ fn action_text(
     faction: Faction,
     now: f32,
     units: &Query<(Entity, &Faction)>,
-    actions: &Query<(Entity, &ScheduledAction)>,
+    actions: &Query<(Entity, &ScheduledAction, &ChildOf)>,
     movements: &Query<&MoveAction>,
     jumps: &Query<&JumpAction>,
     rolls: &Query<&RollAction>,
@@ -103,7 +103,10 @@ fn action_text(
     else {
         return "down".to_string();
     };
-    let Some((action, schedule)) = actions.iter().find(|(_, schedule)| schedule.actor == actor)
+    // 行动者 = 行动实体的父节点
+    let Some((action, schedule, _)) = actions
+        .iter()
+        .find(|(_, _, child_of)| child_of.parent() == actor)
     else {
         return "act: -".to_string();
     };
@@ -196,8 +199,9 @@ mod tests {
         let action = app
             .world_mut()
             .spawn((
+                ChildOf(player),
                 MoveAction::default(),
-                ScheduledAction::declared_at(player, timing::MOVE, 0.0),
+                ScheduledAction::declared_at(timing::MOVE, 0.0),
             ))
             .id();
 
@@ -243,8 +247,9 @@ mod tests {
         );
 
         app.world_mut().spawn((
+            ChildOf(player),
             JumpAction,
-            ScheduledAction::declared_at(player, timing::JUMP, 0.0),
+            ScheduledAction::declared_at(timing::JUMP, 0.0),
         ));
         app.update();
         assert_eq!(

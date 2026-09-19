@@ -503,7 +503,7 @@ pub fn update_timeline_system(
     now: Res<Time<Virtual>>,
     actors: Query<(Entity, &Faction)>,
     slots: Query<&DecisionSlot>,
-    actions: Query<&ScheduledAction>,
+    actions: Query<(&ScheduledAction, &ChildOf)>,
     mut cache: ResMut<HudCache>,
     mut states: StateTextQuery<'_, '_>,
     mut lane_labels: LaneLabelQuery<'_, '_>,
@@ -536,10 +536,10 @@ pub fn update_timeline_system(
     // 2. 每个单位只画自己那一行：行动色块 = 这段"被占住"的时间（从声明时刻长出去）
     let now_seconds = now.elapsed_secs();
     let mut lanes: Vec<Vec<TimelineSlot>> = vec![Vec::new(); LANE_POOL];
-    for schedule in &actions {
+    for (schedule, child_of) in &actions {
         let Some(lane) = lane_actor
             .iter()
-            .position(|actor| *actor == Some(schedule.actor))
+            .position(|actor| *actor == Some(child_of.parent()))
         else {
             continue; // 行动者不在花名册里（刚销毁 / 还没组装）
         };
@@ -821,10 +821,9 @@ mod tests {
             .collect();
         // 敌人先声明（0.5s），玩家后声明（2.0s）
         for (actor, declared_at) in [(enemy, 0.5), (player, 2.0)] {
-            app.world_mut().spawn(ScheduledAction::declared_at(
-                actor,
-                timing::MOVE,
-                declared_at,
+            app.world_mut().spawn((
+                ChildOf(actor),
+                ScheduledAction::declared_at(timing::MOVE, declared_at),
             ));
         }
 
@@ -909,8 +908,10 @@ mod tests {
         );
         assert_eq!(display(&app, block), Display::None, "没排期就不占横轴");
 
-        app.world_mut()
-            .spawn(ScheduledAction::declared_at(player, timing::MOVE, 0.0));
+        app.world_mut().spawn((
+            ChildOf(player),
+            ScheduledAction::declared_at(timing::MOVE, 0.0),
+        ));
         app.world_mut()
             .entity_mut(player)
             .insert(DecisionSlot::Windup);
@@ -957,8 +958,10 @@ mod tests {
             "冻结且队列没变时不该重写"
         );
 
-        app.world_mut()
-            .spawn(ScheduledAction::declared_at(player, timing::MOVE, 0.5));
+        app.world_mut().spawn((
+            ChildOf(player),
+            ScheduledAction::declared_at(timing::MOVE, 0.5),
+        ));
         app.update();
         assert_eq!(
             app.world().get::<Node>(block).unwrap().display,
@@ -987,7 +990,10 @@ mod tests {
             .id();
         let action = app
             .world_mut()
-            .spawn(ScheduledAction::declared_at(player, timing::MOVE, 0.5))
+            .spawn((
+                ChildOf(player),
+                ScheduledAction::declared_at(timing::MOVE, 0.5),
+            ))
             .id();
 
         app.update();

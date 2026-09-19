@@ -133,13 +133,8 @@ pub fn declare_skill_system(
         .or_else(|| nearest_enemy_cell(&units, transform.translation, *faction))
         .unwrap_or(*cell);
     if melee {
-        let schedule = ScheduledAction::with_focus(
-            player,
-            crate::timeline::timing::MELEE,
-            now,
-            &mut focus,
-            intent.0,
-        );
+        let schedule =
+            ScheduledAction::with_focus(crate::timeline::timing::MELEE, now, &mut focus, intent.0);
         declare_melee_at(&mut commands, player, *cell, target_cell, schedule);
     } else {
         crate::combat::skills::declare_fireball_at(
@@ -147,13 +142,7 @@ pub fn declare_skill_system(
             player,
             *cell,
             target_cell,
-            ScheduledAction::with_focus(
-                player,
-                crate::timeline::timing::SHOOT,
-                now,
-                &mut focus,
-                intent.0,
-            ),
+            ScheduledAction::with_focus(crate::timeline::timing::SHOOT, now, &mut focus, intent.0),
         );
     }
 }
@@ -169,7 +158,11 @@ pub fn declare_melee_at(
     let action = commands
         .spawn_scene(melee_action_scene(from_cell, target_cell, schedule))
         .id();
-    commands.entity(actor).insert(DecisionSlot::Windup);
+    // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
+    commands
+        .entity(actor)
+        .add_child(action)
+        .insert(DecisionSlot::Windup);
     action
 }
 
@@ -180,16 +173,17 @@ pub fn declare_melee_at(
 pub fn shoot_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &ShootAction)>,
+    actions: Query<(Entity, &ScheduledAction, &ShootAction, &ChildOf)>,
     units: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, schedule, _) in &actions {
+    for (entity, schedule, _, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
+        let actor = child_of.parent();
         let mut effect_delay = 0.0;
-        if let Ok((transform, faction)) = units.get(schedule.actor) {
+        if let Ok((transform, faction)) = units.get(actor) {
             let origin = transform.translation;
             let faction = *faction;
             if let Some(target) = nearest_enemy_cell(&units, origin, faction) {
@@ -202,8 +196,8 @@ pub fn shoot_action_executor_system(
         }
         let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
         commands.entity(entity).despawn();
-        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(recovery);
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(recovery);
         }
     }
 }
@@ -212,15 +206,16 @@ pub fn shoot_action_executor_system(
 pub fn melee_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &MeleeAction)>,
+    actions: Query<(Entity, &ScheduledAction, &MeleeAction, &ChildOf)>,
     units: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, schedule, _) in &actions {
+    for (entity, schedule, _, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
-        if let Ok((transform, faction)) = units.get(schedule.actor) {
+        let actor = child_of.parent();
+        if let Ok((transform, faction)) = units.get(actor) {
             let origin = transform.translation;
             let faction = *faction;
             if let Some(target) = nearest_enemy_cell(&units, origin, faction) {
@@ -232,8 +227,8 @@ pub fn melee_action_executor_system(
         }
         let recovery = DecisionSlot::recovering(schedule, now, 0.0);
         commands.entity(entity).despawn();
-        if let Ok(mut actor) = commands.get_entity(schedule.actor) {
-            actor.insert(recovery);
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(recovery);
         }
     }
 }
