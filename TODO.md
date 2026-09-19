@@ -274,14 +274,29 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `PendingFocus`（+ `track_pending_focus_system`、`tactic_label`），顺带修掉
       `src/` 里 5 处多了一层 `..` 的文档链接。**行为不变**（纯改名，编译器全程把关）。
       验收：182 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过。
+> **顺序调整**：`Intent { ability: AbilityId, target: Target }` 里的 `AbilityId` 恰好是
+> M24 的产物，所以**目录先立、槽再引用它**（D2 的答案已经蕴含这一点）。
+> M24 拆成两块：**M24a 静态目录**（已落地，纯增量）与 **M24b `can_cast` + 菜单迁移**。
+
+- [x] **M24a `skills` 顶层域 + 静态目录（D2）**（本次）：`src/skills/` 立起来——
+      `AbilityId` / `AbilityCategory` / `AbilityDef` / `CombatTags` / `TargetSelector`、
+      `SkillRegistry` + `RegisterAbility`（各域在 `Startup` 交定义，目录每帧并进；
+      重复注册按 id 覆盖且**不动菜单顺序**）。`movement` 交 `Move`/`Jump`/`Roll`、
+      `combat` 交 `Melee`/`Shoot`/`Fireball`/`Parry`——**数值仍归各域**，目录只聚合。
+      两条纪律写进了代码：`AbilityDef` 里不许有 `Entity`/闭包（否则 `.ron` 这条路断掉）、
+      **没有全局派发器**（谁声明谁物化）。
+      踩到一个接线坑，值得记：只装 `MovementPlugin` 或 `CombatPlugin` 的单测会因为没有
+      `Messages<RegisterAbility>` 直接 panic；解法是让**写方插件自己补上 `SkillPlugin`**
+      （它确实依赖目录），而不是让读方到处 `Option<MessageWriter>` 兜底。
+      **行为不变**（旧的 `SKILLS` 菜单暂时留着，M24b 再迁）。
+      验收：193 测试全绿（191 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过 /
+      `cargo run` 无 panic。
+- [ ] **M24b `can_cast` + 菜单迁移**：`Requirement` 一族 + `can_cast` 收成唯一的条件校验点
+      （落在填意图之前）；菜单 / HUD 改读目录，删掉 `combat::skills::registry` 的 `SKILLS`。
 - [ ] **M23 意图式决策槽**（最大的一步）：槽换形状（`Idle { intent }` / `Executing { until }`）、
       声明系统改成**填意图 + 当场物化**（**各域自己物化，不做全局派发器**）、
       按上面 ①→④ 的顺序落一帧、`"slot_empty"` 改名 `"awaiting"`。
       执行器 / `ScheduledAction` / `ActionTiming` / 暂停机制**都不动**。
-- [ ] **M24 `skills` 抽成顶层域（D2）+ `AbilityDef` + `can_cast`**：把 `SKILLS` 扩成
-      静态可序列化的 `AbilityDef`（加 `requirements` / `category` / `combat` / `counter`），
-      各域用 `RegisterAbility` 交定义，条件校验收成 `can_cast` 一处（落在填意图之前），
-      **移动 / 跳跃 / 翻滚与战斗技能走同一条路**。
 - [ ] **M25 对抗标签 + 格挡**：`CombatTags` 闸门（含霸体）+ 防御链补格挡
       （格挡率来自装备 / 姿态 `BlockChance`）；**保留**掷骰对抗 `interrupt_lands`。
 - [ ] **M26 反应槽 + 反制（D4）**：`ReactionSlot` 取代 `ThreatWindow`（**顺带修掉

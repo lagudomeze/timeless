@@ -9,8 +9,12 @@
 //! - **箭矢**：碰撞（`CollisionTarget` + `HitRadius`），追踪最近敌人；
 //! - **火球**：锁目标格飞行，到达后按**真实距离**结算 AoE（[`explosion`]）。
 //!
-//! 技能菜单（[`menu`]）与注册表（[`registry`]）也住在这里：技能是战斗领域的概念。
+//! 本域装的是**战斗技能的行动**（载荷 + 工厂 + 执行器）与它们的静态定义
+//! （[`abilities`]）；目录本身归 [`crate::skills`]，菜单（[`menu`]）留在这里。
+//!
+//! ⚠️ 待办：把 `registry`（旧的 `SKILLS` 表）并进技能目录，见 `TODO.md` M24。
 
+pub mod abilities;
 pub mod actions;
 pub mod arrow;
 pub mod events;
@@ -20,6 +24,10 @@ pub mod melee;
 pub mod menu;
 pub mod registry;
 
+pub use abilities::{
+    ABILITIES as COMBAT_ABILITIES, FIREBALL_ABILITY, MELEE_ABILITY, PARRY_ABILITY, SHOOT_ABILITY,
+    register_abilities_system as register_combat_abilities_system,
+};
 pub use actions::{
     ARROW_TIMING, MELEE_CANCEL_PENALTY, MELEE_TIMING, MeleeAction, ShootAction, declare_melee_at,
     declare_skill_system, melee_action_executor_system, melee_action_scene, refund_melee_observer,

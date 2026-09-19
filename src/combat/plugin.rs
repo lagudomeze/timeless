@@ -20,7 +20,7 @@ use super::skills::{
     UseSelectedSkill, cycle_skill_system, declare_fireball_system, declare_melee_system,
     explosion_system, fireball_action_executor_system, melee_action_executor_system,
     projectile_arrival_system, refund_fireball_observer, refund_melee_observer,
-    select_skill_system, use_selected_skill_system,
+    register_combat_abilities_system, select_skill_system, use_selected_skill_system,
 };
 use super::targeting::{detect_collisions_system, detect_melee_system};
 
@@ -32,7 +32,14 @@ pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
+        // 本域的定义是**技能目录里的条目**，所以目录必须存在：缺了就补上，
+        // 否则「交上去」这一步无处可去（只装战斗域的单测也不会因此炸）。
+        if !app.is_plugin_added::<crate::skills::SkillPlugin>() {
+            app.add_plugins(crate::skills::SkillPlugin);
+        }
         app.init_resource::<MenuSelection>()
+            // 技能目录的静态数据在启动时交上去（数值仍归本域，见 `docs/skills.md`）
+            .add_systems(Startup, register_combat_abilities_system)
             // 反应窗口状态：威胁何时出现、玩家表态了没有
             .init_resource::<ThreatWindow>()
             .add_message::<DeathEvent>()

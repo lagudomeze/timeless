@@ -17,6 +17,7 @@
 
 use bevy::prelude::*;
 
+pub mod abilities;
 pub mod actions;
 pub mod cell;
 pub mod components;

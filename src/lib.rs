@@ -47,6 +47,7 @@ pub mod input;
 pub mod interaction;
 pub mod movement;
 pub mod presentation;
+pub mod skills;
 pub mod spawn;
 pub mod timeline;
 pub mod voxel_render;
@@ -58,6 +59,7 @@ pub use input::{InputPlugin, InputSet};
 pub use interaction::{InteractionPlugin, InteractionSet};
 pub use movement::{MovementPlugin, MovementSet};
 pub use presentation::{PreloadSet, PresentationPlugin, PresentationSet};
+pub use skills::SkillPlugin;
 pub use spawn::{AssemblySet, SpawnPlugin, SpawnSet};
 pub use timeline::{ClockSet, TimelinePlugin, TimelineSet};
 pub use voxel_render::{VoxelRenderPlugin, VoxelRenderSet};
@@ -180,6 +182,25 @@ mod tests {
         THREAT, UndoCommand,
     };
     use crate::world::{TerrainConfig, ground_position};
+
+    /// 技能目录必须在整机启动后就**齐了**：两个域各自在 `Startup` 把自己交上来，
+    /// 漏一个的症状是"某一手查不到定义"（HUD / `can_cast` / 反制建议都读它）。
+    #[test]
+    fn the_skill_catalogue_is_complete_after_assembly() {
+        use crate::skills::{AbilityId, SkillRegistry};
+
+        let mut app = test_app();
+        app.update();
+
+        let registry = app.world().resource::<SkillRegistry>();
+        for id in AbilityId::ALL {
+            assert!(
+                registry.get(id).is_some(),
+                "技能目录里缺 {}：某个域忘了在 Startup 注册",
+                id.label()
+            );
+        }
+    }
 
     /// 最小 App：装输入 / 时间线 / 战斗 / 移动领域，不启动渲染。
     ///
