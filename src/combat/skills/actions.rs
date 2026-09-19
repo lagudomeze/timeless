@@ -19,7 +19,7 @@ use crate::combat::defense::Stamina;
 use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
 use crate::timeline::{
-    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction, ready_actor,
 };
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
@@ -130,11 +130,9 @@ pub fn declare_skill_system(
     if request.is_none() && !melee {
         return;
     }
-    let Some((player, cell, _slot, transform, faction)) = players
-        .iter()
-        .find(|(_, _, slot, _, _)| **slot == DecisionSlot::Empty)
+    let Some((player, cell, _slot, transform, faction)) =
+        ready_actor(players.iter(), |(_, _, slot, _, _)| slot, &mut blocked)
     else {
-        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return;
     };
 

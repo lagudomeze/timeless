@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use crate::timeline::{
     ActionBlocked, ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
-    Uncancellable,
+    Uncancellable, ready_actor,
 };
 
 use super::cell::{Cell, MoveGoal};
@@ -141,13 +141,10 @@ pub fn declare_move_system(
     if (dx, dz) == (0, 0) {
         return;
     }
-    let Some((player, cell, _)) = players
-        .iter()
-        .find(|(_, _, slot)| **slot == DecisionSlot::Empty)
+    // 忙（前摇 / 后摇 / 位移中）或没有玩家时，ready_actor 会替 HUD 记下原因
+    let Some((player, cell, _)) = ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
     else {
-        // 静默丢弃是最差的手感：告诉 HUD"现在还动不了"
-        blocked.write(ActionBlocked::BUSY);
-        return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
+        return;
     };
 
     let to_cell = Cell::new(cell.x + dx, cell.z + dz);
@@ -179,11 +176,8 @@ pub fn declare_move_to_system(
     let Some(target) = requests.read().last().map(|request| request.cell) else {
         return;
     };
-    let Some((player, cell, _)) = players
-        .iter()
-        .find(|(_, _, slot)| **slot == DecisionSlot::Empty)
+    let Some((player, cell, _)) = ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
     else {
-        blocked.write(ActionBlocked::BUSY);
         return;
     };
     if *cell == target {
@@ -253,11 +247,7 @@ pub fn declare_jump_system(
     if requests.read().last().is_none() {
         return;
     }
-    let Some((player, _)) = players
-        .iter()
-        .find(|(_, slot)| **slot == DecisionSlot::Empty)
-    else {
-        blocked.write(ActionBlocked::BUSY);
+    let Some((player, _)) = ready_actor(players.iter(), |(_, slot)| slot, &mut blocked) else {
         return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
     let now = time.elapsed_secs();

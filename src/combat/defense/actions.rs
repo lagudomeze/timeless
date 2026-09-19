@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use crate::combat::Faction;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
 use crate::timeline::{
-    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction, ready_actor,
 };
 
 use super::components::{ParryAction, Parrying};
@@ -95,11 +95,9 @@ pub fn declare_roll_system(
     if requests.read().last().is_none() {
         return;
     }
-    let Some((entity, cell, stamina, _, transform)) = rollers
-        .iter()
-        .find(|(_, _, _, slot, _)| **slot == DecisionSlot::Empty)
+    let Some((entity, cell, stamina, _, transform)) =
+        ready_actor(rollers.iter(), |(_, _, _, slot, _)| slot, &mut blocked)
     else {
-        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return;
     };
     if !stamina.can_afford(ROLL_COST) {
@@ -190,11 +188,8 @@ pub fn declare_parry_system(
     if requests.read().last().is_none() {
         return;
     }
-    let Some((player, stamina, _)) = players
-        .iter()
-        .find(|(_, _, slot)| **slot == DecisionSlot::Empty)
+    let Some((player, stamina, _)) = ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
     else {
-        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return;
     };
     if !stamina.can_afford(PARRY_COST) {

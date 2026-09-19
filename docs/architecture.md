@@ -159,7 +159,7 @@ WorldSet ───────────────────────�
 | `InterruptEvent`（**EntityEvent**，住 `combat::formula`） | 命中系统 `apply_physical_hits_system` | `combat::formula::interrupt_observer`（判定与落地都在战斗域） |
 | `ActionCancelled`（**EntityEvent**） | `timeline::undo_system`（销毁行动之前 trigger） | 花钱的领域：`combat::skills`（火球退 2 收 2、近战收 1） |
 | `DecisionReady`（**EntityEvent**） | `timeline::recovery_system` | `combat::defense::recover_stamina_observer`（+1 精力） |
-| `ActionBlocked` | 各声明系统 | HUD 提示条 |
+| `ActionBlocked` | 各声明系统（经 `timeline::ready_actor`） | HUD 提示条 |
 | `ProjectileArrived` | `skills::projectile_arrival_system` | `skills::explosion_system` |
 | `DamageEvent` | 各伤害类型的命中系统（物理 / 爆炸） | `health::apply_damage_system`、战斗日志 |
 | `DeathEvent` | `apply_damage_system` | 战斗日志（销毁由 `despawn_dead_system` 直接看 `Health`） |

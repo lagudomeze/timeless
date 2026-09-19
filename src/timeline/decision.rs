@@ -14,15 +14,19 @@
 //! Empty ──声明（8 个声明系统）──▶ Windup ──执行器收尾──▶ Recovery { until }
 //!   ▲                              │                        │
 //!   │                              ├── 撤销（undo_system）──┤
-//!   │                              └── 打断（Observer）─────┤
+//!   │                              └── 打断（combat）───────┤
 //!   └──────────────── recovery_system（now >= until）───────┘
 //! ```
 //!
 //! 「谁在写槽」因此是穷举的、可审计的；不会出现「标记忘了摘」这类
 //! 状态与时间戳打架的 bug。
+//!
+//! **声明的入口只有 [`ready_actor`] 一个**：「槽必须是 `Empty`」这条判据与
+//! 「被拒时告诉 HUD 为什么」都写在那里，各领域不再各抄一份。
 
 use bevy::prelude::*;
 
+use super::events::ActionBlocked;
 use super::timing::ActionTiming;
 
 /// 行动者的决策槽状态机。
@@ -61,6 +65,35 @@ impl DecisionSlot {
     }
 }
 
+/// **占一个决策槽的唯一入口**：挑出那个现在能决策的行动者，挑不到就替 HUD
+/// 记下原因（[`ActionBlocked::BUSY`]）。
+///
+/// 各声明系统的查询元组形状不同（有的还要 `Cell` / `Stamina` / `Transform`），
+/// 所以由调用方给出「从查询项里取出决策槽」的投影，本函数只管挑人：
+///
+/// ```text
+/// let Some((player, cell, _)) =
+///     ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
+/// else {
+///     return;
+/// };
+/// ```
+///
+/// 判据只有一份的好处是：以后要放宽（比如"后摇里也允许排下一手"）或改提示
+/// （比如区分"前摇中"与"后摇中"），只改这一个函数。
+pub fn ready_actor<T>(
+    actors: impl Iterator<Item = T>,
+    slot_of: impl Fn(&T) -> &DecisionSlot,
+    blocked: &mut MessageWriter<ActionBlocked>,
+) -> Option<T> {
+    let ready = actors.into_iter().find(|actor| slot_of(actor).is_empty());
+    if ready.is_none() {
+        // 静默丢弃是最差的手感：告诉 HUD"现在还动不了"
+        blocked.write(ActionBlocked::BUSY);
+    }
+    ready
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +124,51 @@ mod tests {
                 until: 1.0 + TEST_TIMING.recovery
             }
         );
+    }
+
+    /// 挑人：空槽的中选；一个都没有就替 HUD 记一条 `BUSY`。
+    ///
+    /// 这条守着「声明的判据只有一份」——9 个声明系统原来各写一遍这段，
+    /// 现在只有 `ready_actor` 会写 `ActionBlocked`。
+    #[test]
+    fn ready_actor_picks_the_first_empty_slot_or_reports_busy() {
+        #[derive(Resource, Default)]
+        struct Picked {
+            actor: Option<Entity>,
+            blocks: usize,
+        }
+
+        fn pick(
+            actors: Query<(Entity, &DecisionSlot)>,
+            mut blocked: MessageWriter<ActionBlocked>,
+            mut out: ResMut<Picked>,
+        ) {
+            out.actor = ready_actor(actors.iter(), |(_, slot)| slot, &mut blocked)
+                .map(|(entity, _)| entity);
+        }
+
+        fn count(mut requests: MessageReader<ActionBlocked>, mut out: ResMut<Picked>) {
+            out.blocks += requests.read().count();
+        }
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Picked>()
+            .add_message::<ActionBlocked>()
+            .add_systems(Update, (pick, count).chain());
+
+        // 全是忙的：挑不到人，而且要报一条原因
+        app.world_mut().spawn(DecisionSlot::Windup);
+        app.update();
+        let picked = app.world().resource::<Picked>();
+        assert_eq!(picked.actor, None, "没人空着就挑不到");
+        assert_eq!(picked.blocks, 1, "被拒时要替 HUD 记一条原因");
+
+        // 来了个空槽的：挑中他，而且不再报原因
+        let ready = app.world_mut().spawn(DecisionSlot::Empty).id();
+        app.update();
+        let picked = app.world().resource::<Picked>();
+        assert_eq!(picked.actor, Some(ready), "空槽的人中选");
+        assert_eq!(picked.blocks, 1, "挑到了就不该再报一条");
     }
 }

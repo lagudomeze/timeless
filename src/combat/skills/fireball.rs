@@ -18,7 +18,7 @@ use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
 use crate::timeline::{
-    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction, ready_actor,
 };
 
 use super::actions::MELEE_TIMING;
@@ -181,11 +181,11 @@ pub fn declare_fireball_system(
     let Some(request) = fires.read().last().copied() else {
         return;
     };
-    let Some((player, cell, _, mut stamina, transform, faction)) = players
-        .iter_mut()
-        .find(|(_, _, slot, _, _, _)| **slot == DecisionSlot::Empty)
-    else {
-        blocked.write(crate::timeline::ActionBlocked::BUSY);
+    let Some((player, cell, _, mut stamina, transform, faction)) = ready_actor(
+        players.iter_mut(),
+        |(_, _, slot, _, _, _)| slot,
+        &mut blocked,
+    ) else {
         return; // 忙或没有玩家
     };
     if !stamina.can_afford(FIREBALL_COST) {
@@ -238,11 +238,9 @@ pub fn declare_melee_system(
     if melees.read().last().is_none() {
         return;
     }
-    let Some((player, cell, _, transform, faction)) = players
-        .iter()
-        .find(|(_, _, slot, _, _)| **slot == DecisionSlot::Empty)
+    let Some((player, cell, _, transform, faction)) =
+        ready_actor(players.iter(), |(_, _, slot, _, _)| slot, &mut blocked)
     else {
-        blocked.write(crate::timeline::ActionBlocked::BUSY);
         return;
     };
     let target_cell = units

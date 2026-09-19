@@ -58,7 +58,7 @@ pub mod systems;
 pub mod timing;
 
 pub use components::{InputDriven, Uncancellable};
-pub use decision::DecisionSlot;
+pub use decision::{DecisionSlot, ready_actor};
 pub use events::{
     ActionBlocked, ActionCancelled, BlockReason, DecisionReady, PauseRequest, PlayerIntent,
     UndoCommand, UseFocus,
