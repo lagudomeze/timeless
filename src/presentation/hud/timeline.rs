@@ -24,7 +24,7 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::timeline::{DecisionSlot, PauseReasons, ScheduledAction};
+use crate::timeline::{ActionTiming, DecisionSlot, PauseReasons, ScheduledAction};
 
 use super::{HudCache, faction_color_alpha, hud_text_tinted};
 
@@ -503,7 +503,7 @@ pub fn update_timeline_system(
     now: Res<Time<Virtual>>,
     actors: Query<(Entity, &Faction)>,
     slots: Query<&DecisionSlot>,
-    actions: Query<(&ScheduledAction, &ChildOf)>,
+    actions: Query<(&ScheduledAction, &ActionTiming, &ChildOf)>,
     mut cache: ResMut<HudCache>,
     mut states: StateTextQuery<'_, '_>,
     mut lane_labels: LaneLabelQuery<'_, '_>,
@@ -536,7 +536,7 @@ pub fn update_timeline_system(
     // 2. 每个单位只画自己那一行：行动色块 = 这段"被占住"的时间（从声明时刻长出去）
     let now_seconds = now.elapsed_secs();
     let mut lanes: Vec<Vec<TimelineSlot>> = vec![Vec::new(); LANE_POOL];
-    for (schedule, child_of) in &actions {
+    for (schedule, timing, child_of) in &actions {
         let Some(lane) = lane_actor
             .iter()
             .position(|actor| *actor == Some(child_of.parent()))
@@ -548,9 +548,11 @@ pub fn update_timeline_system(
         };
         // 还没到点 = 前摇中 = 还能撤（半透明表示"这一手还改得动"）
         let draft = schedule.pending(now_seconds);
+        // 色块左边界 = **声明时刻** = 执行时刻 − 前摇；声明时刻不再单独存一份，
+        // 而是从行动自己的节奏（`ActionTiming`）反推出来。
         let Some((left, width)) = block_span(
-            schedule.declared_at,
-            schedule.total(),
+            schedule.execute_at - timing.windup,
+            timing.total(),
             now_seconds,
             WINDOW_SECONDS,
         ) else {
@@ -559,7 +561,7 @@ pub fn update_timeline_system(
         lanes[lane].push(TimelineSlot {
             left,
             width,
-            mark: resolve_mark_percent(schedule.windup(), schedule.total()),
+            mark: resolve_mark_percent(timing.windup, timing.total()),
             faction,
             draft,
         });
@@ -823,6 +825,7 @@ mod tests {
         for (actor, declared_at) in [(enemy, 0.5), (player, 2.0)] {
             app.world_mut().spawn((
                 ChildOf(actor),
+                MOVE_TIMING,
                 ScheduledAction::declared_at(MOVE_TIMING, declared_at),
             ));
         }
@@ -910,6 +913,7 @@ mod tests {
 
         app.world_mut().spawn((
             ChildOf(player),
+            MOVE_TIMING,
             ScheduledAction::declared_at(MOVE_TIMING, 0.0),
         ));
         app.world_mut()
@@ -960,6 +964,7 @@ mod tests {
 
         app.world_mut().spawn((
             ChildOf(player),
+            MOVE_TIMING,
             ScheduledAction::declared_at(MOVE_TIMING, 0.5),
         ));
         app.update();
@@ -992,6 +997,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(player),
+                MOVE_TIMING,
                 ScheduledAction::declared_at(MOVE_TIMING, 0.5),
             ))
             .id();

@@ -71,6 +71,7 @@ pub const FIREBALL_POWER: i32 = 2;
 pub fn fireball_action_scene(
     from_cell: Cell,
     target_cell: Cell,
+    timing: ActionTiming,
     schedule: ScheduledAction,
 ) -> impl Scene {
     let threatens = Threatens {
@@ -79,6 +80,7 @@ pub fn fireball_action_scene(
     bsn! {
         FireballAction { target_cell: {target_cell} }
         template_value(threatens)
+        template_value(timing)
         template_value(schedule)
     }
 }
@@ -211,7 +213,14 @@ pub fn declare_fireball_system(
     stamina.try_spend(FIREBALL_COST);
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, intent.0);
-    declare_fireball_at(&mut commands, player, *cell, target_cell, schedule);
+    declare_fireball_at(
+        &mut commands,
+        player,
+        *cell,
+        target_cell,
+        FIREBALL_TIMING,
+        schedule,
+    );
 }
 
 /// 声明近战：`MeleeCommand` → 技能域的横扫行动（不消耗精力）。
@@ -248,7 +257,14 @@ pub fn declare_melee_system(
         .unwrap_or(*cell);
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, intent.0);
-    super::actions::declare_melee_at(&mut commands, player, *cell, target_cell, schedule);
+    super::actions::declare_melee_at(
+        &mut commands,
+        player,
+        *cell,
+        target_cell,
+        MELEE_TIMING,
+        schedule,
+    );
 }
 
 /// 声明一次火球（只生成**行动实体**），**不检查精力**。
@@ -262,10 +278,16 @@ pub fn declare_fireball_at(
     actor: Entity,
     from_cell: Cell,
     target_cell: Cell,
+    timing: ActionTiming,
     schedule: ScheduledAction,
 ) -> Entity {
     let action = commands
-        .spawn_scene(fireball_action_scene(from_cell, target_cell, schedule))
+        .spawn_scene(fireball_action_scene(
+            from_cell,
+            target_cell,
+            timing,
+            schedule,
+        ))
         .id();
     // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
     commands
@@ -283,11 +305,17 @@ pub fn declare_fireball_at(
 pub fn fireball_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &FireballAction, &ChildOf)>,
+    actions: Query<(
+        Entity,
+        &ActionTiming,
+        &ScheduledAction,
+        &FireballAction,
+        &ChildOf,
+    )>,
     actors: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, schedule, action, child_of) in &actions {
+    for (entity, timing, schedule, action, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
@@ -303,7 +331,7 @@ pub fn fireball_action_executor_system(
             effect_delay = flight_time(origin, action.target_cell);
             commands.spawn_scene(fireball_scene(origin, action.target_cell, *faction));
         }
-        let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
+        let recovery = DecisionSlot::recovering(timing, now, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);

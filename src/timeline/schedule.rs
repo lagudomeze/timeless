@@ -1,4 +1,4 @@
-//! 行动实体的调度数据：**什么时候**执行，后摇多长，多难被打断。
+//! 行动实体的调度数据：**这一手什么时候落地**，多难被打断。
 //!
 //! 调度器只认识这里的东西；「这行动是什么」由载荷组件决定（[`crate::movement::MoveAction`]、
 //! [`crate::combat::skills::FireballAction`]、[`crate::combat::skills::MeleeAction`]…），
@@ -8,25 +8,29 @@
 //! 「这条行动是谁的」由父子关系直接回答。父节点被销毁时子实体跟着销毁（`Children`
 //! 是 linked spawn），因此不存在"行动者死了、行动还在半空"这种孤儿状态。
 //!
+//! **节奏也不在这里**：前摇 / 后摇住在行动实体自己的
+//! [`ActionTiming`](super::ActionTiming) 组件上（它是载荷的一部分），需要它的地方
+//! （执行器算忙碌窗口、HUD 画时间轴色块）直接读那个组件。这里只留这一手**声明时
+//! 算出来**的两个数：什么时候落地、多难被打断。
+//!
 //! 无回合模型里没有「提交」这一步：声明时刻即前摇起点，
-//! `execute_at = declared_at + windup`；执行器只看 `now >= execute_at`。
-//! 行动者的三个阶段住在 [`DecisionSlot`](super::DecisionSlot) 里，这里只有时间戳。
+//! `execute_at = 声明时刻 + windup`；执行器只看 `now >= execute_at`。
+//! 行动者的三个阶段住在 [`DecisionSlot`](super::DecisionSlot) 里。
 
 use bevy::prelude::*;
 
 use super::resources::Focus;
 use super::timing::ActionTiming;
 
-/// 行动实体的调度数据。
+/// 一条行动的调度状态。
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct ScheduledAction {
-    /// 声明时刻（虚拟秒）
-    pub declared_at: f32,
     /// 执行时刻（虚拟秒）
     pub execute_at: f32,
-    /// 后摇（虚拟秒）：执行时刻 + 后摇 = 重新可决策时刻
-    pub recovery: f32,
     /// 打断抗性：被打断时掷骰防守方那一侧的底数
+    ///
+    /// 从 [`ActionTiming`] 抄过来的一份**快照**：打断由时间线自己的 Observer 判定，
+    /// 它因此不必为了这件事去读载荷的节奏组件。
     pub interrupt_resist: i32,
 }
 
@@ -34,9 +38,7 @@ impl Default for ScheduledAction {
     /// 只为满足 BSN 模板约束而存在；真实值一律用 [`ScheduledAction::declared_at`] 构造。
     fn default() -> Self {
         Self {
-            declared_at: 0.0,
             execute_at: f32::INFINITY,
-            recovery: 0.0,
             interrupt_resist: 0,
         }
     }
@@ -46,9 +48,18 @@ impl ScheduledAction {
     /// 声明：按「现在 + 前摇」定下执行时刻。
     pub fn declared_at(timing: ActionTiming, now: f32) -> Self {
         Self {
-            declared_at: now,
             execute_at: now + timing.windup,
-            recovery: timing.recovery,
+            interrupt_resist: timing.interrupt_resist,
+        }
+    }
+
+    /// **前摇归零**：执行时刻就是现在。
+    ///
+    /// 玩家用 Focus 抢先手走这条路；测试与「本来就该瞬发」的动作（比如脚本化的处决）
+    /// 也走它，免得各处自己改 `execute_at`。
+    pub fn immediate(timing: ActionTiming, now: f32) -> Self {
+        Self {
+            execute_at: now,
             interrupt_resist: timing.interrupt_resist,
         }
     }
@@ -65,30 +76,11 @@ impl ScheduledAction {
         focus: &mut Focus,
         zero_windup: bool,
     ) -> Self {
-        let mut schedule = Self::declared_at(timing, now);
         if zero_windup && focus.spend() {
-            schedule = schedule.with_zero_windup();
+            Self::immediate(timing, now)
+        } else {
+            Self::declared_at(timing, now)
         }
-        schedule
-    }
-
-    /// 前摇时长（虚拟秒）：`execute_at - declared_at`。
-    pub fn windup(&self) -> f32 {
-        (self.execute_at - self.declared_at).max(0.0)
-    }
-
-    /// **前摇归零**：执行时刻就是声明时刻。
-    ///
-    /// [`ScheduledAction::with_focus`] 用它兑现 Focus；测试与「本来就该瞬发」的动作
-    /// （比如脚本化的处决）也走同一条路，免得各处自己改 `execute_at`。
-    pub fn with_zero_windup(mut self) -> Self {
-        self.execute_at = self.declared_at;
-        self
-    }
-
-    /// 这条行动占住行动者的总时长（前摇 + 后摇）。
-    pub fn total(&self) -> f32 {
-        self.windup() + self.recovery
     }
 
     /// 这条行动的「还没到点」吗（= 还能被撤销 / 打断）。
@@ -119,11 +111,7 @@ mod tests {
     #[test]
     fn schedule_derives_everything_from_the_declaration_time() {
         let schedule = ScheduledAction::declared_at(TEST_TIMING, 2.0);
-        assert!(
-            (schedule.windup() - TEST_TIMING.windup).abs() < 1e-5,
-            "前摇 = execute_at - declared_at"
-        );
-        assert!((schedule.total() - TEST_TIMING.total()).abs() < 1e-5);
+        assert_eq!(schedule.execute_at, 2.2, "执行时刻 = 声明时刻 + 前摇");
         assert_eq!(schedule.interrupt_resist, TEST_TIMING.interrupt_resist);
         assert!(schedule.pending(2.0), "刚声明时还在前摇");
         assert!(schedule.pending(2.19));
@@ -140,7 +128,6 @@ mod tests {
             schedule.execute_at, 5.0,
             "用 Focus 换来的就是「现在就落地」"
         );
-        assert_eq!(schedule.windup(), 0.0);
         assert_eq!(focus.current, crate::timeline::FOCUS_MAX - 1, "扣掉 1 点");
     }
 
@@ -148,7 +135,7 @@ mod tests {
     fn focus_is_not_spent_when_the_player_does_not_ask_for_it() {
         let mut focus = Focus::default();
         let schedule = ScheduledAction::with_focus(TEST_TIMING, 5.0, &mut focus, false);
-        assert!((schedule.windup() - TEST_TIMING.windup).abs() < 1e-5);
+        assert_eq!(schedule.execute_at, 5.0 + TEST_TIMING.windup);
         assert_eq!(focus.current, crate::timeline::FOCUS_MAX);
     }
 
@@ -156,8 +143,9 @@ mod tests {
     fn an_empty_focus_pool_falls_back_to_the_normal_windup() {
         let mut focus = Focus { current: 0, max: 3 };
         let schedule = ScheduledAction::with_focus(TEST_TIMING, 5.0, &mut focus, true);
-        assert!(
-            (schedule.windup() - TEST_TIMING.windup).abs() < 1e-5,
+        assert_eq!(
+            schedule.execute_at,
+            5.0 + TEST_TIMING.windup,
             "没有余量就只能排前摇"
         );
     }

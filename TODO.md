@@ -101,8 +101,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [x] **M17 阶段收口 + 交互边界 + 归属交给关系**（四次提交 d94bc0b / 7e47a05 /
       faa3f5a / 970313a）：① `DecisionSlot` 变成**三态**
       （`Empty` / `Windup` / `Recovery { until }`，住在新的 `decision.rs`），
-      `Busy` 组件与 `DecisionSlot::Filled` 删除；调度数据搬进新的 `schedule.rs`
-      （`ScheduledAction` 的 `declared_at` / `with_focus` / `windup` / `total` / `pending` / `due`）。
+      `Busy` 组件与 `DecisionSlot::Filled` 删除；调度数据搬进新的 `schedule.rs`。
       ② 交互边界：`F5` 的读取从 `spawn/restart.rs` 搬进
       `input::keyboard::restart_input_system`；时间线不再读各领域的命令，
       改认输入层唯一的一条 `PlayerIntent`（写：键盘 / 左键，消费：`interrupt_system`）；
@@ -123,6 +122,23 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       HUD 时间轴与行动行）改带 `&ChildOf` 取 `parent()`；父节点销毁时行动跟着销毁，
       因此 `reset_battle_system` 的清场查询删掉了 `With<ScheduledAction>`。
       验收：178 测试全绿（176 单元 + 2 资产验收）/ clippy 零警告 / `cargo fmt --check` 通过。
+- [x] **M18 节奏与格尺度归位 + 调度数据瘦身**（两次提交 3c043c7 / 本次）：
+      ① `timeline/timing.rs` 只留 `ActionTiming` 这个**形状**，六个具体数值搬到载荷旁边
+      （`MOVE_TIMING` / `JUMP_TIMING` / `ROLL_TIMING` → `movement/actions.rs`、
+      `MELEE_TIMING` / `ARROW_TIMING` → `combat/skills/actions.rs`、
+      `FIREBALL_TIMING` → `combat/skills/fireball.rs`、`PARRY_TIMING` →
+      `combat/defense/actions.rs`）。动机是时间线自己的承诺「新增动作时调度器一行不改」
+      在此之前**是假的**——加一个动作必须回头改 `timeline/timing.rs`；旁证是
+      `SHOOT` 同时服务两个载荷、`ROLL` 被两个领域引用、`timeline/schedule.rs` 的单测
+      被钉死在具体载荷上。
+      ② `CELL_SIZE` 从 `timeline/timing.rs` 搬到 `movement/cell.rs`：`timeline/` 里
+      本来没有任何代码用它，真正的定义方是 `Cell` 的格 ↔ 世界换算，消费方是战斗射程、
+      地形量化（`world::TERRAIN_CELL` 的注释原本写着"必须等于 `timeline::CELL_SIZE`"）与鼠标拾取。
+      ③ `ActionTiming` 变成**行动实体上的组件**（场景工厂跟着载荷一起挂），
+      `ScheduledAction` 因此瘦成 `{ execute_at, interrupt_resist }`；
+      HUD 时间轴色块改成从 `execute_at − timing.windup` 起算、宽度 `timing.total()`。
+      ④ 调度器与反应系统的单测改用自造的 `TEST_TIMING`，不再被具体载荷钉住。
+      验收：178 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过 / `cargo run` 无 panic。
 - [x] **CJK 字体**：`assets/fonts/NotoSansSC-Regular.otf`（OFL-1.1），
       HUD 显式指定，战斗日志中文不再显示成豆腐块。
 - [x] **文档整合**：文档收敛为「入口 + 架构 + 时间线 + 组件对照 + 设计 + 素材 +

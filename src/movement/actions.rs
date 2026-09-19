@@ -52,10 +52,16 @@ pub fn step_from_axis(axis: Vec2) -> (i32, i32) {
     }
 }
 
-/// 移动行动工厂：载荷 + 调度数据（移动随时可以改主意，撤销免费）。
-pub fn move_action_scene(from_cell: Cell, to_cell: Cell, schedule: ScheduledAction) -> impl Scene {
+/// 移动行动工厂：载荷 + 节奏 + 调度数据（移动随时可以改主意，撤销免费）。
+pub fn move_action_scene(
+    from_cell: Cell,
+    to_cell: Cell,
+    timing: ActionTiming,
+    schedule: ScheduledAction,
+) -> impl Scene {
     bsn! {
         MoveAction { from_cell: {from_cell}, to_cell: {to_cell} }
+        template_value(timing)
         template_value(schedule)
     }
 }
@@ -82,17 +88,24 @@ pub struct RollAction {
 }
 
 /// 翻滚行动工厂：精力在执行时才扣，因此撤销不退款也不收费。
-pub fn roll_action_scene(from_cell: Cell, to_cell: Cell, schedule: ScheduledAction) -> impl Scene {
+pub fn roll_action_scene(
+    from_cell: Cell,
+    to_cell: Cell,
+    timing: ActionTiming,
+    schedule: ScheduledAction,
+) -> impl Scene {
     bsn! {
         RollAction { from_cell: {from_cell}, to_cell: {to_cell} }
+        template_value(timing)
         template_value(schedule)
     }
 }
 
 /// 跳跃行动工厂。
-pub fn jump_action_scene(schedule: ScheduledAction) -> impl Scene {
+pub fn jump_action_scene(timing: ActionTiming, schedule: ScheduledAction) -> impl Scene {
     bsn! {
         JumpAction
+        template_value(timing)
         template_value(schedule)
         // 起跳就谁都别想插队：跳跃**不给取消**（前摇里也撤不掉）
         template_value(Uncancellable)
@@ -141,7 +154,7 @@ pub fn declare_move_system(
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, intent.0);
     let action = commands
-        .spawn_scene(move_action_scene(*cell, to_cell, schedule))
+        .spawn_scene(move_action_scene(*cell, to_cell, MOVE_TIMING, schedule))
         .id();
     commands
         .entity(player)
@@ -179,7 +192,7 @@ pub fn declare_move_to_system(
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, intent.0);
     let action = commands
-        .spawn_scene(move_action_scene(*cell, target, schedule))
+        .spawn_scene(move_action_scene(*cell, target, MOVE_TIMING, schedule))
         .id();
     commands
         .entity(player)
@@ -195,11 +208,17 @@ pub fn declare_move_to_system(
 pub fn move_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &MoveAction, &ScheduledAction, &ChildOf)>,
+    actions: Query<(
+        Entity,
+        &MoveAction,
+        &ActionTiming,
+        &ScheduledAction,
+        &ChildOf,
+    )>,
     mut actors: Query<(&Cell, &MoveSpeed, &mut Velocity, &Transform)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, action, schedule, child_of) in &actions {
+    for (entity, action, timing, schedule, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
@@ -213,7 +232,7 @@ pub fn move_action_executor_system(
                 cell: action.to_cell,
             });
         }
-        let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
+        let recovery = DecisionSlot::recovering(timing, now, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);
@@ -243,7 +262,9 @@ pub fn declare_jump_system(
     };
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(JUMP_TIMING, now, &mut focus, intent.0);
-    let action = commands.spawn_scene(jump_action_scene(schedule)).id();
+    let action = commands
+        .spawn_scene(jump_action_scene(JUMP_TIMING, schedule))
+        .id();
     commands
         .entity(player)
         .add_child(action)
@@ -254,11 +275,17 @@ pub fn declare_jump_system(
 pub fn jump_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &JumpAction, &ChildOf)>,
+    actions: Query<(
+        Entity,
+        &ActionTiming,
+        &ScheduledAction,
+        &JumpAction,
+        &ChildOf,
+    )>,
     actors: Query<&Transform>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, schedule, _, child_of) in &actions {
+    for (entity, timing, schedule, _, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
@@ -270,7 +297,7 @@ pub fn jump_action_executor_system(
             });
         }
         // 后摇（0.60s）覆盖整条弹道：落地那一刻才重新可决策
-        let recovery = DecisionSlot::recovering(schedule, now, 0.0);
+        let recovery = DecisionSlot::recovering(timing, now, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);
@@ -372,6 +399,7 @@ mod tests {
             .id();
         app.world_mut().spawn((
             ChildOf(actor),
+            MOVE_TIMING,
             MoveAction {
                 from_cell: Cell::new(0, 0),
                 to_cell: Cell::new(0, 1),
@@ -414,6 +442,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(actor),
+                MOVE_TIMING,
                 MoveAction::default(),
                 // 声明于 -1s：如果没有跟着销毁，这一帧就会被执行
                 ScheduledAction::declared_at(MOVE_TIMING, -1.0),

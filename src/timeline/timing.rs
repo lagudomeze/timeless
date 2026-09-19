@@ -8,6 +8,8 @@
 //! 数值后续外置成 `.ron`（见 [TODO.md](../../../TODO.md)），届时每个领域的常量
 //! 换成从配置读，`ActionTiming` 的形状不变。
 
+use bevy::prelude::*;
+
 /// 单个动作的固定节奏 + 打断抗性。
 ///
 /// 没有状态机：`windup` 决定「什么时候到点」，`recovery` 决定「忙到什么时候」，
@@ -16,8 +18,11 @@
 ///
 /// **它描述的是载荷，不是调度器**：具体值归各领域（`movement` 的移动 / 跳跃 / 翻滚、
 /// `combat::skills` 的近战 / 火球 / 箭矢、`combat::defense` 的招架）。
-/// 调度器只接住这个值，把它变成 [`ScheduledAction`](super::ScheduledAction) 的时间戳。
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+///
+/// 声明时它被挂在**行动实体**上（和载荷一起，由场景工厂负责），于是：
+/// 执行器算忙碌窗口、HUD 画时间轴色块都从这里读，不用在别处再抄一份；
+/// 而 [`ScheduledAction`](super::ScheduledAction) 只剩这一手自己的时间戳。
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
 pub struct ActionTiming {
     /// 前摇（虚拟秒）：声明时刻 + 前摇 = 执行时刻。
     pub windup: f32,

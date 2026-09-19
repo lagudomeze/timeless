@@ -24,6 +24,7 @@ use crate::timeline::{
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
 use super::events::{FireCommand, MeleeCommand};
+use super::fireball::FIREBALL_TIMING;
 use super::melee::melee_scene;
 
 /// 射击（箭矢）的节奏：出手慢、后摇长，但在手里的时候最怕被打断。
@@ -44,9 +45,10 @@ pub struct MeleeAction;
 pub const MELEE_CANCEL_PENALTY: u32 = 1;
 
 /// 射击行动工厂。
-pub fn shoot_action_scene(schedule: ScheduledAction) -> impl Scene {
+pub fn shoot_action_scene(timing: ActionTiming, schedule: ScheduledAction) -> impl Scene {
     bsn! {
         ShootAction
+        template_value(timing)
         template_value(schedule)
     }
 }
@@ -58,6 +60,7 @@ pub fn shoot_action_scene(schedule: ScheduledAction) -> impl Scene {
 pub fn melee_action_scene(
     from_cell: Cell,
     target_cell: Cell,
+    timing: ActionTiming,
     schedule: ScheduledAction,
 ) -> impl Scene {
     let threatens = Threatens {
@@ -66,6 +69,7 @@ pub fn melee_action_scene(
     bsn! {
         MeleeAction
         template_value(threatens)
+        template_value(timing)
         template_value(schedule)
     }
 }
@@ -141,14 +145,22 @@ pub fn declare_skill_system(
         .unwrap_or(*cell);
     if melee {
         let schedule = ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, intent.0);
-        declare_melee_at(&mut commands, player, *cell, target_cell, schedule);
+        declare_melee_at(
+            &mut commands,
+            player,
+            *cell,
+            target_cell,
+            MELEE_TIMING,
+            schedule,
+        );
     } else {
         crate::combat::skills::declare_fireball_at(
             &mut commands,
             player,
             *cell,
             target_cell,
-            ScheduledAction::with_focus(ARROW_TIMING, now, &mut focus, intent.0),
+            FIREBALL_TIMING,
+            ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, intent.0),
         );
     }
 }
@@ -159,10 +171,11 @@ pub fn declare_melee_at(
     actor: Entity,
     from_cell: Cell,
     target_cell: Cell,
+    timing: ActionTiming,
     schedule: ScheduledAction,
 ) -> Entity {
     let action = commands
-        .spawn_scene(melee_action_scene(from_cell, target_cell, schedule))
+        .spawn_scene(melee_action_scene(from_cell, target_cell, timing, schedule))
         .id();
     // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
     commands
@@ -179,11 +192,17 @@ pub fn declare_melee_at(
 pub fn shoot_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &ShootAction, &ChildOf)>,
+    actions: Query<(
+        Entity,
+        &ActionTiming,
+        &ScheduledAction,
+        &ShootAction,
+        &ChildOf,
+    )>,
     units: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, schedule, _, child_of) in &actions {
+    for (entity, timing, schedule, _, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
@@ -200,7 +219,7 @@ pub fn shoot_action_executor_system(
                 commands.spawn_scene(arrow_scene(origin + direction * 1.2, direction, faction));
             }
         }
-        let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
+        let recovery = DecisionSlot::recovering(timing, now, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);
@@ -212,11 +231,17 @@ pub fn shoot_action_executor_system(
 pub fn melee_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &MeleeAction, &ChildOf)>,
+    actions: Query<(
+        Entity,
+        &ActionTiming,
+        &ScheduledAction,
+        &MeleeAction,
+        &ChildOf,
+    )>,
     units: Query<(&Transform, &Faction)>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, schedule, _, child_of) in &actions {
+    for (entity, timing, schedule, _, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
@@ -231,7 +256,7 @@ pub fn melee_action_executor_system(
                 commands.spawn_scene(melee_scene(origin + direction * 0.6, direction, faction));
             }
         }
-        let recovery = DecisionSlot::recovering(schedule, now, 0.0);
+        let recovery = DecisionSlot::recovering(timing, now, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);

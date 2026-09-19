@@ -61,11 +61,12 @@ pub fn declare_roll(
     actor: Entity,
     from_cell: Cell,
     to_cell: Cell,
+    timing: ActionTiming,
     schedule: ScheduledAction,
 ) -> Entity {
     let action = commands
         .spawn_scene(crate::movement::roll_action_scene(
-            from_cell, to_cell, schedule,
+            from_cell, to_cell, timing, schedule,
         ))
         .id();
     // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
@@ -120,6 +121,7 @@ pub fn declare_roll_system(
         entity,
         *cell,
         Cell::new(cell.x + dx, cell.z + dz),
+        ROLL_TIMING,
         schedule,
     );
 }
@@ -136,6 +138,7 @@ pub fn roll_executor_system(
     time: Res<Time<Virtual>>,
     actions: Query<(
         Entity,
+        &ActionTiming,
         &crate::movement::RollAction,
         &ScheduledAction,
         &ChildOf,
@@ -143,7 +146,7 @@ pub fn roll_executor_system(
     mut actors: Query<(&mut Velocity, &mut Stamina, &Transform), With<Cell>>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, roll, schedule, child_of) in &actions {
+    for (entity, timing, roll, schedule, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
@@ -161,7 +164,7 @@ pub fn roll_executor_system(
                 },
             ));
         }
-        let recovery = DecisionSlot::recovering(schedule, now, effect_delay);
+        let recovery = DecisionSlot::recovering(timing, now, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);
@@ -213,6 +216,7 @@ pub fn declare_parry_system(
     let action = commands
         .spawn_scene(crate::combat::defense::parry_action_scene(
             target_attack,
+            PARRY_TIMING,
             schedule,
         ))
         .id();
@@ -226,11 +230,17 @@ pub fn declare_parry_system(
 pub fn parry_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ParryAction, &ScheduledAction, &ChildOf)>,
+    actions: Query<(
+        Entity,
+        &ActionTiming,
+        &ParryAction,
+        &ScheduledAction,
+        &ChildOf,
+    )>,
     mut actors: Query<&mut Stamina>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, parry, schedule, child_of) in &actions {
+    for (entity, timing, parry, schedule, child_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
@@ -242,7 +252,7 @@ pub fn parry_executor_system(
                 expires_at: now + PARRY_SECS,
             });
         }
-        let recovery = DecisionSlot::recovering(schedule, now, 0.0);
+        let recovery = DecisionSlot::recovering(timing, now, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);

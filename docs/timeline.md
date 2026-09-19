@@ -31,11 +31,13 @@ pub enum DecisionSlot {          // 行动者身上，三态直接写在这里
     Recovery { until: f32 },     // 后摇中：until（虚拟秒）之前不接受新决策
 }
 
-pub struct ScheduledAction {     // 行动实体身上，**没有 actor 字段**
-    pub declared_at: f32,        // 虚拟秒
-    pub execute_at: f32,         // declared_at + windup
-    pub recovery: f32,
-    pub interrupt_resist: i32,
+pub struct ScheduledAction {     // 行动实体身上，**没有 actor、也没有节奏**
+    pub execute_at: f32,         // 这一手什么时候落地（声明时算出来）
+    pub interrupt_resist: i32,   // 打断抗性的快照（打断由时间线自己判定）
+}
+
+pub struct ActionTiming {        // 也在行动实体身上：**载荷自己的节奏**
+    pub windup: f32, pub recovery: f32, pub interrupt_resist: i32,
 }
 ```
 
@@ -53,7 +55,7 @@ pub struct ScheduledAction {     // 行动实体身上，**没有 actor 字段**
   bug（"标记忘了摘，于是每帧重复触发同一个动作"）；现在动作的**阶段**是决策槽里
   唯一的枚举，**时刻**只有 `execute_at` / `until` 两个时间戳。
 - **执行器自己收尾**：`if !schedule.due(now) { continue; }` → 落地效果 → 销毁行动实体 →
-  `DecisionSlot::recovering(schedule, now, effect_delay)` 写进行动者的决策槽。
+  `DecisionSlot::recovering(timing, now, effect_delay)` 写进行动者的决策槽。
   没有 `scheduler_system`，也没有 `begin_action` / `end_action` 这类集中式收尾函数。
 - **`due()` 用严格大于**：`execute_at = now` 的零前摇行动（Focus 抢先手）因此落到
   **下一帧**执行。这一帧延迟让反应系统看得见"玩家刚举起来的那一手"，
@@ -127,7 +129,7 @@ pub struct ScheduledAction {     // 行动实体身上，**没有 actor 字段**
 > 调度器自己的单测也因此改用自造的 `TEST_TIMING`，不再被具体载荷钉住。
 
 > **后摇从「效果落地那一刻」起算**：执行器用
-> `DecisionSlot::recovering(schedule, now, effect_delay)`，其中
+> `DecisionSlot::recovering(timing, now, effect_delay)`，其中
 > `effect_delay` 允许把忙碌窗口推到效果真的发生（移动走到格中心、火球飞到落点）。
 > 数值先硬编码在各领域，后续外置成 `.ron`（见 [../TODO.md](../TODO.md)）。
 

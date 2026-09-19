@@ -23,7 +23,7 @@
 
 use bevy::prelude::*;
 
-use super::schedule::ScheduledAction;
+use super::timing::ActionTiming;
 
 /// 行动者的决策槽状态机。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
@@ -54,9 +54,9 @@ impl DecisionSlot {
     ///
     /// 传时长而不是「忙到哪个时刻」，是因为忙到的那一刻永远是
     /// `now + 这段时长`——少一次加法，也少一个"现在几点"的重复概念。
-    pub fn recovering(schedule: &ScheduledAction, now: f32, effect_delay: f32) -> Self {
+    pub fn recovering(timing: &ActionTiming, now: f32, effect_delay: f32) -> Self {
         Self::Recovery {
-            until: now + schedule.recovery.max(effect_delay),
+            until: now + timing.recovery.max(effect_delay),
         }
     }
 }
@@ -64,7 +64,6 @@ impl DecisionSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::ActionTiming;
 
     /// 调度器的测试不该依赖任何具体载荷：自己造一个节奏。
     const TEST_TIMING: ActionTiming = ActionTiming::new(0.2, 0.3, 3);
@@ -80,16 +79,14 @@ mod tests {
     /// 后摇取「一个后摇」与「效果还要多久」里更晚的那个。
     #[test]
     fn the_recovery_window_ends_at_the_later_of_effect_and_recovery() {
-        let schedule = ScheduledAction::declared_at(TEST_TIMING, 0.0);
-
         // 效果比后摇晚（移动 / 火球）：忙到效果真的发生
         assert_eq!(
-            DecisionSlot::recovering(&schedule, 1.0, 0.4),
+            DecisionSlot::recovering(&TEST_TIMING, 1.0, 0.4),
             DecisionSlot::Recovery { until: 1.4 }
         );
         // 效果瞬间完成（近战 / 招架）：只忙一个后摇
         assert_eq!(
-            DecisionSlot::recovering(&schedule, 1.0, 0.0),
+            DecisionSlot::recovering(&TEST_TIMING, 1.0, 0.0),
             DecisionSlot::Recovery {
                 until: 1.0 + TEST_TIMING.recovery
             }

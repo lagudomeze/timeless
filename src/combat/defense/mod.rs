@@ -32,12 +32,14 @@ pub use systems::{expire_defense_markers_system, recover_stamina_observer};
 /// 招架行动工厂：载荷 + 调度数据（抬手一挡，随手就能改主意，撤销免费）。
 pub fn parry_action_scene(
     target_attack: Entity,
+    timing: crate::timeline::ActionTiming,
     schedule: crate::timeline::ScheduledAction,
 ) -> impl Scene {
     bsn! {
         ParryAction {
             target_attack: {target_attack},
         }
+        template_value(timing)
         template_value(schedule)
     }
 }

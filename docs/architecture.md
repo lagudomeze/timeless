@@ -94,7 +94,7 @@ src/
 ├── timeline/
 │   ├── timing.rs               #   ActionTiming 的**形状**（具体数值归各领域的载荷）
 │   ├── decision.rs             #   DecisionSlot 三态（Empty / Windup / Recovery）+ recovering()
-│   ├── schedule.rs             #   ScheduledAction（声明 / 执行时间戳 + 后摇 + 打断抗性）
+│   ├── schedule.rs             #   ScheduledAction（执行时刻 + 打断抗性快照）
 │   ├── components.rs           #   Uncancellable / InputDriven（行动实体与行动者的标记）
 │   ├── resources.rs            #   PauseReasons / Focus / FocusIntent
 │   ├── events.rs               #   PauseRequest / PlayerIntent / UseFocus / ActionBlocked / UndoCommand / ActionCancelled / InterruptEvent / DecisionReady
@@ -269,7 +269,7 @@ HUD 时间轴与行动行）用 `&ChildOf` 的 `parent()` 取行动者。
 
 | 位置 | 内容 | 文件 |
 | :--- | :--- | :--- |
-| 顶部 | 时间轴：按 `declared_at` 长出的行动色块（蓝 = 玩家 / 红 = 敌人，草案半透明）+ 候场区 | `hud/timeline.rs` |
+| 顶部 | 时间轴：按「执行时刻 − 前摇」长出的行动色块（蓝 = 玩家 / 红 = 敌人，草案半透明）+ 候场区 | `hud/timeline.rs` |
 | 左下 / 右下 | 双方面板：头像 + HP / EN 条 + 状态行 + 当前行动 | `hud/panels.rs`、`hud/actions.rs` |
 | 底部居中 | 技能栏：图标 + 消耗角标 + 悬停 tooltip | `hud/skills.rs` |
 | 右下偏上 | 战斗日志：半透明、点标题折叠 | `hud/log_panel.rs` |

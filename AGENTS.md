@@ -93,7 +93,7 @@ cargo fmt --check                           # 格式校验
   零件，`player.rs` / `enemy.rs` 追加驱动源）；**没有任何领域依赖 `spawn` 的组装逻辑**
   （唯一的例外是输入域写 `spawn::ResetBattle` 这一条消息，它由 `spawn` 消费）。
 - **执行器自己收尾**：`if !schedule.due(now) { continue; }` → 落地效果 → 销毁行动实体 →
-  给行动者写 `DecisionSlot::recovering(schedule, now, effect_delay)`。没有集中式收尾函数；
+  给行动者写 `DecisionSlot::recovering(timing, now, effect_delay)`。没有集中式收尾函数；
   「效果延迟发生」的动作（移动 / 火球 / 箭矢）必须把 `effect_delay` 给到效果真的发生
   （走到格中心 / 飞到落点），否则玩家一空闲世界就冻住、效果停在半路。
 - **暂停是每帧断言**：各领域这一帧还想停表就写一条

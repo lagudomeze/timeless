@@ -891,9 +891,11 @@ mod tests {
             let mut query = app.world_mut().query_filtered::<Entity, With<MoveAction>>();
             query.iter(app.world()).next().expect("应当声明出一条移动")
         };
+        // 声明就发生在这一帧，而 `Time<Virtual>` 在一帧之内是同一个值
+        let declared_at = app.world().resource::<Time<Virtual>>().elapsed_secs();
         let schedule = *app.world().get::<ScheduledAction>(action).unwrap();
         assert_eq!(
-            schedule.execute_at, schedule.declared_at,
+            schedule.execute_at, declared_at,
             "前摇归零 = 执行时刻就是声明时刻"
         );
 
@@ -927,13 +929,14 @@ mod tests {
         app.update();
 
         assert_eq!(app.world().resource::<Focus>().current, 0);
+        let declared_at = app.world().resource::<Time<Virtual>>().elapsed_secs();
         let mut query = app
             .world_mut()
             .query_filtered::<&ScheduledAction, With<MoveAction>>();
         let schedule = *query.iter(app.world()).next().expect("应当有移动行动");
         assert_eq!(
-            schedule.windup(),
-            MOVE_TIMING.windup,
+            schedule.execute_at,
+            declared_at + MOVE_TIMING.windup,
             "没有余量就只能排前摇"
         );
     }
@@ -1057,12 +1060,13 @@ mod tests {
         let enemy = spawn_enemy(&mut app, Cell::new(4, 0), Vec3::new(9.0, 0.0, 1.0));
 
         // 一条「立刻落地」的火球行动：射手这一帧就出手
-        let schedule = ScheduledAction::declared_at(FIREBALL_TIMING, 0.0).with_zero_windup();
+        let schedule = ScheduledAction::immediate(FIREBALL_TIMING, 0.0);
         let action = app
             .world_mut()
             .spawn_scene(fireball_action_scene(
                 Cell::new(0, 0),
                 Cell::new(4, 0),
+                FIREBALL_TIMING,
                 schedule,
             ))
             .expect("火球行动场景应当能实例化")

@@ -186,6 +186,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     Cell::new(cell.x + dx, cell.z + dz),
+                    ROLL_TIMING,
                     ScheduledAction::declared_at(ROLL_TIMING, now),
                 );
             }
@@ -207,6 +208,7 @@ pub fn enemy_declare_system(
                     .spawn_scene(move_action_scene(
                         *cell,
                         to_cell,
+                        MOVE_TIMING,
                         ScheduledAction::declared_at(MOVE_TIMING, now),
                     ))
                     .id();
@@ -221,6 +223,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     target.map(|(_, cell)| cell).unwrap_or(*cell),
+                    MELEE_TIMING,
                     ScheduledAction::declared_at(MELEE_TIMING, now),
                 );
             }
@@ -233,6 +236,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     target_cell,
+                    FIREBALL_TIMING,
                     ScheduledAction::declared_at(FIREBALL_TIMING, now),
                 );
             }
