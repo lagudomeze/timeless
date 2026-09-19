@@ -11,7 +11,7 @@ use super::defense::{
     expire_defense_markers_system, parry_executor_system, recover_stamina_observer,
     roll_executor_system,
 };
-use super::formula::apply_physical_hits_system;
+use super::formula::{apply_physical_hits_system, interrupt_observer};
 use super::health::{DamageEvent, DeathEvent, apply_damage_system, despawn_dead_system};
 use super::lifecycle::{cleanup_finished_attacks_system, expire_attack_entities_system};
 use super::reaction::{ThreatWindow, detect_threat_system};
@@ -48,6 +48,8 @@ impl Plugin for CombatPlugin {
             .add_message::<CycleSkill>()
             .add_message::<UseSelectedSkill>()
             // EntityEvent 订阅：撤销退款（谁收钱谁退）+ 后摇结束回精力
+            // 打断对抗：命中触发的战斗判定，落地在战斗域自己收
+            .add_observer(interrupt_observer)
             .add_observer(refund_fireball_observer)
             .add_observer(refund_melee_observer)
             .add_observer(recover_stamina_observer)

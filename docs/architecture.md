@@ -94,11 +94,11 @@ src/
 ├── timeline/
 │   ├── timing.rs               #   ActionTiming 的**形状**（具体数值归各领域的载荷）
 │   ├── decision.rs             #   DecisionSlot 三态（Empty / Windup / Recovery）+ recovering()
-│   ├── schedule.rs             #   ScheduledAction（执行时刻 + 打断抗性快照）
+│   ├── schedule.rs             #   ScheduledAction（这一手什么时候落地）
 │   ├── components.rs           #   Uncancellable / InputDriven（行动实体与行动者的标记）
 │   ├── resources.rs            #   PauseReasons / Focus / FocusIntent
-│   ├── events.rs               #   PauseRequest / PlayerIntent / UseFocus / ActionBlocked / UndoCommand / ActionCancelled / InterruptEvent / DecisionReady
-│   ├── systems.rs              #   暂停原因 / Focus / 打断 / 撤销 / 后摇 / apply_clock
+│   ├── events.rs               #   PauseRequest / PlayerIntent / UseFocus / ActionBlocked / UndoCommand / ActionCancelled / DecisionReady
+│   ├── systems.rs              #   暂停原因 / Focus / 撤销 / 后摇 / apply_clock
 │   └── plugin.rs
 ├── ai/{components,systems,plugin}.rs
 ├── input/{keyboard,pointer,plugin}.rs   # 键盘 / 鼠标 → 消息（只翻译）
@@ -128,7 +128,7 @@ WorldSet ───────────────────────�
 
 | 系统集 | 内部链 |
 | :--- | :--- |
-| `TimelineSet` | 断言空决策槽 → Focus 意图 → 打断 → 撤销 → 后摇恢复 → Focus 回复 |
+| `TimelineSet` | 断言空决策槽 → Focus 意图 → 打断（写撤销请求）→ 撤销 → 后摇恢复 → Focus 回复 |
 | `ClockSet`（帧末） | 暂停请求（每帧重建原因集合）→ `apply_clock`（**唯一**写 `Time<Virtual>`） |
 | `InputSet` | 方向键 / 技能热键 / 技能栏 / 释放 → 消息；空格 → `PauseRequest`；`F5` → `ResetBattle`；`F1` → `ToggleHelp`；Shift + 决策键 → `UseFocus`；相机平移 / 缩放；左 / 右键 → `PointerCommand` |
 | `MovementSet` | 声明（移动/点地/跳跃）→ 执行器 → 位移 → 贴地 → 跳跃弹道 |
@@ -156,7 +156,7 @@ WorldSet ───────────────────────�
 | `PlayerIntent` | `input`（键盘）/ `interaction`（左键） | `timeline::interrupt_system`（撤掉玩家那条还没到点的行动） |
 | `UseFocus` / `UndoCommand` | `input` / `interaction` | `timeline` |
 | `PauseRequest` | `input`（手动）/ `timeline` 的等输入系统 / `combat::reaction` | `timeline::process_pause_requests` → `apply_clock` |
-| `InterruptEvent`（**EntityEvent**） | `combat::formula` 的命中系统（`commands.trigger`） | `timeline::interrupt_observer` |
+| `InterruptEvent`（**EntityEvent**，住 `combat::formula`） | 命中系统 `apply_physical_hits_system` | `combat::formula::interrupt_observer`（判定与落地都在战斗域） |
 | `ActionCancelled`（**EntityEvent**） | `timeline::undo_system`（销毁行动之前 trigger） | 花钱的领域：`combat::skills`（火球退 2 收 2、近战收 1） |
 | `DecisionReady`（**EntityEvent**） | `timeline::recovery_system` | `combat::defense::recover_stamina_observer`（+1 精力） |
 | `ActionBlocked` | 各声明系统 | HUD 提示条 |

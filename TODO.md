@@ -139,6 +139,20 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       HUD 时间轴色块改成从 `execute_at − timing.windup` 起算、宽度 `timing.total()`。
       ④ 调度器与反应系统的单测改用自造的 `TEST_TIMING`，不再被具体载荷钉住。
       验收：178 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过 / `cargo run` 无 panic。
+- [x] **M19 调度域归位：打断判定搬去战斗域**（提交 9a282a6 / 本次）：
+      审计 `timeline/` 时发现「命中能不能打掉那一手」这套**战斗裁决**（`power + 3 + 3d5`
+      对 `interrupt_resist + 3 + 3d5`）内联在时间线的 Bevy Observer 里，直接违反
+      AGENTS.md 的「领域层 `combat/formula/domain.rs` 绝不引入 Bevy；应用层不包含伤害公式」
+      ——同族的 `resolve_defense` / `counter_damage` 都是那里的纯函数，只有它漏在缝里。
+      ① `interrupt_observer` + 骰子 `roll_3d5` 整体搬到 `combat::formula`，
+      `InterruptEvent` 跟着走（生产者与消费者现在同属战斗域）；时间线不再注册它。
+      ② 算式提成纯函数 `combat::formula::domain::interrupt_lands(power, resist, 骰, 骰)`
+      并补单测——顺便测出那 3 点 `INTERRUPT_BASE` 在不等式两边同时出现、**对结果没有影响**。
+      ③ `ScheduledAction` 因此只剩 `{ execute_at }`：打断抗性本来就是 `ActionTiming`
+      （载荷节奏）的一部分，而两者挂在**同一个行动实体**上，不必再抄一份快照。
+      ④ 删掉死方法 `PauseReasons::remove`（暂停原因改「每帧重建」后只剩测试在用它）。
+      验收：180 测试全绿（178 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过 /
+      `cargo run` 无 panic。
 - [x] **CJK 字体**：`assets/fonts/NotoSansSC-Regular.otf`（OFL-1.1），
       HUD 显式指定，战斗日志中文不再显示成豆腐块。
 - [x] **文档整合**：文档收敛为「入口 + 架构 + 时间线 + 组件对照 + 设计 + 素材 +

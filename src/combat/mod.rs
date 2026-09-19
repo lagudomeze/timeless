@@ -28,7 +28,7 @@
 //! 目标获取只说「打到了谁」，伤害只说「打多少」，两者靠临时标记
 //! [`CollisionTarget`] 解耦。**没有两阶段裁决**：伤害是纯减法（可交换），
 //! 不需要快照，也不需要"阶段 1 只读 / 阶段 2 落地"——被打断这件事改由
-//! [`InterruptEvent`](crate::timeline::InterruptEvent) 打**还没到点的行动**。
+//! [`InterruptEvent`](crate::combat::formula::InterruptEvent) 打**还没到点的行动**。
 
 use bevy::prelude::*;
 
@@ -46,7 +46,9 @@ pub mod targeting;
 pub use attributes::{Armor, AttackFrame, AttackRange, HitRadius, InterruptPower, PhysicalDamage};
 pub use components::{Collidable, Faction};
 pub use defense::{DefenseOutcome, Dodging, ParryCommand, Parrying, RollCommand, Stamina};
-pub use formula::{DefenseState, counter_damage, physical_damage, resolve_defense};
+pub use formula::{
+    DefenseState, InterruptEvent, counter_damage, interrupt_lands, physical_damage, resolve_defense,
+};
 pub use health::{DamageEvent, DeathEvent, Health, apply_damage_system, despawn_dead_system};
 pub use lifecycle::{HitOnce, Lifetime, Projectile};
 pub use plugin::CombatPlugin;

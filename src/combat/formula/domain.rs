@@ -45,6 +45,30 @@ pub fn counter_damage(incoming: i32) -> i32 {
     ((incoming + 1) / 2).max(1)
 }
 
+/// 打断对抗的底数：双方各加这么多，再各加 3d5。
+///
+/// 它在不等式两边同时出现，**对结果没有影响**（会被约掉）——留着是因为设计稿
+/// 那行算式就是这么写的，读起来对得上。想让"打断更难一点"，改这里是个陷阱，
+/// 真正的手感旋钮是 `ActionTiming::interrupt_resist` 与 `InterruptPower`。
+pub const INTERRUPT_BASE: i32 = 3;
+
+/// 一次打断对抗的纯逻辑：攻方 `power` 对守方 `resist`，骰子由调用方掷好传进来
+/// （本模块零 Bevy、也零随机，方便单测边界）。
+///
+/// ```text
+/// 攻方 = power  + INTERRUPT_BASE + attack_roll
+/// 守方 = resist + INTERRUPT_BASE + defense_roll
+/// 攻方 >= 守方 → 这一手被打掉
+/// ```
+pub fn interrupt_lands(
+    attack_power: i32,
+    defense_resist: i32,
+    attack_roll: i32,
+    defense_roll: i32,
+) -> bool {
+    attack_power + INTERRUPT_BASE + attack_roll >= defense_resist + INTERRUPT_BASE + defense_roll
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +118,29 @@ mod tests {
         assert_eq!(counter_damage(1), 1, "至少 1 点");
         assert_eq!(counter_damage(0), 0);
         assert_eq!(counter_damage(-5), 0, "负伤害不产生反制");
+    }
+
+    /// 打断对抗：平手算攻方赢（"攻方 >= 守方"），差 1 点就反过来了。
+    #[test]
+    fn an_interrupt_lands_on_a_tie() {
+        assert!(interrupt_lands(3, 3, 0, 0), "平手归攻方");
+        assert!(
+            interrupt_lands(2, 3, 5, 4),
+            "骰子差能补上力度差（2+5 >= 3+4）"
+        );
+        assert!(
+            !interrupt_lands(2, 3, 4, 4),
+            "差一点点就是没打断（2+4 < 3+4）"
+        );
+    }
+
+    /// 那 3 点底数在不等式两边同时出现，**不影响结果**。
+    #[test]
+    fn the_interrupt_base_cancels_out() {
+        assert_eq!(
+            interrupt_lands(3, 3, 0, 0),
+            interrupt_lands(0, 0, 0, 0),
+            "两边同加一个常数，结果不变"
+        );
     }
 }

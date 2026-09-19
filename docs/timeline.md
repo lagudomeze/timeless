@@ -31,9 +31,8 @@ pub enum DecisionSlot {          // 行动者身上，三态直接写在这里
     Recovery { until: f32 },     // 后摇中：until（虚拟秒）之前不接受新决策
 }
 
-pub struct ScheduledAction {     // 行动实体身上，**没有 actor、也没有节奏**
-    pub execute_at: f32,         // 这一手什么时候落地（声明时算出来）
-    pub interrupt_resist: i32,   // 打断抗性的快照（打断由时间线自己判定）
+pub struct ScheduledAction {     // 行动实体身上，**只有"什么时候落地"**
+    pub execute_at: f32,
 }
 
 pub struct ActionTiming {        // 也在行动实体身上：**载荷自己的节奏**
@@ -47,7 +46,7 @@ pub struct ActionTiming {        // 也在行动实体身上：**载荷自己的
 
 | 状态 | 判据 | 谁处理 |
 | :--- | :--- | :--- |
-| 前摇（可撤销 / 可打断） | `DecisionSlot::Windup`，且 `now < execute_at` | `undo_system` / `interrupt_observer` |
+| 前摇（可撤销 / 可打断） | `DecisionSlot::Windup`，且 `now < execute_at` | `undo_system` / `combat::formula::interrupt_observer` |
 | 该执行了 | `now > execute_at` | 各领域自己的执行器（`due()`） |
 | 后摇 | `DecisionSlot::Recovery { until }` 且 `now < until` | `recovery_system` |
 
@@ -164,9 +163,14 @@ undo_system
 
 ## 五、打断：打的是「还没发生的事」
 
-打断是一次**针对实体的即时响应**，因此走 `EntityEvent` + Observer，而不是 Message：
+打断是一次**针对实体的即时响应**，因此走 `EntityEvent` + Observer，而不是 Message。
+**判定的归属在战斗域**：`InterruptEvent` 与 `interrupt_observer` 都住
+`combat::formula`，算式是纯函数 `interrupt_lands`（零 Bevy、可单测）。
+时间线只提供它自己的两样数据——`ScheduledAction.pending()` 与
+`ActionTiming.interrupt_resist`。
 
 ```rust
+// combat/formula/events.rs
 #[derive(EntityEvent)]
 pub struct InterruptEvent { pub entity: Entity, pub source: Entity, pub power: i32 }
 
@@ -174,20 +178,24 @@ pub struct InterruptEvent { pub entity: Entity, pub source: Entity, pub power: i
 commands.trigger(InterruptEvent { entity: target, source: attack, power });
 ```
 
-Observer 的判定（`timeline::interrupt_observer`，用 `&ChildOf` 取行动者）：
+Observer 的判定（`combat::formula::interrupt_observer`，用 `&ChildOf` 取行动者）：
 
 ```text
 power == 0                                  → 直接返回（没有力度就不做对抗）
 找不到该行动者 execute_at > now 的行动        → 直接返回（这一手已经出去了，打不断）
-攻方 = power + 3 + 3d5
-守方 = interrupt_resist + 3 + 3d5
-攻方 >= 守方 → 销毁那条行动实体 + 目标决策槽清空
+interrupt_lands(power, interrupt_resist, 3d5, 3d5)
+  攻方 = power  + 3 + 3d5
+  守方 = resist + 3 + 3d5
+  攻方 >= 守方 → 销毁那条行动实体 + 目标决策槽清空
 ```
 
 - 旧的「破势（`Impact`）」是**同刻相撞**时比大小；新模型里"谁先出手"由 `execute_at`
   决定，相撞不再需要仲裁，打断因此改成"撞掉对方还在前摇里的那一手"。
 - 打断不退款：那一手白费了（`ActionCancelled` 只由撤销触发，打断不触发它）。
 - AI 与玩家共用同一条规则：谁被打中前摇，谁的决策槽就被清空、下一帧重新决策。
+- **为什么算式不在时间线里**：它是战斗裁决，和 `resolve_defense`（挡没挡下）、
+  `counter_damage`（回敬多少）同类，因此都住 `combat/formula/domain.rs`；
+  时间线只负责"这一手还占着槽"这件事本身。
 
 ## 六、反应系统：威胁 → 冻结 → 玩家表态
 

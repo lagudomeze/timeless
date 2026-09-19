@@ -16,8 +16,8 @@ use super::TimelineSet;
 use super::events::{ActionBlocked, PauseRequest, PlayerIntent, UndoCommand, UseFocus};
 use super::resources::{Focus, FocusIntent, PauseReasons};
 use super::systems::{
-    apply_clock, compute_player_awaiting_system, interrupt_observer, interrupt_system,
-    process_pause_requests, recover_focus_system, recovery_system, undo_system,
+    apply_clock, compute_player_awaiting_system, interrupt_system, process_pause_requests,
+    recover_focus_system, recovery_system, undo_system,
 };
 
 /// 无回合时间线插件。
@@ -39,8 +39,7 @@ impl Plugin for TimelinePlugin {
             .add_message::<ActionBlocked>()
             .add_message::<UndoCommand>()
             // 撤销：undo_system 触发 EntityEvent，花钱的领域各自订阅退款
-            // 打断：命中结算触发 EntityEvent，本域的 Observer 当场处理
-            .add_observer(interrupt_observer)
+            // （打断的 Observer 住在 combat::formula：那是战斗判定，本域只提供数据）
             .add_systems(
                 Update,
                 (

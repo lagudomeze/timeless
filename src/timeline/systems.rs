@@ -12,8 +12,7 @@ use bevy::prelude::*;
 use super::components::{InputDriven, Uncancellable};
 use super::decision::DecisionSlot;
 use super::events::{
-    ActionCancelled, DecisionReady, InterruptEvent, PauseRequest, PlayerIntent, UndoCommand,
-    UseFocus,
+    ActionCancelled, DecisionReady, PauseRequest, PlayerIntent, UndoCommand, UseFocus,
 };
 use super::resources::{FOCUS_RECOVER_INTERVAL, Focus, FocusIntent, PauseReasons, SLOT_EMPTY};
 use super::schedule::ScheduledAction;
@@ -182,57 +181,6 @@ pub fn apply_clock(reasons: Res<PauseReasons>, mut time: ResMut<Time<Virtual>>) 
     }
 }
 
-/// 3d5：三个五面骰之和（3..=15）。打断对抗用它给双方各加一点运气。
-fn roll_3d5() -> i32 {
-    (0..3).map(|_| rand::random_range(1..=5)).sum()
-}
-
-/// 打断 Observer：命中打过来时，对目标那条**还没到点**的行动做一次掷骰对抗。
-///
-/// ```text
-/// 攻方 = power + 3 + 3d5
-/// 守方 = interrupt_resist + 3 + 3d5
-/// 攻方 >= 守方 → 这条行动被销毁，目标立刻拿回决策槽
-/// ```
-///
-/// 规则细节：
-/// - 只打断 `execute_at > now` 的行动——**本帧到点的已经落地**，打不断；
-/// - `power == 0` 直接返回（有力度才谈对抗）；
-/// - 打断是"抹掉还没发生的事"，因此不退款、不还精力：那一手白费了。
-pub fn interrupt_observer(
-    trigger: On<InterruptEvent>,
-    time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &ChildOf)>,
-    mut commands: Commands,
-) {
-    let power = trigger.power;
-    if power == 0 {
-        return;
-    }
-    let target = trigger.entity;
-    let source = trigger.source;
-    let now = time.elapsed_secs();
-    let Some((action, schedule, _)) = actions
-        .iter()
-        .find(|(_, schedule, child_of)| child_of.parent() == target && schedule.pending(now))
-    else {
-        return; // 来不及：这一手已经落地，或者本来就没事可打断
-    };
-
-    let attack = power + 3 + roll_3d5();
-    let defense = schedule.interrupt_resist + 3 + roll_3d5();
-    if attack < defense {
-        debug!("⚖ 打断失败：{source:?} 对 {target:?}（{attack} < {defense}）");
-        return;
-    }
-
-    info!("⚡ 打断成功：{source:?} 打掉了 {target:?} 的行动（{attack} >= {defense}）");
-    commands.entity(action).despawn();
-    if let Ok(mut actor) = commands.get_entity(target) {
-        actor.insert(DecisionSlot::Empty);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,7 +207,6 @@ mod tests {
             .add_message::<UndoCommand>()
             .init_resource::<Cancellations>()
             .add_observer(record_cancellation)
-            .add_observer(interrupt_observer)
             .add_systems(
                 Update,
                 (
@@ -566,77 +513,6 @@ mod tests {
         assert!(
             app.world().get_entity(action).is_ok(),
             "已经到点的行动不该被撤销"
-        );
-    }
-
-    /// 打断：掷骰对抗赢了就销毁行动并清空决策槽；`power == 0` 不做对抗。
-    #[test]
-    fn interrupt_despawns_a_pending_action_and_frees_the_slot() {
-        let mut app = clock_app();
-        let target = app.world_mut().spawn(DecisionSlot::Windup).id();
-        let action = app
-            .world_mut()
-            .spawn((
-                ChildOf(target),
-                ScheduledAction::declared_at(TEST_TIMING, 0.0),
-            ))
-            .id();
-        let source = app.world_mut().spawn_empty().id();
-
-        // 力度 0：连对抗都不做
-        app.world_mut().trigger(InterruptEvent {
-            entity: target,
-            source,
-            power: 0,
-        });
-        app.world_mut().flush(); // Observer 里的命令要落到世界才看得到
-        assert!(app.world().get_entity(action).is_ok());
-
-        // 力度 100：3d5 的差值最大 12，必赢
-        app.world_mut().trigger(InterruptEvent {
-            entity: target,
-            source,
-            power: 100,
-        });
-        app.world_mut().flush();
-        assert!(
-            app.world().get_entity(action).is_err(),
-            "被打断的行动应当消失"
-        );
-        assert_eq!(
-            app.world().get::<DecisionSlot>(target).copied(),
-            Some(DecisionSlot::Empty),
-            "被打断的人应当立刻拿回决策槽"
-        );
-    }
-
-    /// 本帧到点的行动已经落地，打不断。
-    #[test]
-    fn an_action_that_came_due_this_frame_survives_an_interrupt() {
-        let mut app = clock_app();
-        let target = app.world_mut().spawn(DecisionSlot::Windup).id();
-        let action = app
-            .world_mut()
-            .spawn((
-                ChildOf(target),
-                ScheduledAction::declared_at(TEST_TIMING, 0.0),
-            ))
-            .id();
-        let source = app.world_mut().spawn_empty().id();
-
-        app.world_mut().resource_mut::<Time<Virtual>>().unpause();
-        for _ in 0..12 {
-            app.update();
-        }
-        app.world_mut().trigger(InterruptEvent {
-            entity: target,
-            source,
-            power: 100,
-        });
-        app.world_mut().flush();
-        assert!(
-            app.world().get_entity(action).is_ok(),
-            "已经到点的行动打不断（它已经出去了）"
         );
     }
 

@@ -60,8 +60,8 @@ pub mod timing;
 pub use components::{InputDriven, Uncancellable};
 pub use decision::DecisionSlot;
 pub use events::{
-    ActionBlocked, ActionCancelled, BlockReason, DecisionReady, InterruptEvent, PauseRequest,
-    PlayerIntent, UndoCommand, UseFocus,
+    ActionBlocked, ActionCancelled, BlockReason, DecisionReady, PauseRequest, PlayerIntent,
+    UndoCommand, UseFocus,
 };
 pub use plugin::TimelinePlugin;
 pub use resources::{
@@ -69,9 +69,8 @@ pub use resources::{
 };
 pub use schedule::ScheduledAction;
 pub use systems::{
-    apply_clock, compute_player_awaiting_system, interrupt_observer, interrupt_system,
-    process_pause_requests, recover_focus_system, recovery_system, track_focus_intent_system,
-    undo_system,
+    apply_clock, compute_player_awaiting_system, interrupt_system, process_pause_requests,
+    recover_focus_system, recovery_system, track_focus_intent_system, undo_system,
 };
 pub use timing::ActionTiming;
 

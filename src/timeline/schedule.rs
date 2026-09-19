@@ -27,11 +27,6 @@ use super::timing::ActionTiming;
 pub struct ScheduledAction {
     /// 执行时刻（虚拟秒）
     pub execute_at: f32,
-    /// 打断抗性：被打断时掷骰防守方那一侧的底数
-    ///
-    /// 从 [`ActionTiming`] 抄过来的一份**快照**：打断由时间线自己的 Observer 判定，
-    /// 它因此不必为了这件事去读载荷的节奏组件。
-    pub interrupt_resist: i32,
 }
 
 impl Default for ScheduledAction {
@@ -39,7 +34,6 @@ impl Default for ScheduledAction {
     fn default() -> Self {
         Self {
             execute_at: f32::INFINITY,
-            interrupt_resist: 0,
         }
     }
 }
@@ -49,7 +43,6 @@ impl ScheduledAction {
     pub fn declared_at(timing: ActionTiming, now: f32) -> Self {
         Self {
             execute_at: now + timing.windup,
-            interrupt_resist: timing.interrupt_resist,
         }
     }
 
@@ -57,11 +50,8 @@ impl ScheduledAction {
     ///
     /// 玩家用 Focus 抢先手走这条路；测试与「本来就该瞬发」的动作（比如脚本化的处决）
     /// 也走它，免得各处自己改 `execute_at`。
-    pub fn immediate(timing: ActionTiming, now: f32) -> Self {
-        Self {
-            execute_at: now,
-            interrupt_resist: timing.interrupt_resist,
-        }
+    pub fn immediate(now: f32) -> Self {
+        Self { execute_at: now }
     }
 
     /// 玩家（有 Focus 的一方）声明：想归零前摇且还有余量时，扣 1 点并把
@@ -77,7 +67,7 @@ impl ScheduledAction {
         zero_windup: bool,
     ) -> Self {
         if zero_windup && focus.spend() {
-            Self::immediate(timing, now)
+            Self::immediate(now)
         } else {
             Self::declared_at(timing, now)
         }
@@ -112,7 +102,6 @@ mod tests {
     fn schedule_derives_everything_from_the_declaration_time() {
         let schedule = ScheduledAction::declared_at(TEST_TIMING, 2.0);
         assert_eq!(schedule.execute_at, 2.2, "执行时刻 = 声明时刻 + 前摇");
-        assert_eq!(schedule.interrupt_resist, TEST_TIMING.interrupt_resist);
         assert!(schedule.pending(2.0), "刚声明时还在前摇");
         assert!(schedule.pending(2.19));
         assert!(!schedule.pending(2.20), "到点就不算 pending 了");

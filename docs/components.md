@@ -109,8 +109,9 @@ ChunkUnloadEvent -> despawn_chunk_surfaces_system（清理网格）
 | :--- | :--- | :--- | :--- | :--- |
 | `DecisionSlot`（`Empty` / `Windup` / `Recovery`） | 单位 | `unit_scene`（`Empty`） | movement / combat / defense / skills 的**所有**声明系统、`ai` 两个系统、`menu` 的循环与派发、`compute_player_awaiting_system`（世界要不要停）、`combat::reaction`（玩家表态了没有）、HUD（面板状态行、时间轴候场区） | 声明时 `Windup`（`add_child` 行动实体 + insert）；`recovery_system` 在后摇到点时置 `Empty`；`undo_system` / `interrupt_observer` 置 `Empty` |
 | `InputDriven` | 单位 | `player_scene` | `compute_player_awaiting_system`（停下等谁）、`combat::reaction`（谁被威胁 / 谁在表态）、`undo_system`（只撤玩家的行动）、各玩家声明系统（认人不认阵营） | 不变 |
-| `ScheduledAction { execute_at, interrupt_resist }` | 行动实体（行动者的**子实体**，`ChildOf`） | 所有行动场景工厂（`declared_at` / `immediate` / `with_focus`） | 各执行器（`due`）、`undo_system` / `interrupt_observer`（`pending`）、`ai::decide_intent_system`（威胁）、HUD 时间轴 / 行动行 | 不变（行动实体销毁即消失）；**没有 `actor`**：归属由 `ChildOf` 回答；**没有节奏**：见下一行的 `ActionTiming` |
+| `ScheduledAction { execute_at }` | 行动实体（行动者的**子实体**，`ChildOf`） | 所有行动场景工厂（`declared_at` / `immediate` / `with_focus`） | 各执行器（`due`）、`undo_system` / `interrupt_observer`（`pending`）、`ai::decide_intent_system`（威胁）、HUD 时间轴 / 行动行 | 不变（行动实体销毁即消失）；**只有"什么时候落地"一个事实**：归属归 `ChildOf`、节奏归 `ActionTiming` |
 | `Uncancellable` | 行动实体 | 行动场景工厂（目前只有 `jump_action_scene`） | `undo_system`（`Without<Uncancellable>`：挂了就不给撤） | 行动实体销毁即消失；退款金额不在这里（见 5.4 的退款 Observer） |
+| `ActionTiming { windup, recovery, interrupt_resist }` | 行动实体（跟着载荷一起挂） | 各领域自己的 `*_TIMING` 常量，由行动场景工厂挂上 | 各执行器（算忙碌窗口）、HUD 时间轴（`execute_at − windup` 起算、宽度 `total()`）、`combat::formula::interrupt_observer`（守方底数） | 不变；**具体数值归载荷**（见 [timeline.md](timeline.md) 第三节） |
 
 ### 4.2 资源
 
@@ -133,7 +134,7 @@ recover_focus_system           每 10 虚拟秒回 1 点 Focus
 （帧末 ClockSet）process_pause_requests -> apply_clock：**唯一**写 Time<Virtual> 的地方
 ```
 
-`interrupt_observer` / `recover_stamina_observer` / 两个退款 Observer 都不在系统链里：
+`interrupt_observer`（住 `combat::formula`）/ `recover_stamina_observer` / 两个退款 Observer 都不在系统链里：
 它们是 EntityEvent 的 Observer，触发那一刻当场执行（见 [timeline.md](timeline.md) 第四 / 五节）。
 
 手动暂停不在这一域：`input::keyboard::pause_input_system` 读 `PauseReasons` 判断
@@ -359,7 +360,7 @@ UnitSprites   --> unit_scene  --^
 | `recovery_system` | `DecisionSlot`（只处理 `Recovery`）、`Time<Virtual>` | `DecisionSlot::Empty`、trigger `DecisionReady` |
 | `recover_focus_system` | `Time<Virtual>` | `Focus` |
 | `process_pause_requests` / `apply_clock` | `PauseRequest` / `PauseReasons` | `PauseReasons`（每帧 `clear` 后重建）/ `Time<Virtual>`（**唯一**写时钟的地方） |
-| `interrupt_observer` | `InterruptEvent`、`ScheduledAction`（`pending`）、`ChildOf`（取行动者）、`Time<Virtual>` | 销毁行动实体、`DecisionSlot::Empty` |
+| `interrupt_observer`（住 `combat::formula`） | `InterruptEvent`、`ScheduledAction`（`pending`）、`ActionTiming`（守方 `interrupt_resist`）、`ChildOf`（取行动者）、`Time<Virtual>` | 销毁行动实体、`DecisionSlot::Empty` |
 | `declare_move_system` / `declare_move_to_system` / `declare_jump_system` | 命令消息、`InputDriven`、`DecisionSlot`、`Cell`、`Focus`、`FocusIntent`、`Time<Virtual>` | 行动实体、行动者的 `DecisionSlot::Windup` + `ChildOf`、`ActionBlocked` |
 | `move_action_executor_system` | `MoveAction`、`ScheduledAction`（`due`）、`ActionTiming`（忙碌窗口）、`ChildOf`、`Cell`、`MoveSpeed`、`Transform` | `Velocity`、`MoveGoal`、`DecisionSlot::Recovery`、销毁行动实体 |
 | `move_entities_system` | `Transform`、`Velocity`、`MoveGoal`、`DodgingOnArrival`、`Time`、`TerrainConfig` | `Transform`、`Velocity`、`Cell`、`Dodging`、`MoveGoal`(remove) |

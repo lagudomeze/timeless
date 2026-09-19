@@ -108,26 +108,6 @@ pub struct ActionCancelled {
     pub actor: Entity,
 }
 
-/// 一次打断：**命中打过来**，把目标那条还没到点的行动打掉。
-///
-/// 用 `EntityEvent` 而不是 Message：它针对具体实体、必须即时生效
-/// （Observer 里当场决定那条行动还在不在），且没有「批量广播」的语义。
-///
-/// 写：命中的结算系统（[`crate::combat::formula::apply_physical_hits_system`]）；
-/// 消费：[`interrupt_observer`](super::systems::interrupt_observer)。
-///
-/// 规则：只打断 `execute_at > now` 的行动（本帧到点的已经落地，打不断）；
-/// `power == 0` 直接返回，不做对抗。
-#[derive(EntityEvent, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InterruptEvent {
-    /// 被打断的目标（`EntityEvent` 的目标实体）
-    pub entity: Entity,
-    /// 打断源（攻击实体 / 技能来源，日志与复盘用）
-    pub source: Entity,
-    /// 打断力度
-    pub power: i32,
-}
-
 /// 后摇结束、决策槽回到 `Empty`（发给**行动者**）。
 ///
 /// 写：[`recovery_system`](super::systems::recovery_system)；

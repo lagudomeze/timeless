@@ -170,13 +170,14 @@ mod tests {
     use crate::combat::defense::{Dodging, Parrying, ROLL_COST, RollCommand, Stamina};
     use crate::combat::skills::{FIREBALL_TIMING, FireballAction, fireball_action_scene};
     use crate::combat::{
-        Armor, Collidable, DamageEvent, Faction, Fireball, HitOnce, HitRadius, InterruptPower,
-        Lifetime, MeleeShape, PhysicalDamage, Projectile, Threatens, health::Health,
+        Armor, Collidable, DamageEvent, Faction, Fireball, HitOnce, HitRadius, InterruptEvent,
+        InterruptPower, Lifetime, MeleeShape, PhysicalDamage, Projectile, Threatens,
+        health::Health,
     };
     use crate::movement::{Cell, Jumping, MOVE_TIMING, MoveAction, MoveSpeed, Velocity};
     use crate::timeline::{
-        DecisionSlot, FOCUS_MAX, Focus, InputDriven, InterruptEvent, PauseReasons, ScheduledAction,
-        THREAT, UndoCommand,
+        DecisionSlot, FOCUS_MAX, Focus, InputDriven, PauseReasons, ScheduledAction, THREAT,
+        UndoCommand,
     };
     use crate::world::{TerrainConfig, ground_position};
 
@@ -993,6 +994,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(enemy),
+                FIREBALL_TIMING,
                 ScheduledAction::declared_at(FIREBALL_TIMING, 0.0),
             ))
             .id();
@@ -1035,7 +1037,12 @@ mod tests {
         assert!(!schedule.pending(0.0), "这条行动应当已经到点");
         let action = app
             .world_mut()
-            .spawn((ChildOf(target), schedule, MoveAction::default()))
+            .spawn((
+                ChildOf(target),
+                MOVE_TIMING,
+                schedule,
+                MoveAction::default(),
+            ))
             .id();
         let source = app.world_mut().spawn_empty().id();
 
@@ -1060,7 +1067,7 @@ mod tests {
         let enemy = spawn_enemy(&mut app, Cell::new(4, 0), Vec3::new(9.0, 0.0, 1.0));
 
         // 一条「立刻落地」的火球行动：射手这一帧就出手
-        let schedule = ScheduledAction::immediate(FIREBALL_TIMING, 0.0);
+        let schedule = ScheduledAction::immediate(0.0);
         let action = app
             .world_mut()
             .spawn_scene(fireball_action_scene(
