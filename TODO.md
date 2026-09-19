@@ -191,6 +191,56 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [x] **文档整合**：文档收敛为「入口 + 架构 + 时间线 + 组件对照 + 设计 + 素材 +
       Bevy 速查」七篇，进度合并进本文件；移除已冻结的 `timeless/` workspace。
 
+## 设计落地路线（M22+，本轮定稿）
+
+> 一次设计评审的结论。**文档已按目标态重建**（`docs/index.md` 是新入口），
+> 代码还停在旧模型上——所以下面每一条都是"文档已写、代码待落"。
+> 目标态与现状的差异在每篇文档顶部都标了 ⚠️ / 🚧。
+
+**逐条定夺的结果**（8 条冲突 + 3 条结构性决定）：
+
+| # | 主题 | 决议 |
+| :--- | :--- | :--- |
+| C1 | 行动的归属 | **换成自定义关系** `ActionOf(actor)` / `Actions`（`linked_spawn`），不再用 `ChildOf`——行动没有 `Transform`，"物理附着"这个词不该被挪用 |
+| C2 | 决策槽 | **换成意图式** `Idle { intent } \| Executing { until }`：槽回答"决定了没有"，阶段由行动实体回答 |
+| C3 | 打断 | **标签做闸门 + 掷骰做对抗**：`interruptible` / `super_armor` 决定能不能断，`interrupt_lands` 决定这一次成不成 |
+| C4 | 格挡 | 采纳（防御链补一格：闪避 → 招架 → 格挡 → 抗性 → 扣血 → 打断） |
+| C5 | 威胁 / 反制 | 采纳 `ReactionSlot` + `CounterSuggestion` + `CounterCost`，**取代 `ThreatWindow`**（顺带修掉那个死锁） |
+| C6 | 释放条件 | 采纳 `AbilityDef.requirements` + 集中 `can_cast()`；`phases` / `effects` 后置 |
+| C7 | 装备 | 采纳（槽位 `ChildOf` PC + 物品 `EquippedTo` 槽位），纯新增 |
+| C8 | 关系模型总纲 | **物理附着用 `ChildOf`，逻辑关系用自定义关系**（新铁律） |
+| — | `ActionQueue` | **删除**：决策槽 + 时间轴已覆盖"收集决策、排序执行" |
+| — | 目录粒度 | **每个 mod 出自己的 `plugin.rs`**，父域只编排顺序 |
+| — | 文档 | **重建**（不增补）：新增 domain / relations / combat / skills / equipment，`architecture.md` 与 `components.md` 待替代完成后删除 |
+
+**C2 的两个技术发现**（写进 `docs/timeline.md` 第四 / 九节）：
+
+1. **"同时提交"是免费的**：冻结时 `Time<Virtual>` 不走，双方 `execute_at` 以同一个
+   冻结时刻为基准——思考 5 秒和 0.5 秒起跑线相同。不需要额外的提交动作。
+2. **`{ intent, executing }` 装不下后摇截止**：行动实体执行时就销毁了，
+   所以槽需要 `Executing { until }` 带上"忙到什么时候"。
+
+### 待办（按顺序）
+
+- [ ] **M22 关系模型**：行动归属从 `ChildOf` 换成 `ActionOf` / `Actions`（`linked_spawn`）。
+      **先实测 `bsn!` 能不能写自定义关系组件**——M21 那次"按 `Template` 约束推断不行、
+      实测却可以"的教训要记住。改动面：7 个场景工厂 + 所有 `child_of.parent()` 读取点
+      （执行器 / 撤销 / 打断 / 威胁 / HUD）+ 两个测试。行为不变（级联销毁保留）。
+- [ ] **M23 意图式决策槽**（最大的一步）：槽换形状、声明系统改成**填意图**、
+      新增"开闸物化"一步、闸门判据从"有 `InputDriven` 空槽"改成"有槽 `!ready`"。
+      执行器 / `ScheduledAction` / `ActionTiming` / 暂停机制**都不动**。
+- [ ] **M24 `AbilityDef` + `can_cast`**：把 `SKILLS` 扩成 `AbilityDef`（加
+      `requirements` / `category` / `combat` 标签），条件校验收成 `can_cast` 一处，
+      落在填意图之前。
+- [ ] **M25 对抗标签 + 格挡**：`CombatTags` 闸门（含霸体）+ 防御链补格挡；
+      **保留**掷骰对抗 `interrupt_lands`。
+- [ ] **M26 反应槽 + 反制**：`ReactionSlot` 取代 `ThreatWindow`（**顺带修掉
+      `opening_action` 那个死锁**）+ `CounterCost` + `CounterSuggestion` 给 UI 高亮。
+- [ ] **M27 装备系统**：全新（槽位 / `EquippedTo` / 类型校验 Observer / 穿脱）。
+- [ ] **M28 每个 mod 出 `plugin.rs`**：`CombatPlugin` 只编排子域顺序、不注册系统。
+      与其它步独立，随时可做。
+- [ ] **M29 删掉 `architecture.md` / `components.md`**：替代完成后的收尾。
+
 ## 待办
 
 ### 工程债（按优先级）
