@@ -26,7 +26,7 @@ use crate::combat::{AttackRange, Faction, Health};
 use crate::movement::{
     CELL_SIZE, Cell, MOVE_TIMING, ROLL_TIMING, move_action_scene, step_from_axis,
 };
-use crate::timeline::{DecisionSlot, ScheduledAction};
+use crate::timeline::{DecisionSlot, ScheduledAction, attach_action};
 
 use super::components::{EnemyBrain, Intent};
 
@@ -212,10 +212,7 @@ pub fn enemy_declare_system(
                         ScheduledAction::declared_at(MOVE_TIMING, now),
                     ))
                     .id();
-                commands
-                    .entity(entity)
-                    .add_child(action)
-                    .insert(DecisionSlot::Windup);
+                attach_action(&mut commands, entity, action);
             }
             Intent::Melee => {
                 declare_melee_at(

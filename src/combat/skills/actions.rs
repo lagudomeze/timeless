@@ -20,6 +20,7 @@ use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
 use crate::timeline::{
     ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
+    attach_action,
 };
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
@@ -175,10 +176,7 @@ pub fn declare_melee_at(
         .spawn_scene(melee_action_scene(from_cell, target_cell, timing, schedule))
         .id();
     // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
-    commands
-        .entity(actor)
-        .add_child(action)
-        .insert(DecisionSlot::Windup);
+    attach_action(commands, actor, action);
     action
 }
 

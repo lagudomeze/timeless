@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use crate::timeline::{
     ActionBlocked, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
-    ScheduledAction, Uncancellable,
+    ScheduledAction, Uncancellable, attach_action,
 };
 
 use super::cell::{Cell, MoveGoal};
@@ -152,10 +152,7 @@ pub fn declare_move_system(
     let action = commands
         .spawn_scene(move_action_scene(*cell, to_cell, MOVE_TIMING, schedule))
         .id();
-    commands
-        .entity(player)
-        .add_child(action)
-        .insert(DecisionSlot::Windup);
+    attach_action(&mut commands, player, action);
 }
 
 /// 声明移动（点地板）：`MoveToCommand` → 朝目标格走**一条直线**的行动。
@@ -186,10 +183,7 @@ pub fn declare_move_to_system(
     let action = commands
         .spawn_scene(move_action_scene(*cell, target, MOVE_TIMING, schedule))
         .id();
-    commands
-        .entity(player)
-        .add_child(action)
-        .insert(DecisionSlot::Windup);
+    attach_action(&mut commands, player, action);
 }
 
 /// 执行：到点的移动行动 → 朝**目标格中心**设速度，到位后由 `move_entities_system` 停下。
@@ -253,10 +247,7 @@ pub fn declare_jump_system(
     let action = commands
         .spawn_scene(jump_action_scene(JUMP_TIMING, schedule))
         .id();
-    commands
-        .entity(player)
-        .add_child(action)
-        .insert(DecisionSlot::Windup);
+    attach_action(&mut commands, player, action);
 }
 
 /// 执行：到点后给行动者一个向上初速度，剩下交给 [`jump_motion_system`]。

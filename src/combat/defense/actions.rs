@@ -11,6 +11,7 @@ use crate::combat::Faction;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
 use crate::timeline::{
     ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
+    attach_action,
 };
 
 use super::components::{ParryAction, Parrying};
@@ -70,10 +71,7 @@ pub fn declare_roll(
         ))
         .id();
     // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
-    commands
-        .entity(actor)
-        .add_child(action)
-        .insert(DecisionSlot::Windup);
+    attach_action(commands, actor, action);
     action
 }
 
@@ -213,10 +211,7 @@ pub fn declare_parry_system(
             schedule,
         ))
         .id();
-    commands
-        .entity(player)
-        .add_child(action)
-        .insert(DecisionSlot::Windup);
+    attach_action(&mut commands, player, action);
 }
 
 /// 执行招架：给行动者挂 [`Parrying`]，绑定被挡的那次攻击。

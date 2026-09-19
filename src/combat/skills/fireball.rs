@@ -19,6 +19,7 @@ use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
 use crate::timeline::{
     ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
+    attach_action,
 };
 
 use super::actions::MELEE_TIMING;
@@ -285,10 +286,7 @@ pub fn declare_fireball_at(
         ))
         .id();
     // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
-    commands
-        .entity(actor)
-        .add_child(action)
-        .insert(DecisionSlot::Windup);
+    attach_action(commands, actor, action);
     action
 }
 

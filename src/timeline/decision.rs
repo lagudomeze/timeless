@@ -143,6 +143,25 @@ pub trait FirstReady: Iterator + Sized {
 
 impl<I: Iterator> FirstReady for I {}
 
+/// **记账的另一半**：把刚造出来的行动实体挂到行动者名下，并把行动者的决策槽
+/// 推进 [`DecisionSlot::Windup`]。
+///
+/// 「行动是行动者的**子实体**」与「声明即占槽」都是时间线的规则，所以这两句
+/// 只在这里写一遍；领域只负责造出那一刻的行动实体：
+///
+/// ```text
+/// let action = commands.spawn_scene(move_action_scene(…)).id();
+/// attach_action(&mut commands, player, action);
+/// ```
+///
+/// 玩家路径与 AI 路径共用它——两边产出的行动实体完全一样，区别只在触发源。
+pub fn attach_action(commands: &mut Commands, actor: Entity, action: Entity) {
+    commands
+        .entity(actor)
+        .add_child(action)
+        .insert(DecisionSlot::Windup);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
