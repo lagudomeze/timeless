@@ -3,8 +3,11 @@
 > ⚠️ **本篇正在被 [domain.md](domain.md) 取代**（域地图 / 跨域契约 / 执行顺序 / 铁律）。新内容一律写进 `domain.md`；本篇只作历史参考，替代完成后删除。
 >
 > ⚠️ **已知与代码不符**：行动实体的归属已从 `ChildOf` 换成自定义关系
-> `ActionOf` / `Actions`（M22，见 [relations.md](relations.md)）；本篇里所有
-> "行动是行动者的子实体"的说法都已过时。
+> `ActionOf` / `Actions`（M22，见 [relations.md](relations.md)）；一批标识符也改过名
+> （`PlayerIntent` → `PlayerTakeover`、`ai::Intent` → `ai::Tactic`、
+> `FocusIntent` → `PendingFocus`）；技能定义要搬去顶层 `skills` 域
+> （[skills.md](skills.md)）。本篇里凡是"行动是行动者的子实体"、旧名字、
+> `combat/skills` 作为注册表的说法都已过时。
 
 > **描述对象：代码 A（仓库根 `src/`，package `app`，Bevy 0.19）。**
 > 本文是模块结构、分层约束与执行顺序的权威说明，与代码同步维护。

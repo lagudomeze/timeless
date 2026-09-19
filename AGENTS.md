@@ -17,13 +17,14 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 ├── src/                      # 游戏代码，一个领域 = 一个目录 = 一个 Plugin
 ├── assets/                   # 素材（LICENSES.md 可追溯）
 ├── tests/assets.rs           # 资产验收：字体是合法 sfnt、精灵与图标是带 alpha 的方图
-├── skills/                   # 可复用 Codex 技能（bevy-019-docs / bevy-assets）
+├── skills/                   # Codex 技能（与 src/skills/ 无关）：bevy-019-docs / bevy-assets
 └── docs/                     # 架构 / 时间线 / 组件对照 / 设计 / 素材 / Bevy 速查
 ```
 
 领域：`world`（体素数据，零渲染依赖）· `voxel_render`（网格化 / 材质 / 明暗）·
-`movement` · `combat` · `timeline` · `ai` · `input` · `interaction` · `presentation` ·
-`spawn`（组装车间）。完整说明见 [`docs/architecture.md`](docs/architecture.md)。
+`movement` · `combat` · `skills`（技能**静态定义**）· `timeline` · `ai` · `input` ·
+`interaction` · `presentation` · `spawn`（组装车间）。`utils` 是纯几何工具，不是领域。
+完整说明见 [`docs/domain.md`](docs/domain.md)。
 
 ## 构建、测试与开发命令
 
@@ -69,10 +70,10 @@ cargo fmt --check                           # 格式校验
 
 - **UI 输入只翻译、不执行**：键盘 / 鼠标不得直接修改游戏状态，只把操作翻译成
   Bevy `Message`，再由对应领域的单一职责系统消费落地。当前消息清单见
-  [`docs/architecture.md`](docs/architecture.md) 第六节。
+  [`docs/domain.md`](docs/domain.md) 第二节。
 - **消息定义与消费它的系统同属一个领域**：如 `MoveCommand` 与 `declare_move_system`
   在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/skills/`、
-  `PauseRequest` / `PlayerIntent` / `UndoCommand` 与
+  `PauseRequest` / `PlayerTakeover` / `UndoCommand` 与
   `compute_player_awaiting_system` / `undo_system` /
   `process_pause_requests` 在 `timeline/`、
   `PointerCommand` 与 `pointer_command_system` 在 `interaction/`。

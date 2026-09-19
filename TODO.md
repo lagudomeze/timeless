@@ -33,7 +33,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
   `process_pause_requests` 每帧重建 `PauseReasons`，唯一的时钟写入点是帧末的 `apply_clock`；
   行动归行动者所有（`ActionOf` / `Actions`，人没了行动跟着没），`Focus` 让玩家把一次前摇买掉
 - `ai` 六种意图（含威胁预判）+ 声明行动
-- `input` 只翻译（含 `F5` → `ResetBattle`、空格 → `PauseRequest`、`PlayerIntent`）·
+- `input` 只翻译（含 `F5` → `ResetBattle`、空格 → `PauseRequest`、`PlayerTakeover`）·
   `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
 - `presentation` 相机 / 单位纸片与贴地阴影 / 装饰 / 中文日志 / 英文 HUD
 - `spawn` 组装车间（消费 `ResetBattle`，不认识按键）
@@ -104,7 +104,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `Busy` 组件与 `DecisionSlot::Filled` 删除；调度数据搬进新的 `schedule.rs`。
       ② 交互边界：`F5` 的读取从 `spawn/restart.rs` 搬进
       `input::keyboard::restart_input_system`；时间线不再读各领域的命令，
-      改认输入层唯一的一条 `PlayerIntent`（写：键盘 / 左键，消费：`interrupt_system`）；
+      改认输入层唯一的一条 `PlayerTakeover`（写：键盘 / 左键，消费：`interrupt_system`）；
       `recovery_system` 不再直接改 `Stamina`，改为 trigger `DecisionReady`
       （`combat::defense::recover_stamina_observer` 订阅回 1 点）；暂停改成**每帧断言**
       （`PauseRequest::{Pause, Resume}`，`Resume` 不带原因，`process_pause_requests`
@@ -172,7 +172,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       「按概念分文件，系统跟着数据走」。
       ③ `interrupt_system` 并进 `undo_system`：它的名字骗人（真正的打断 `InterruptEvent`
       已搬去 `combat`），实际做的是"玩家表达了新意图 → 撤掉旧那一手"。现在 `undo_system`
-      直接收两个来源（`UndoCommand` 右键 / `PlayerIntent` 换手），少一条消息转发。
+      直接收两个来源（`UndoCommand` 右键 / `PlayerTakeover` 换手），少一条消息转发。
       验收：181 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过 / `cargo run` 无 panic。
 - [x] **M21 撤掉 `attach_action`：让场景工厂自带 `ChildOf`**（本次）：
       M20 ① 把「挂成子实体」与「决策槽推进 `Windup`」打包成一个 `attach_action`，
@@ -226,12 +226,39 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 | — | 目录粒度 | **每个 mod 出自己的 `plugin.rs`**，父域只编排顺序 |
 | — | 文档 | **重建**（不增补）：新增 domain / relations / combat / skills / equipment，`architecture.md` 与 `components.md` 待替代完成后删除 |
 
-**C2 的两个技术发现**（写进 `docs/timeline.md` 第四 / 九节）：
+**C2 的两个技术发现**（写进 `docs/timeline.md` 第三节）：
 
-1. **"同时提交"是免费的**：冻结时 `Time<Virtual>` 不走，双方 `execute_at` 以同一个
+1. **"同时提交"是免费的**：冻结时 `Time<Virtual>` 不走，① 和 ③ 都以同一个
    冻结时刻为基准——思考 5 秒和 0.5 秒起跑线相同。不需要额外的提交动作。
 2. **`{ intent, executing }` 装不下后摇截止**：行动实体执行时就销毁了，
    所以槽需要 `Executing { until }` 带上"忙到什么时候"。
+
+### 追加决议（评审第 2 轮，2026-09）
+
+评审对上面的方案提了 6 条修正 + 一轮之内到底发生什么。**已全部写进文档**：
+
+| # | 主题 | 决议 |
+| :--- | :--- | :--- |
+| D1 | 命名 | `ai::Intent` → **`ai::Tactic`**（战术），`ai::Decision` → **`ai::Situation`**（战况），`timeline::PlayerIntent` → **`PlayerTakeover`**（玩家动手了），`FocusIntent` → **`PendingFocus`**；`Intent` 这个词**只留给"动作决策"** |
+| D2 | 技能 | **`skills` 抽成顶层域**（不再挂在 `combat` 下）；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理；`AbilityDef` 是**静态、可序列化**的那一半（不许出现 `Entity` / 闭包），各机制域通过 `RegisterAbility` 把自己的定义交上来；`combat/skills` 改名 **`combat/attack`** |
+| D3 | 范围 | `Shape` 只是几何：住 **`utils`**，不是领域、没有 Plugin；伤害 = `Point`、回血 = 正方形；具体实现**直接引用或包一层**，不抽象成机制 |
+| D4 | 反制 | `CounterSuggestion` = **所有能当反制的技能 + 它要付的反制资源**，也就是 `ReactionSlot` 的 UI；HUD 高亮"付得起"的那些 |
+| D5 | 属性叠加 | 「基础值 + 加成」的结构**排在技能静态定义之后**定（`can_cast` 与命中公式都要读属性） |
+| D6 | 本轮范围 | **先把战斗做完**；roguelike 那一半（供应链 / 信息 / 掉落）只有 `game-design.md` 的总纲 |
+
+**一轮之内发生什么**（取代我原来写的"闸门 / 开闸"两个概念）：
+
+```text
+① 非 PC 的决策   所有空决策槽 → can_cast → 填 Intent → 立刻物化
+② 威胁扫描       前摇中、玩家还没表态的行动 → 与 PC 所在格相交 → 记入 ReactionSlot
+③ PC 的判定      槽空 → Pause("awaiting")；有威胁且没表态 → Pause("threat")
+                 + 高亮有反制资源的技能
+④ 结算           到点 → 效果判定（命中 / 防御链 / 打断 / 扣血）
+```
+
+**没有"闸门"这个机制**：能不能决策由决策槽回答（③），效果能不能落地归结算期的
+效果判定（④，见 `docs/combat.md` 第一节）。一帧的顺序（`InputSet → AiSet →
+执行器 / 威胁扫描 → 帧末 ClockSet`）**是语义的一部分**，不是性能选择。
 
 ### 待办（按顺序）
 
@@ -241,20 +268,33 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       （执行器 / 撤销 / 打断 / 威胁 / HUD）+ 两个测试。行为不变（级联销毁保留）。
       **已落地**：新增 `timeline/ownership.rs`；实测 `bsn!` 可以，机制是 `FromTemplate`
       + `#[entities]`（见 `docs/relations.md` 第五节）。
-- [ ] **M23 意图式决策槽**（最大的一步）：槽换形状、声明系统改成**填意图**、
-      新增"开闸物化"一步、闸门判据从"有 `InputDriven` 空槽"改成"有槽 `!ready`"。
+- [x] **M23 前置：命名归位（D1）**：`Intent` 这个词原本被三个东西占着，填意图之前先分清——
+      AI 的 `Intent` 是**战术**、`PlayerIntent` 是**输入层事实**、`FocusIntent` 是**本帧请求**，
+      三者都不是"决策"。改名：`ai::Tactic` / `ai::Situation` / `PlayerTakeover` /
+      `PendingFocus`（+ `track_pending_focus_system`、`tactic_label`），顺带修掉
+      `src/` 里 5 处多了一层 `..` 的文档链接。**行为不变**（纯改名，编译器全程把关）。
+      验收：182 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过。
+- [ ] **M23 意图式决策槽**（最大的一步）：槽换形状（`Idle { intent }` / `Executing { until }`）、
+      声明系统改成**填意图 + 当场物化**（**各域自己物化，不做全局派发器**）、
+      按上面 ①→④ 的顺序落一帧、`"slot_empty"` 改名 `"awaiting"`。
       执行器 / `ScheduledAction` / `ActionTiming` / 暂停机制**都不动**。
-- [ ] **M24 `AbilityDef` + `can_cast`**：把 `SKILLS` 扩成 `AbilityDef`（加
-      `requirements` / `category` / `combat` 标签），条件校验收成 `can_cast` 一处，
-      落在填意图之前。
-- [ ] **M25 对抗标签 + 格挡**：`CombatTags` 闸门（含霸体）+ 防御链补格挡；
-      **保留**掷骰对抗 `interrupt_lands`。
-- [ ] **M26 反应槽 + 反制**：`ReactionSlot` 取代 `ThreatWindow`（**顺带修掉
-      `opening_action` 那个死锁**）+ `CounterCost` + `CounterSuggestion` 给 UI 高亮。
-- [ ] **M27 装备系统**：全新（槽位 / `EquippedTo` / 类型校验 Observer / 穿脱）。
-- [ ] **M28 每个 mod 出 `plugin.rs`**：`CombatPlugin` 只编排子域顺序、不注册系统。
-      与其它步独立，随时可做。
-- [ ] **M29 删掉 `architecture.md` / `components.md`**：替代完成后的收尾。
+- [ ] **M24 `skills` 抽成顶层域（D2）+ `AbilityDef` + `can_cast`**：把 `SKILLS` 扩成
+      静态可序列化的 `AbilityDef`（加 `requirements` / `category` / `combat` / `counter`），
+      各域用 `RegisterAbility` 交定义，条件校验收成 `can_cast` 一处（落在填意图之前），
+      **移动 / 跳跃 / 翻滚与战斗技能走同一条路**。
+- [ ] **M25 对抗标签 + 格挡**：`CombatTags` 闸门（含霸体）+ 防御链补格挡
+      （格挡率来自装备 / 姿态 `BlockChance`）；**保留**掷骰对抗 `interrupt_lands`。
+- [ ] **M26 反应槽 + 反制（D4）**：`ReactionSlot` 取代 `ThreatWindow`（**顺带修掉
+      `opening_action` 那个死锁**）+ `CounterSuggestion`（= 所有 `counter != None` 的技能
+      + `CounterCost`）+ HUD 高亮"付得起"的技能 + `CounterCommand` / `AbandonReaction`。
+- [ ] **M27 装备系统（D5）**：全新（槽位 / `EquippedTo` / 类型校验 Observer / 穿脱），
+      并定下**属性的「基础值 + 加成」结构**。
+- [ ] **M28 每个 mod 出 `plugin.rs`**：`CombatPlugin` 只编排子域顺序、不注册系统；
+      顺带把 `combat/skills` 改名 `combat/attack`（D2 的收尾）。与其它步独立，随时可做。
+- [ ] **M29 删掉 `architecture.md` / `components.md` / `NEW_DESGIN.md`**：替代完成后的收尾。
+- [ ] **M30 `utils::Shape`（D3）**：把纯几何从各处的"临时算格子"里提出来
+      （伤害 `Point` / 回血正方形 / 爆炸 `Circle` / 近战 `Arc`），
+      `Threatens.cells` 改成由它在格尺度上算出来。与 M24/M25 独立，可随时插队。
 
 ## 待办
 

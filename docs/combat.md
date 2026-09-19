@@ -19,6 +19,9 @@
   └─▶ ⑥ 触发打断 / 施加 debuff
 ```
 
+格挡率的来源是**装备 / 姿态**（`BlockChance`，见第五节）——命中管线只读它，
+不自己算。
+
 **"有没有吃到冲击"决定第 ⑥ 步**：被闪开 / 被招架 = 没吃到冲击，因此**不触发打断**
 （挡住一次攻击不该反被打断）。格挡是**减伤不是免伤**，所以照样触发打断。
 
@@ -73,36 +76,69 @@ pub struct CombatTags {
 ```rust
 /// 一次威胁开一个窗口（挂在**被威胁的玩家**身上）
 pub struct ReactionSlot {
-    pub threat: Entity,               // 是哪条行动 / 哪颗投射物
-    pub options: Vec<AbilityId>,      // 可以拿哪几手反制（由标签匹配算出来）
-    pub resolved: bool,               // 玩家表态了没有
+    pub threat: Entity,                       // 是哪条行动 / 哪颗投射物
+    pub suggestions: Vec<CounterSuggestion>,  // 能拿哪几手反制（见下）
+    pub resolved: bool,                       // 玩家表态了没有
+}
+
+/// 一条反制建议 = **一个技能 + 它作为反制要付的代价**。
+pub struct CounterSuggestion {
+    pub ability: AbilityId,
+    pub cost: CounterCost,   // 技能的静态属性，见 skills.md 第四节
+    pub affordable: bool,    // 现在付得起吗（HUD 决定亮不亮）
 }
 ```
 
-流程：
+`suggestions` 的算法只有一条：**遍历注册表里所有 `counter != None` 的技能**
+（[skills.md](skills.md)），先过 `can_cast`（这一手此刻能不能出手），再算
+`affordable`。**没有任何硬编码的反制列表**——"翻滚能躲火球"是翻滚自己的
+`counter` 字段说的，不是这里判的。
+
+### 一轮里的三步（与 [timeline.md](timeline.md) 第三节对应）
 
 ```text
-敌对行动 / 投射物瞄准玩家所在格
-  └─▶ 断言 Pause("threat")           （每帧断言，见 timeline.md 第五节）
-  └─▶ 插入 ReactionSlot + 算出可反制项（CounterSuggestion → HUD 高亮）
-  └─▶ 玩家选一个反制 / 放弃
-  └─▶ 按 CounterCost 改时间轴，resolved = true
-  └─▶ 窗口关闭；威胁消失时不再断言，世界解冻
+① 扫描        所有「前摇中、玩家还没表态」的行动，与 PC 所在格相交 → 有威胁
+② 开窗口      取**最先落地**的那一个当 `threat`（多威胁一次只处理一个），
+              算 suggestions → 断言 Pause("threat")
+③ 玩家表态    按技能键 → 用这一手反制；按右键 → 放弃这一轮反制（威胁照常落地）
 ```
 
-**反制是独立资源，不覆盖决策槽**——反应槽与决策槽共存，互不改结构。
+- **暂停断言 = `威胁存在 && !resolved`**：窗口一开就冻住，玩家不表态就不解冻。
+  （口径里的"`ReactionSlot` 空"按这个实现：**"空"= 还没有一个已表态的窗口"**，
+  否则窗口一开世界就解冻、玩家反而没机会点。）
+- **退出只有两条**：表态，或者威胁自己消失（被打断 / 已经落地 / 投射物没了）。
+  没有第三条——玩家什么都不做时世界**一直冻着**，这是刻意的：战术暂停里
+  "我在想" 必须能无限期地想下去。
+
+### 反制的落地
 
 ```rust
 pub enum CounterCost {
-    Free,                  // 反制插入，原决策保留
-    ActionPoint(u32),      // 消耗资源，原决策保留
+    Free,                  // 白送：反制插入，原决策保留
+    Resource(u32),         // 花反制资源（当前是 Focus），原决策保留
     CancelDecision,        // 从时间轴移除原决策，插入反制
 }
 ```
 
-反制插入时间轴的位置：`elapsed + 一小段`（紧接当前时刻），而不是排到队尾。
+- 反制**是独立资源、不覆盖决策槽**——反应槽与决策槽共存，互不改结构。
+- 反制行动插入时间轴的位置：`elapsed + 一小段`（紧接当前时刻），不排到队尾
+  ——反制要"来得及"才有意义。
+- 付不起的那一条**仍然列出来**（`affordable: false`），只是 HUD 画成不可选：
+  玩家看得见"我本来能用招架，但精力不够"，这比看不见更有信息量。
 
-**多威胁一次只处理一个**，处理完再检测下一个。
+### HUD 怎么表现（`presentation` 只读）
+
+| 位置 | 画什么 |
+| :--- | :--- |
+| 技能栏 | 有 `suggestions` 时**高亮**其中 `affordable == true` 的技能；`affordable == false` 的压暗并标注代价 |
+| 顶部时间轴 | 高亮 `threat` 那一条（玩家能看出"打过来的是它"） |
+| 提示条 | 一行文案：反制可选 / 右键放弃 |
+
+HUD 只读 `ReactionSlot`，不认识 `CounterCost` 的语义——它只画
+"亮 / 不亮、代价是多少"。**输入只翻译**：技能键 → `CounterCommand { ability }`，
+右键 → `AbandonReaction`；两者都由 `combat::reaction` 消费
+（右键本来就同时写 `UndoCommand`，没有窗口时 `AbandonReaction` 自然被忽略，
+输入域因此不需要去读游戏状态）。
 
 > 这一节取代当前的 `ThreatWindow` 资源。旧实现靠"玩家那一手变了没有"推断表态，
 > 玩家在**前摇中**被冻结时换手也等不到表态，双方会永久冻死；新模型直接存
@@ -114,8 +150,12 @@ pub enum CounterCost {
 | :--- | :--- |
 | `Health { current, max }` | 唯一的生命真相 |
 | `Stamina { current, max }` | 动作消耗；**后摇结束时回 1 点**（订阅 `DecisionReady`） |
-| `Focus { current, max }` 🚧 | 反应资源：1 点把一次声明的前摇归零；每 10 虚拟秒回 1 点 |
+| `Focus { current, max }` 🚧 | **反制资源**：1 点把一次声明的前摇归零 / 付 `CounterCost::Resource`；每 10 虚拟秒回 1 点 |
+| `BlockChance` 🚧 | 格挡率（盾牌 / 姿态给的），命中管线第 ③ 关读它 |
 | `Faction { Player \| Enemy }` | **只管战斗目标过滤**，不代表"谁在操作"（那是 `InputDriven`） |
 
 资源归**拥有它的域**：谁能拿到它（回、扣）由该域的 Observer 决定，
 时间线只宣布"后摇结束了"（`DecisionReady`）。
+
+⚠️ **`Focus` 现在住在 `timeline/focus.rs`，要搬来这里**——它是反制资源，
+不是时间线的概念（`TODO.md` 的 T4）。

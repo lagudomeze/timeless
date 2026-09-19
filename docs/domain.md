@@ -17,6 +17,7 @@
 | `voxel_render` | 体素**表现**：异步网格化、材质、明暗 | —（消费 `world` 的区块消息） |
 | `movement` | 格子坐标（`Cell`）+ 连续位移（`Velocity`）+ 移动 / 跳跃 / 翻滚载荷与执行器 | `combat`、`ai`、`interaction`、`spawn` |
 | `combat` | 战斗的**全部子域**（见下） | `ai`、`spawn`、`presentation` |
+| `skills` | 技能**静态定义**：`AbilityId` / `AbilityDef` / `Requirement` / `can_cast` / 反制代价；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理 | 几乎所有域（读目录） |
 | `timeline` | 决策槽 + 行动实体 + 世界何时冻结 | 几乎所有域 |
 | `ai` | 敌人决策（填意图） | — |
 | `input` | 键盘 / 鼠标 → **消息**（只翻译） | —（没有域依赖它） |
@@ -33,12 +34,22 @@
 | `targeting` | 打到了谁（形状相交 / 扇形） |
 | `lifecycle` | 攻击实体的存活、命中计数、清理 |
 | `formula` | 命中结算：防御链 → 减伤 → 扣血 → 触发打断（纯公式住 `domain.rs`，零 Bevy） |
-| `skills` | 技能定义（`AbilityDef`）与技能行动（载荷 + 工厂 + 执行器） |
+| `attack` | 攻击行动：火球 / 横扫 / 箭矢 + 爆炸（载荷 + 工厂 + 执行器）🚧 现在这个目录叫 `skills` |
 | `defense` | 翻滚 / 招架 / 格挡 |
-| `reaction` | 威胁探测 → 开反应槽 → 反制 |
+| `reaction` | 威胁探测 → 开反应槽 → 反制（`ReactionSlot` + `CounterSuggestion`） |
+
+**技能定义不住在 `combat` 里**：`AbilityDef` 一族搬去顶层 `skills` 域（那是静态目录，
+战斗只是最常读它的那个）；`combat` 只留"这一手怎么打出来"。谁声明谁物化——
+`movement` 物化移动、`combat` 物化攻击，**没有全局派发器**。
 
 **每个 mod 出自己的 `plugin.rs`**；父域（`CombatPlugin`）**只负责编排子域之间的顺序**，
 不自己注册系统、不自己定义组件。这条对 `combat` / `voxel_render` / `world` 都成立。
+
+### 不是领域的东西
+
+| 名字 | 是什么 | 为什么不是领域 |
+| :--- | :--- | :--- |
+| `utils` | 纯几何 / 纯类型工具（`Shape`…），源码在 `src/utils/` | 没有数据模型、没有系统、没有 Plugin；**纯函数谁都能直接引用**（见第三节第 3 条） |
 
 ## 二、域之间怎么说话
 
@@ -57,18 +68,20 @@
 | 消息 | 谁写 | 谁消费 |
 | :--- | :--- | :--- |
 | `MoveCommand` / `MoveToCommand` / `JumpCommand` | `input` / `interaction` | `movement` 的声明系统 |
-| `FireCommand` / `MeleeCommand` | `input` / `combat::skills` 的菜单派发 | `combat::skills` 的声明系统 |
+| `FireCommand` / `MeleeCommand` | `input` / `combat::attack` 的菜单派发 | `combat::attack` 的声明系统 |
 | `RollCommand` / `ParryCommand` | `input` | `combat::defense` 的声明系统 |
-| `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` | `combat::skills` 的菜单 |
-| `PauseRequest` | `input`（手动）/ `timeline`（等决策）/ `combat::reaction`（威胁） | `timeline::process_pause_requests` |
-| `PlayerIntent` | `input`（键盘）/ `interaction`（左键） | `timeline::undo_system` |
+| `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` | `combat::attack` 的菜单 |
+| `RegisterAbility` 🚧 | 各机制域（`movement` / `combat`） | `skills` 的注册表 |
+| `CounterCommand` / `AbandonReaction` 🚧 | `input` | `combat::reaction` |
+| `PauseRequest` | `input`（手动）/ `timeline`（等 PC 决策）/ `combat::reaction`（威胁） | `timeline::process_pause_requests` |
+| `PlayerTakeover` 🚧 | `input`（键盘）/ `interaction`（左键） | `timeline::undo_system` |
 | `UseFocus` | `input` | `timeline` |
 | `UndoCommand` | `interaction`（右键） | `timeline::undo_system` |
-| `ActionBlocked` | 各声明系统 | `presentation` 的提示条 |
-| `ActionCancelled` | `timeline::undo_system` | 花钱的域（`combat::skills` 退款） |
+| `ActionBlocked` | 各声明系统 / `skills::can_cast` 的失败 | `presentation` 的提示条 |
+| `ActionCancelled` | `timeline::undo_system` | 花钱的域（`skills` 退款） |
 | `DecisionReady` | `timeline::recovery_system` | `combat::defense`（回精力） |
 | `DamageEvent` / `DeathEvent` | `combat::formula` / `combat::health` | `combat::health` / `presentation` 的日志 |
-| `ProjectileArrived` | `combat::skills`（火球到达） | `combat::skills`（爆炸） |
+| `ProjectileArrived` | `combat::attack`（火球到达） | `combat::attack`（爆炸） |
 | `PointerCommand` | `input` | `interaction`（解释成走 / 打 / 撤） |
 | `PanCamera` / `ZoomCamera` / `ToggleHelp` / `PreviewReadout` | `input` / `interaction` | `presentation` |
 | `ResetBattle` | `input`（`F5`） | `spawn` |
@@ -89,8 +102,8 @@
 | 类别 | 能否跨域直接引用 | 说明 |
 | :--- | :--- | :--- |
 | **组件类型**（`Health` / `Cell` / `DecisionSlot` …） | ✅ 可以读 | 组件是**数据契约**；写者仍然唯一（见铁律） |
-| **纯类型 / 常量**（`ActionTiming`、`CELL_SIZE`、`*_TIMING`） | ✅ | 没有行为 |
-| **纯函数**（`combat::formula::domain::*`） | ✅ | 零 Bevy、可单测 |
+| **纯类型 / 常量**（`ActionTiming`、`CELL_SIZE`、`*_TIMING`、`utils::Shape`） | ✅ | 没有行为 |
+| **纯函数**（`combat::formula::domain::*`、`skills::can_cast`、`utils::*`） | ✅ | 零 Bevy、可单测 |
 | **别人的系统** | ❌ 禁止调用 | 排顺序用 `SystemSet`，不要 `run_system` 互调 |
 | **别人的内部状态**（别人的 `Resource`、`Local`） | ❌ | 要么它写成消息/事件，要么它自己算 |
 | **一次操作的请求 / 结果** | ❌ 必须走消息或事件 | 例：撤销退款走 `ActionCancelled`，不是 `defense` 直接改别的域的账 |
@@ -110,6 +123,16 @@ Update:   SpawnSet ─▶ InputSet ─▶ InteractionSet ─▶ TimelineSet ─�
 WorldSet ──────────────────────▶（必须早于 VoxelRenderSet）
 ClockSet 排在帧末：这一帧所有系统看到同一个冻结状态，唯一的时钟写入点在这里
 ```
+
+**这个顺序不是性能选择，是语义的一部分**（[timeline.md](timeline.md) 第三节的
+"一轮里发生什么"）：一帧按 `输入 → AI 决策 → 执行器 / 威胁扫描 → 帧末暂停落地` 走。
+
+- `InputSet` 在 `AiSet` 之前：玩家这一帧的表态先落地。
+- `AiSet` 在 `CombatSet` 之前：**敌人先决策**，威胁扫描（`combat::reaction`）才能
+  看到它刚生成的前摇行动——否则永远扫不到东西。
+- 暂停断言由**各域自己写**（`timeline` 写 `"awaiting"`、`combat::reaction` 写
+  `"threat"`、`input` 写 `"manual"`），统一在帧末 `ClockSet` 生效——
+  所以谁写在哪一段都不影响"这一帧的结论一致"。
 
 ## 五、铁律
 

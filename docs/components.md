@@ -3,8 +3,11 @@
 > ⚠️ **本篇正在被拆分取代**：域与契约 → [domain.md](domain.md)；时间线与行动 → [timeline.md](timeline.md)；战斗与对抗 → [combat.md](combat.md)；技能 → [skills.md](skills.md)。新内容一律写进新篇；本篇只作历史参考，替代完成后删除。
 >
 > ⚠️ **已知与代码不符**：行动实体的归属已从 `ChildOf` 换成自定义关系
-> `ActionOf` / `Actions`（M22，见 [relations.md](relations.md)）；本篇里凡是
-> "行动实体用 `ChildOf` / 取 `parent()`"的说法都已过时（`unit_sprite` 与 HUD 的
+> `ActionOf` / `Actions`（M22，见 [relations.md](relations.md)）；一批标识符改过名
+> （`PlayerIntent` → `PlayerTakeover`、`ai::Intent` → `ai::Tactic`、
+> `FocusIntent` → `PendingFocus`）；技能定义要搬去顶层 `skills` 域。
+> 本篇里凡是"行动实体用 `ChildOf` / 取 `parent()`"、旧名字、
+> `combat::skills` 作为注册表的说法都已过时（`unit_sprite` 与 HUD 的
 > `ChildOf` 仍然有效——那是真的物理附着）。
 
 > **描述对象：代码 A（仓库根 `src/`，package `app`）。**
