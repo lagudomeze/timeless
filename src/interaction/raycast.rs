@@ -8,8 +8,8 @@
 
 use bevy::prelude::*;
 
+use crate::movement::CELL_SIZE;
 use crate::movement::Cell;
-use crate::timeline::CELL_SIZE;
 use crate::world::{TerrainConfig, terrain::surface_height_at};
 
 /// 射线最长探测距离（世界单位）：超出就当没指到地面。

@@ -17,8 +17,11 @@ use crate::combat::attributes::{AttackFrame, HitRadius, InterruptPower, Physical
 use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
-use crate::timeline::{DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction};
+use crate::timeline::{
+    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+};
 
+use super::actions::MELEE_TIMING;
 use super::events::{FireCommand, MeleeCommand};
 
 /// 火球投射物的飞行参数与爆炸参数（目标格住在 [`TargetCell`] 上）。
@@ -57,9 +60,11 @@ pub const SHOOT_HEIGHT: f32 = 0.9;
 pub const FIREBALL_DAMAGE: i32 = 12;
 /// 爆炸半径（世界单位）：1.5 格。
 pub const FIREBALL_RADIUS: f32 = 3.0;
+/// 火球的节奏：出手慢、后摇长、威力大。
+pub const FIREBALL_TIMING: ActionTiming = ActionTiming::new(0.30, 0.50, 2);
 /// 火球消耗的精力（比翻滚贵，构成资源取舍）。
 pub const FIREBALL_COST: u32 = 2;
-/// 火球的打断力度：出手重，但正在前摇时最怕被打断（见 `timing::SHOOT`）。
+/// 火球的打断力度：出手重，但正在前摇时最怕被打断（见 [`FIREBALL_TIMING`]）。
 pub const FIREBALL_POWER: i32 = 2;
 
 /// 火球行动工厂：载荷 + 威胁声明（飞过的格 + 落点）+ 调度数据。
@@ -205,8 +210,7 @@ pub fn declare_fireball_system(
 
     stamina.try_spend(FIREBALL_COST);
     let now = time.elapsed_secs();
-    let schedule =
-        ScheduledAction::with_focus(crate::timeline::timing::SHOOT, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, intent.0);
     declare_fireball_at(&mut commands, player, *cell, target_cell, schedule);
 }
 
@@ -243,8 +247,7 @@ pub fn declare_melee_system(
         .map(|(target, _)| Cell::from_world(target.translation))
         .unwrap_or(*cell);
     let now = time.elapsed_secs();
-    let schedule =
-        ScheduledAction::with_focus(crate::timeline::timing::MELEE, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, intent.0);
     super::actions::declare_melee_at(&mut commands, player, *cell, target_cell, schedule);
 }
 
@@ -405,7 +408,7 @@ mod tests {
     fn radius_is_expressed_in_world_units() {
         assert_eq!(
             FIREBALL_RADIUS,
-            crate::timeline::CELL_SIZE * 1.5,
+            crate::movement::CELL_SIZE * 1.5,
             "1.5 格的世界距离"
         );
     }

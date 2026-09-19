@@ -13,11 +13,12 @@ use crate::combat::Faction;
 use crate::combat::skills::{
     FIREBALL_RADIUS, MELEE_REACH, MenuSelection, SKILLS, SkillKind, UseSelectedSkill,
 };
+use crate::movement::CELL_SIZE;
 use crate::movement::Cell;
 use crate::movement::MoveToCommand;
 use crate::presentation::MainCamera;
 use crate::presentation::hud::PreviewReadout;
-use crate::timeline::{CELL_SIZE, PlayerIntent, UndoCommand};
+use crate::timeline::{PlayerIntent, UndoCommand};
 use crate::world::{TerrainConfig, ground_position};
 
 use super::components::{AoePreview, ConePreview, HoverHighlight, HoverTint, HoveredCell};

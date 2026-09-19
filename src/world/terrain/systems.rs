@@ -40,7 +40,7 @@ fn value_noise(seed: u32, x: f32, z: f32) -> f32 {
 
 /// 地形高度的量化粒度（体素）：`TERRAIN_CELL × TERRAIN_CELL` 个体素列共享一个高度。
 ///
-/// **必须等于决策格 `Cell` 的边长**（`timeline::CELL_SIZE`，有测试守着）。
+/// **必须等于决策格 `Cell` 的边长**（`movement::CELL_SIZE`，有测试守着）。
 ///
 /// 为什么地形要跟着决策格走：决策层"一格一步"，单位与装饰都摆在**格中心**——
 /// 而格中心（CELL_SIZE = 2 时是奇数世界坐标）正好落在体素**边界**上。如果地形按
@@ -129,7 +129,7 @@ mod tests {
     fn terrain_quantisation_matches_the_decision_cell_size() {
         assert_eq!(
             TERRAIN_CELL as f32,
-            crate::timeline::CELL_SIZE,
+            crate::movement::CELL_SIZE,
             "地形必须与 `Cell` 同粒度：单位与装饰都摆在格中心（体素边界）上"
         );
     }

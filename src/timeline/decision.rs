@@ -64,7 +64,10 @@ impl DecisionSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::timing;
+    use crate::timeline::ActionTiming;
+
+    /// 调度器的测试不该依赖任何具体载荷：自己造一个节奏。
+    const TEST_TIMING: ActionTiming = ActionTiming::new(0.2, 0.3, 3);
 
     #[test]
     fn a_fresh_slot_is_empty() {
@@ -77,7 +80,7 @@ mod tests {
     /// 后摇取「一个后摇」与「效果还要多久」里更晚的那个。
     #[test]
     fn the_recovery_window_ends_at_the_later_of_effect_and_recovery() {
-        let schedule = ScheduledAction::declared_at(timing::MOVE, 0.0);
+        let schedule = ScheduledAction::declared_at(TEST_TIMING, 0.0);
 
         // 效果比后摇晚（移动 / 火球）：忙到效果真的发生
         assert_eq!(
@@ -88,7 +91,7 @@ mod tests {
         assert_eq!(
             DecisionSlot::recovering(&schedule, 1.0, 0.0),
             DecisionSlot::Recovery {
-                until: 1.0 + timing::MOVE.recovery
+                until: 1.0 + TEST_TIMING.recovery
             }
         );
     }

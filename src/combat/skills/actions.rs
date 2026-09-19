@@ -18,11 +18,18 @@ use crate::combat::Faction;
 use crate::combat::defense::Stamina;
 use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
-use crate::timeline::{DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction};
+use crate::timeline::{
+    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+};
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
 use super::events::{FireCommand, MeleeCommand};
 use super::melee::melee_scene;
+
+/// 射击（箭矢）的节奏：出手慢、后摇长，但在手里的时候最怕被打断。
+pub const ARROW_TIMING: ActionTiming = ActionTiming::new(0.30, 0.50, 2);
+/// 近战的节奏：出手快、硬直长、抗打断中等。
+pub const MELEE_TIMING: ActionTiming = ActionTiming::new(0.20, 0.35, 3);
 
 /// 射击载荷：朝最近敌人放一支箭。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -133,8 +140,7 @@ pub fn declare_skill_system(
         .or_else(|| nearest_enemy_cell(&units, transform.translation, *faction))
         .unwrap_or(*cell);
     if melee {
-        let schedule =
-            ScheduledAction::with_focus(crate::timeline::timing::MELEE, now, &mut focus, intent.0);
+        let schedule = ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, intent.0);
         declare_melee_at(&mut commands, player, *cell, target_cell, schedule);
     } else {
         crate::combat::skills::declare_fireball_at(
@@ -142,7 +148,7 @@ pub fn declare_skill_system(
             player,
             *cell,
             target_cell,
-            ScheduledAction::with_focus(crate::timeline::timing::SHOOT, now, &mut focus, intent.0),
+            ScheduledAction::with_focus(ARROW_TIMING, now, &mut focus, intent.0),
         );
     }
 }

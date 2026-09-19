@@ -685,7 +685,7 @@ pub fn update_timeline_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::timing;
+    use crate::movement::MOVE_TIMING;
 
     /// 车道容器里的顺序：车道（0 → N）→ 秒刻度 → "现在"刻线。
     ///
@@ -764,15 +764,15 @@ mod tests {
     fn a_fresh_action_starts_at_the_playhead() {
         let now = 7.5;
         let (left, width) =
-            block_span(now, timing::MOVE.total(), now, WINDOW_SECONDS).expect("刚声明应当可见");
+            block_span(now, MOVE_TIMING.total(), now, WINDOW_SECONDS).expect("刚声明应当可见");
         assert_eq!(left, 0.0, "声明时刻 = 现在 → 左边界就落在刻线上");
-        assert_eq!(width, timing::MOVE.total() / WINDOW_SECONDS * 100.0);
+        assert_eq!(width, MOVE_TIMING.total() / WINDOW_SECONDS * 100.0);
     }
 
     /// 结算刻线落在块内：移动的前摇占 0.15 / 0.25 = 60%。
     #[test]
     fn resolve_mark_sits_inside_the_block_at_the_windup_share() {
-        let percent = resolve_mark_percent(timing::MOVE.windup, timing::MOVE.total());
+        let percent = resolve_mark_percent(MOVE_TIMING.windup, MOVE_TIMING.total());
         assert!(
             (percent - 60.0).abs() < 1e-3,
             "0.15 / 0.25 应当落在块的 60%，实际 {percent}"
@@ -823,7 +823,7 @@ mod tests {
         for (actor, declared_at) in [(enemy, 0.5), (player, 2.0)] {
             app.world_mut().spawn((
                 ChildOf(actor),
-                ScheduledAction::declared_at(timing::MOVE, declared_at),
+                ScheduledAction::declared_at(MOVE_TIMING, declared_at),
             ));
         }
 
@@ -910,7 +910,7 @@ mod tests {
 
         app.world_mut().spawn((
             ChildOf(player),
-            ScheduledAction::declared_at(timing::MOVE, 0.0),
+            ScheduledAction::declared_at(MOVE_TIMING, 0.0),
         ));
         app.world_mut()
             .entity_mut(player)
@@ -960,7 +960,7 @@ mod tests {
 
         app.world_mut().spawn((
             ChildOf(player),
-            ScheduledAction::declared_at(timing::MOVE, 0.5),
+            ScheduledAction::declared_at(MOVE_TIMING, 0.5),
         ));
         app.update();
         assert_eq!(
@@ -992,7 +992,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(player),
-                ScheduledAction::declared_at(timing::MOVE, 0.5),
+                ScheduledAction::declared_at(MOVE_TIMING, 0.5),
             ))
             .id();
 

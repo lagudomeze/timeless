@@ -43,7 +43,8 @@
 //! Bevy 每帧把虚拟时间拷进通用 `Time`，因此位移、投射物、`Lifetime`、后摇计时
 //! 全部自动停表，各领域不需要任何 `if paused` 分支。
 //!
-//! 决策按**格子**、命中按**真实距离**，格边长见 [`timing::CELL_SIZE`]。
+//! 决策按**格子**、命中按**真实距离**，格边长见
+//! [`crate::movement::CELL_SIZE`]（格尺度是移动领域的真相，本域只是读它）。
 
 use bevy::prelude::*;
 
@@ -72,7 +73,7 @@ pub use systems::{
     process_pause_requests, recover_focus_system, recovery_system, roll_3d5,
     track_focus_intent_system, undo_system,
 };
-pub use timing::{ActionTiming, CELL_SIZE};
+pub use timing::ActionTiming;
 
 /// 时间线在 `Update` 中的系统集（排在输入之后、AI 与执行器之前）。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

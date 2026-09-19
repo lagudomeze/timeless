@@ -92,7 +92,10 @@ pub fn detect_threat_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::timing;
+    use crate::timeline::ActionTiming;
+
+    /// 反应系统的测试不关心载荷的节奏：自己造一个。
+    const TEST_TIMING: ActionTiming = ActionTiming::new(0.2, 0.3, 3);
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
 
@@ -140,7 +143,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(enemy),
-                ScheduledAction::declared_at(timing::SHOOT, 0.0),
+                ScheduledAction::declared_at(TEST_TIMING, 0.0),
                 Threatens {
                     cells: vec![Cell::new(2, 2)],
                 },
@@ -172,7 +175,7 @@ mod tests {
         let player = spawn_player(&mut app, Cell::new(0, 0));
         app.world_mut().spawn((
             ChildOf(player),
-            ScheduledAction::declared_at(timing::SHOOT, 0.0),
+            ScheduledAction::declared_at(TEST_TIMING, 0.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
             },
@@ -207,7 +210,7 @@ mod tests {
         let enemy = spawn_enemy(&mut app);
         app.world_mut().spawn((
             ChildOf(enemy),
-            ScheduledAction::declared_at(timing::MELEE, 0.0),
+            ScheduledAction::declared_at(TEST_TIMING, 0.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
             },
@@ -225,7 +228,7 @@ mod tests {
         // 玩家举起一招（换了一手）
         app.world_mut().spawn((
             ChildOf(player),
-            ScheduledAction::declared_at(timing::MELEE, 1.0),
+            ScheduledAction::declared_at(TEST_TIMING, 1.0),
         ));
         app.world_mut().resource_mut::<Captured>().0.clear();
         app.update();
@@ -249,7 +252,7 @@ mod tests {
         let enemy = spawn_enemy(&mut app);
         app.world_mut().spawn((
             ChildOf(enemy),
-            ScheduledAction::declared_at(timing::SHOOT, 0.0),
+            ScheduledAction::declared_at(TEST_TIMING, 0.0),
             Threatens {
                 cells: vec![Cell::new(5, 5)],
             },

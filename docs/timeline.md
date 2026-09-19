@@ -106,21 +106,30 @@ pub struct ScheduledAction {     // 行动实体身上，**没有 actor 字段**
 - **射程以格声明、以米判定**：`AttackRange(1).world()` = 2.0 米，再与真实距离比较。
 - **威胁按格声明**（反应系统），**伤害按真实距离结算**（爆炸半径、扇形夹角）。
 
-## 三、节奏常量（`timeline/timing.rs`）
+## 三、节奏常量（各领域自己的 `*_TIMING`）
 
-| 动作 | 前摇 windup | 后摇 recovery | 打断抗性 |
-| :--- | ---: | ---: | ---: |
-| 移动 `MoveAction` | 0.15s | 0.10s | 1 |
-| 跳跃 `JumpAction` | 0.10s | 0.60s | 6 |
-| 近战 `MeleeAction` | 0.20s | 0.35s | 3 |
-| 火球 `FireballAction` | 0.30s | 0.50s | 2 |
-| 翻滚 `RollAction` | 0.05s | 0.30s | 1 |
-| 招架 `ParryAction` | 0.05s | 0.25s | 2 |
+`timeline` 只提供 `ActionTiming` 这个**形状**（前摇 / 后摇 / 打断抗性），
+**具体数值归载荷自己**——常量就写在载荷类型的旁边：
+
+| 动作（载荷） | 常量 | 住哪 | 前摇 windup | 后摇 recovery | 打断抗性 |
+| :--- | :--- | :--- | ---: | ---: | ---: |
+| 移动 | `MOVE_TIMING` | `movement/actions.rs` | 0.15s | 0.10s | 1 |
+| 跳跃 | `JUMP_TIMING` | `movement/actions.rs` | 0.10s | 0.60s | 6 |
+| 翻滚 | `ROLL_TIMING` | `movement/actions.rs` | 0.05s | 0.30s | 1 |
+| 近战 | `MELEE_TIMING` | `combat/skills/actions.rs` | 0.20s | 0.35s | 3 |
+| 箭矢 | `ARROW_TIMING` | `combat/skills/actions.rs` | 0.30s | 0.50s | 2 |
+| 火球 | `FIREBALL_TIMING` | `combat/skills/fireball.rs` | 0.30s | 0.50s | 2 |
+| 招架 | `PARRY_TIMING` | `combat/defense/actions.rs` | 0.05s | 0.25s | 2 |
+
+> 为什么不放在 `timeline/timing.rs`：那样「新增一个动作」就必须回头改时间线，
+> 而时间线自己的承诺是**不感知载荷**。常量跟着载荷走之后，加动作只是
+> 「载荷 + 场景工厂 + 执行器 + 声明系统」四件事，调度器一行不改。
+> 调度器自己的单测也因此改用自造的 `TEST_TIMING`，不再被具体载荷钉住。
 
 > **后摇从「效果落地那一刻」起算**：执行器用
 > `DecisionSlot::recovering(schedule, now, effect_delay)`，其中
 > `effect_delay` 允许把忙碌窗口推到效果真的发生（移动走到格中心、火球飞到落点）。
-> 数值先集中硬编码，后续外置成 `.ron`（见 [../TODO.md](../TODO.md)）。
+> 数值先硬编码在各领域，后续外置成 `.ron`（见 [../TODO.md](../TODO.md)）。
 
 ## 四、撤销：退款归花钱的领域
 
@@ -316,7 +325,7 @@ enemy_declare_system（把 Intent 翻成行动实体）
 
 | 想加的东西 | 落点 | 需要改调度器吗 |
 | :--- | :--- | :--- |
-| 新动作（冲刺、陷阱、召唤） | 新载荷 + 场景工厂 + 执行器 +（可选）`timing` 常量 | 不用 |
+| 新动作（冲刺、陷阱、召唤） | 新载荷 + 场景工厂 + 执行器 + 它自己的 `*_TIMING`（写在载荷旁边） | 不用 |
 | 新攻击方式 | 新目标获取系统（挂 `CollisionTarget`）+ 复用伤害链 +（**记得**挂 `Threatens`） | 不用 |
 | 新元素伤害 | 新组件 + 一个同形的命中系统 + 挂在工厂上 | 不用 |
 | 新的暂停原因 | `timeline::resources` 加常量 + 一个 `compute_*` 系统 | 不用 |

@@ -42,7 +42,7 @@ impl AttackRange {
 
     /// 换算成世界距离（世界单位）。
     pub fn world(self) -> f32 {
-        self.0 as f32 * crate::timeline::CELL_SIZE
+        self.0 as f32 * crate::movement::CELL_SIZE
     }
 }
 

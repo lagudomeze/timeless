@@ -8,8 +8,10 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::movement::{Cell, Velocity, ground_direction, step_from_axis};
-use crate::timeline::{DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction};
+use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
+use crate::timeline::{
+    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+};
 
 use super::components::{ParryAction, Parrying};
 use super::events::{ParryCommand, RollCommand};
@@ -23,6 +25,8 @@ pub const PARRY_COST: u32 = 1;
 pub const DODGE_SECS: f32 = 0.5;
 /// 招架标记的兜底存活时长（虚拟秒）：目标攻击被销毁后不等它自然过期。
 pub const PARRY_SECS: f32 = 0.5;
+/// 招架的节奏：抬手一挡，姿态比翻滚稳一点。
+pub const PARRY_TIMING: ActionTiming = ActionTiming::new(0.05, 0.25, 2);
 /// 翻滚的位移速度（世界单位 / 秒）：比走路快，但仍然是「退一格」。
 pub const ROLL_SPEED: f32 = 8.0;
 
@@ -110,8 +114,7 @@ pub fn declare_roll_system(
             .iter()
             .map(|(other, faction)| (other.translation, *faction)),
     );
-    let schedule =
-        ScheduledAction::with_focus(crate::timeline::timing::ROLL, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(ROLL_TIMING, now, &mut focus, intent.0);
     declare_roll(
         &mut commands,
         entity,
@@ -206,8 +209,7 @@ pub fn declare_parry_system(
     };
 
     let now = time.elapsed_secs();
-    let schedule =
-        ScheduledAction::with_focus(crate::timeline::timing::PARRY, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(PARRY_TIMING, now, &mut focus, intent.0);
     let action = commands
         .spawn_scene(crate::combat::defense::parry_action_scene(
             target_attack,

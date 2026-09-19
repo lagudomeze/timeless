@@ -154,7 +154,7 @@ fn payload_name(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::timing;
+    use crate::movement::{JUMP_TIMING, MOVE_TIMING};
 
     fn label_app() -> App {
         let mut app = App::new();
@@ -201,7 +201,7 @@ mod tests {
             .spawn((
                 ChildOf(player),
                 MoveAction::default(),
-                ScheduledAction::declared_at(timing::MOVE, 0.0),
+                ScheduledAction::declared_at(MOVE_TIMING, 0.0),
             ))
             .id();
 
@@ -249,7 +249,7 @@ mod tests {
         app.world_mut().spawn((
             ChildOf(player),
             JumpAction,
-            ScheduledAction::declared_at(timing::JUMP, 0.0),
+            ScheduledAction::declared_at(JUMP_TIMING, 0.0),
         ));
         app.update();
         assert_eq!(

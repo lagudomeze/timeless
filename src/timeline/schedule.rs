@@ -112,17 +112,19 @@ impl ScheduledAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::timing;
+
+    /// 调度器的测试不该依赖任何具体载荷：自己造一个节奏。
+    const TEST_TIMING: ActionTiming = ActionTiming::new(0.2, 0.3, 3);
 
     #[test]
     fn schedule_derives_everything_from_the_declaration_time() {
-        let schedule = ScheduledAction::declared_at(timing::MELEE, 2.0);
+        let schedule = ScheduledAction::declared_at(TEST_TIMING, 2.0);
         assert!(
-            (schedule.windup() - timing::MELEE.windup).abs() < 1e-5,
+            (schedule.windup() - TEST_TIMING.windup).abs() < 1e-5,
             "前摇 = execute_at - declared_at"
         );
-        assert!((schedule.total() - timing::MELEE.total()).abs() < 1e-5);
-        assert_eq!(schedule.interrupt_resist, timing::MELEE.interrupt_resist);
+        assert!((schedule.total() - TEST_TIMING.total()).abs() < 1e-5);
+        assert_eq!(schedule.interrupt_resist, TEST_TIMING.interrupt_resist);
         assert!(schedule.pending(2.0), "刚声明时还在前摇");
         assert!(schedule.pending(2.19));
         assert!(!schedule.pending(2.20), "到点就不算 pending 了");
@@ -133,7 +135,7 @@ mod tests {
     #[test]
     fn focus_zeroes_the_windup_and_spends_a_point() {
         let mut focus = Focus::default();
-        let schedule = ScheduledAction::with_focus(timing::SHOOT, 5.0, &mut focus, true);
+        let schedule = ScheduledAction::with_focus(TEST_TIMING, 5.0, &mut focus, true);
         assert_eq!(
             schedule.execute_at, 5.0,
             "用 Focus 换来的就是「现在就落地」"
@@ -145,17 +147,17 @@ mod tests {
     #[test]
     fn focus_is_not_spent_when_the_player_does_not_ask_for_it() {
         let mut focus = Focus::default();
-        let schedule = ScheduledAction::with_focus(timing::SHOOT, 5.0, &mut focus, false);
-        assert!((schedule.windup() - timing::SHOOT.windup).abs() < 1e-5);
+        let schedule = ScheduledAction::with_focus(TEST_TIMING, 5.0, &mut focus, false);
+        assert!((schedule.windup() - TEST_TIMING.windup).abs() < 1e-5);
         assert_eq!(focus.current, crate::timeline::FOCUS_MAX);
     }
 
     #[test]
     fn an_empty_focus_pool_falls_back_to_the_normal_windup() {
         let mut focus = Focus { current: 0, max: 3 };
-        let schedule = ScheduledAction::with_focus(timing::SHOOT, 5.0, &mut focus, true);
+        let schedule = ScheduledAction::with_focus(TEST_TIMING, 5.0, &mut focus, true);
         assert!(
-            (schedule.windup() - timing::SHOOT.windup).abs() < 1e-5,
+            (schedule.windup() - TEST_TIMING.windup).abs() < 1e-5,
             "没有余量就只能排前摇"
         );
     }

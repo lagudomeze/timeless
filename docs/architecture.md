@@ -92,7 +92,7 @@ src/
 │   ├── skills/                 #   registry / menu / melee / arrow / fireball / explosion / actions
 │   └── plugin.rs               #   CombatPlugin（战斗流水线）
 ├── timeline/
-│   ├── timing.rs               #   ActionTiming（前摇 / 后摇 / 打断抗性）+ 常量表 + CELL_SIZE
+│   ├── timing.rs               #   ActionTiming 的**形状**（具体数值归各领域的载荷）
 │   ├── decision.rs             #   DecisionSlot 三态（Empty / Windup / Recovery）+ recovering()
 │   ├── schedule.rs             #   ScheduledAction（声明 / 执行时间戳 + 后摇 + 打断抗性）
 │   ├── components.rs           #   Uncancellable / InputDriven（行动实体与行动者的标记）
@@ -334,6 +334,6 @@ BRP 的 `world.query` 与按名截图靠它们定位实体；**加了新标记�
 
 按优先级见 [../TODO.md](../TODO.md)。这里只列与架构直接相关的两条：
 
-1. **动作数值外置**：`timeline::timing` 与 `SKILLS` 的数值改成 `.ron`，应用层不再硬编码。
+1. **动作数值外置**：各领域的 `*_TIMING` 与 `SKILLS` 的数值改成 `.ron`，应用层不再硬编码。
 2. **单位贴地与体素碰撞**：`movement` 查询 `world` 的体素决定目标格是否可走
    （当前只贴地，不查可行走性）。

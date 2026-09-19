@@ -6,9 +6,11 @@
 
 use crate::combat::defense::{PARRY_COST, ROLL_COST};
 use crate::combat::skills::FIREBALL_DAMAGE;
-use crate::combat::skills::fireball::FIREBALL_COST;
+use crate::combat::skills::actions::MELEE_TIMING;
+use crate::combat::skills::fireball::{FIREBALL_COST, FIREBALL_TIMING};
 use crate::combat::skills::melee::MELEE_DAMAGE;
-use crate::timeline::timing;
+use crate::movement::ROLL_TIMING;
+use crate::timeline::ActionTiming;
 
 /// 一件**有前置条件**的技能（需要消耗、需要距离）。
 ///
@@ -46,7 +48,7 @@ pub struct SkillDef {
     /// 精力消耗
     pub cost: u32,
     /// 动作节奏（前摇 / 后摇），HUD 展示用
-    pub timing: timing::ActionTiming,
+    pub timing: ActionTiming,
     /// 大致威力（展示用；实际伤害在各自的载荷里）
     pub power: i32,
 }
@@ -57,28 +59,28 @@ pub const SKILLS: [SkillDef; 4] = [
         kind: SkillKind::Attack,
         label: "attack",
         cost: FIREBALL_COST,
-        timing: timing::SHOOT,
+        timing: FIREBALL_TIMING,
         power: FIREBALL_DAMAGE,
     },
     SkillDef {
         kind: SkillKind::Melee,
         label: "melee",
         cost: 0,
-        timing: timing::MELEE,
+        timing: MELEE_TIMING,
         power: MELEE_DAMAGE,
     },
     SkillDef {
         kind: SkillKind::Fireball,
         label: "fireball",
         cost: FIREBALL_COST,
-        timing: timing::SHOOT,
+        timing: FIREBALL_TIMING,
         power: FIREBALL_DAMAGE,
     },
     SkillDef {
         kind: SkillKind::Roll,
         label: "roll",
         cost: ROLL_COST,
-        timing: timing::ROLL,
+        timing: ROLL_TIMING,
         power: 0,
     },
 ];
@@ -119,7 +121,7 @@ mod tests {
             .find(|def| def.kind == SkillKind::Melee)
             .expect("注册表里应当有近战");
         assert_eq!(melee.power, MELEE_DAMAGE);
-        assert_eq!(melee.timing, timing::MELEE);
+        assert_eq!(melee.timing, MELEE_TIMING);
         assert_eq!(MELEE_FRAME, 5, "注册表与载荷的帧数约定要保持一致");
         assert_eq!(MELEE_POWER, 3, "打断力度要与载荷约定一致");
     }

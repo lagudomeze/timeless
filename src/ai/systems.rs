@@ -2,7 +2,8 @@
 //!
 //! 无回合模型下敌人不等任何「轮」：只要决策槽是空的，就立刻按优先级选一个意图并
 //! 声明行动实体；后摇结束、槽被清空后再次决策。
-//! 动作的前摇 / 后摇本身（[`crate::timeline::timing`]）就是它的决策冷却。
+//! 动作的前摇 / 后摇本身（各自领域的 `*_TIMING`，形状见 [`crate::timeline::ActionTiming`]）
+//! 就是它的决策冷却。
 //!
 //! 决策顺序（**威胁优先于贪刀**）：
 //!
@@ -20,10 +21,12 @@ use bevy::prelude::*;
 
 use crate::combat::defense::{ROLL_COST, Stamina, declare_roll, roll_step};
 use crate::combat::reaction::Threatens;
-use crate::combat::skills::{declare_fireball_at, declare_melee_at};
+use crate::combat::skills::{FIREBALL_TIMING, MELEE_TIMING, declare_fireball_at, declare_melee_at};
 use crate::combat::{AttackRange, Faction, Health};
-use crate::movement::{Cell, move_action_scene, step_from_axis};
-use crate::timeline::{CELL_SIZE, DecisionSlot, ScheduledAction, timing};
+use crate::movement::{
+    CELL_SIZE, Cell, MOVE_TIMING, ROLL_TIMING, move_action_scene, step_from_axis,
+};
+use crate::timeline::{DecisionSlot, ScheduledAction};
 
 use super::components::{EnemyBrain, Intent};
 
@@ -183,7 +186,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     Cell::new(cell.x + dx, cell.z + dz),
-                    ScheduledAction::declared_at(timing::ROLL, now),
+                    ScheduledAction::declared_at(ROLL_TIMING, now),
                 );
             }
             Intent::Approach | Intent::Retreat => {
@@ -204,7 +207,7 @@ pub fn enemy_declare_system(
                     .spawn_scene(move_action_scene(
                         *cell,
                         to_cell,
-                        ScheduledAction::declared_at(timing::MOVE, now),
+                        ScheduledAction::declared_at(MOVE_TIMING, now),
                     ))
                     .id();
                 commands
@@ -218,7 +221,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     target.map(|(_, cell)| cell).unwrap_or(*cell),
-                    ScheduledAction::declared_at(timing::MELEE, now),
+                    ScheduledAction::declared_at(MELEE_TIMING, now),
                 );
             }
             Intent::Shoot => {
@@ -230,7 +233,7 @@ pub fn enemy_declare_system(
                     entity,
                     *cell,
                     target_cell,
-                    ScheduledAction::declared_at(timing::SHOOT, now),
+                    ScheduledAction::declared_at(FIREBALL_TIMING, now),
                 );
             }
         }
@@ -354,7 +357,7 @@ mod tests {
         // 一发「正在前摇」的攻击把敌人脚下的格写进威胁 → 意图变成 Dodge
         app.world_mut().spawn((
             ChildOf(player),
-            ScheduledAction::declared_at(timing::MELEE, 0.0),
+            ScheduledAction::declared_at(MELEE_TIMING, 0.0),
             Threatens {
                 cells: vec![enemy_cell],
             },

@@ -10,13 +10,16 @@
 use bevy::prelude::*;
 
 use crate::timeline::{
-    ActionBlocked, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction, Uncancellable,
-    timing,
+    ActionBlocked, ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
+    Uncancellable,
 };
 
 use super::cell::{Cell, MoveGoal};
 use super::components::{MoveSpeed, Velocity};
 use super::events::{JumpCommand, MoveCommand, MoveToCommand};
+
+/// 移动的节奏：一格一步，几乎不设防（走得快就容易被打断）。
+pub const MOVE_TIMING: ActionTiming = ActionTiming::new(0.15, 0.10, 1);
 
 /// 移动载荷：朝 `axis`（归一化平面方向）走**一格**。
 ///
@@ -30,7 +33,7 @@ pub struct MoveAction {
 }
 
 /// 起跳初速度（世界单位 / 秒）与重力（单位 / 秒²）。
-/// 6 与 -20 → 最高约 0.9 格、约 0.6 秒落地（正好等于 `timing::JUMP.recovery`）。
+/// 6 与 -20 → 最高约 0.9 格、约 0.6 秒落地（正好等于 [`JUMP_TIMING`] 的后摇）。
 const JUMP_SPEED: f32 = 6.0;
 const JUMP_GRAVITY: f32 = -20.0;
 
@@ -57,9 +60,15 @@ pub fn move_action_scene(from_cell: Cell, to_cell: Cell, schedule: ScheduledActi
     }
 }
 
+/// 跳跃的节奏：前摇最短；后摇覆盖整个弹道（约 0.6s），落地即可再决策。
+pub const JUMP_TIMING: ActionTiming = ActionTiming::new(0.10, 0.60, 6);
+
 /// 跳跃载荷：原地起跳、落回起跳高度。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct JumpAction;
+
+/// 翻滚的节奏：防御性动作，几乎立即生效。
+pub const ROLL_TIMING: ActionTiming = ActionTiming::new(0.05, 0.30, 1);
 
 /// 翻滚载荷：退一格的行动实体（落地效果与无敌帧归 [`crate::combat::defense`]）。
 ///
@@ -130,7 +139,7 @@ pub fn declare_move_system(
 
     let to_cell = Cell::new(cell.x + dx, cell.z + dz);
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(timing::MOVE, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, intent.0);
     let action = commands
         .spawn_scene(move_action_scene(*cell, to_cell, schedule))
         .id();
@@ -168,7 +177,7 @@ pub fn declare_move_to_system(
         return; // 点自己脚下：不浪费一次决策
     }
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(timing::MOVE, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, intent.0);
     let action = commands
         .spawn_scene(move_action_scene(*cell, target, schedule))
         .id();
@@ -233,7 +242,7 @@ pub fn declare_jump_system(
         return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(timing::JUMP, now, &mut focus, intent.0);
+    let schedule = ScheduledAction::with_focus(JUMP_TIMING, now, &mut focus, intent.0);
     let action = commands.spawn_scene(jump_action_scene(schedule)).id();
     commands
         .entity(player)
@@ -327,7 +336,7 @@ mod tests {
 
     #[test]
     fn cell_center_round_trips_with_from_world() {
-        use crate::timeline::CELL_SIZE;
+        use crate::movement::CELL_SIZE;
         let cell = Cell::new(2, 3);
         let center = cell.center();
         assert_eq!(
@@ -368,7 +377,7 @@ mod tests {
                 to_cell: Cell::new(0, 1),
             },
             // 声明于 -1s：这条行动在"现在"已经到点了，执行器这一帧就该处理它
-            ScheduledAction::declared_at(timing::MOVE, -1.0),
+            ScheduledAction::declared_at(MOVE_TIMING, -1.0),
         ));
 
         app.update();
@@ -385,7 +394,7 @@ mod tests {
             "忙到「走到目标格」为止的 0.4s，实际 {until}"
         );
         assert!(
-            until > timing::MOVE.recovery,
+            until > MOVE_TIMING.recovery,
             "必须比单纯的后摇更久，否则会半路恢复决策槽"
         );
     }
@@ -407,7 +416,7 @@ mod tests {
                 ChildOf(actor),
                 MoveAction::default(),
                 // 声明于 -1s：如果没有跟着销毁，这一帧就会被执行
-                ScheduledAction::declared_at(timing::MOVE, -1.0),
+                ScheduledAction::declared_at(MOVE_TIMING, -1.0),
             ))
             .id();
 

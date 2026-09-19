@@ -236,7 +236,10 @@ pub fn interrupt_observer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::{MANUAL, timing};
+    use crate::timeline::{ActionTiming, MANUAL};
+
+    /// 调度器的测试不该依赖任何具体载荷：自己造一个节奏。
+    const TEST_TIMING: ActionTiming = ActionTiming::new(0.2, 0.3, 3);
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
 
@@ -478,7 +481,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(player),
-                ScheduledAction::declared_at(timing::SHOOT, 0.0),
+                ScheduledAction::declared_at(TEST_TIMING, 0.0),
             ))
             .id();
 
@@ -513,7 +516,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(player),
-                ScheduledAction::declared_at(timing::JUMP, 0.0),
+                ScheduledAction::declared_at(TEST_TIMING, 0.0),
                 Uncancellable,
             ))
             .id();
@@ -548,7 +551,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(player),
-                ScheduledAction::declared_at(timing::MOVE, 0.0),
+                ScheduledAction::declared_at(TEST_TIMING, 0.0),
             ))
             .id();
 
@@ -575,7 +578,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(target),
-                ScheduledAction::declared_at(timing::MELEE, 0.0),
+                ScheduledAction::declared_at(TEST_TIMING, 0.0),
             ))
             .id();
         let source = app.world_mut().spawn_empty().id();
@@ -616,7 +619,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(target),
-                ScheduledAction::declared_at(timing::MOVE, 0.0),
+                ScheduledAction::declared_at(TEST_TIMING, 0.0),
             ))
             .id();
         let source = app.world_mut().spawn_empty().id();

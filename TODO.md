@@ -132,7 +132,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ### 工程债（按优先级）
 
-- [ ] **动作数值外置**：`timeline::timing` 与 `SKILLS` 的数值改成 `.ron`
+- [ ] **动作数值外置**：各领域的 `*_TIMING` 与 `SKILLS` 的数值改成 `.ron`
       （serde + ron），应用层不再硬编码技能数值；顺带做 `ActionRegistry` 资源，
       让 HUD / 菜单从注册表读选项与消耗。
 - [x] **死代码清理**：删除 `defense/actions.rs` 里重复且未注册的

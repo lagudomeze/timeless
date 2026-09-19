@@ -168,15 +168,15 @@ mod tests {
     use std::time::Duration;
 
     use crate::combat::defense::{Dodging, Parrying, ROLL_COST, RollCommand, Stamina};
-    use crate::combat::skills::{FireballAction, fireball_action_scene};
+    use crate::combat::skills::{FIREBALL_TIMING, FireballAction, fireball_action_scene};
     use crate::combat::{
         Armor, Collidable, DamageEvent, Faction, Fireball, HitOnce, HitRadius, InterruptPower,
         Lifetime, MeleeShape, PhysicalDamage, Projectile, Threatens, health::Health,
     };
-    use crate::movement::{Cell, Jumping, MoveAction, MoveSpeed, Velocity};
+    use crate::movement::{Cell, Jumping, MOVE_TIMING, MoveAction, MoveSpeed, Velocity};
     use crate::timeline::{
         DecisionSlot, FOCUS_MAX, Focus, InputDriven, InterruptEvent, PauseReasons, ScheduledAction,
-        THREAT, UndoCommand, timing,
+        THREAT, UndoCommand,
     };
     use crate::world::{TerrainConfig, ground_position};
 
@@ -933,7 +933,7 @@ mod tests {
         let schedule = *query.iter(app.world()).next().expect("应当有移动行动");
         assert_eq!(
             schedule.windup(),
-            timing::MOVE.windup,
+            MOVE_TIMING.windup,
             "没有余量就只能排前摇"
         );
     }
@@ -947,7 +947,7 @@ mod tests {
         // 敌人正在前摇、且瞄着玩家脚下的格
         app.world_mut().spawn((
             ChildOf(enemy),
-            ScheduledAction::declared_at(timing::SHOOT, 0.0),
+            ScheduledAction::declared_at(FIREBALL_TIMING, 0.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
             },
@@ -990,7 +990,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(enemy),
-                ScheduledAction::declared_at(timing::SHOOT, 0.0),
+                ScheduledAction::declared_at(FIREBALL_TIMING, 0.0),
             ))
             .id();
         // 玩家抡过来的横扫：力度 100 → 掷骰对抗必赢
@@ -1028,7 +1028,7 @@ mod tests {
         let mut app = test_app();
         let target = spawn_enemy(&mut app, Cell::new(0, 0), Vec3::new(0.0, 0.0, 0.0));
         // 声明于 -1.0s 的行动：它在「现在」早就到点了
-        let schedule = ScheduledAction::declared_at(timing::MOVE, -1.0);
+        let schedule = ScheduledAction::declared_at(MOVE_TIMING, -1.0);
         assert!(!schedule.pending(0.0), "这条行动应当已经到点");
         let action = app
             .world_mut()
@@ -1057,7 +1057,7 @@ mod tests {
         let enemy = spawn_enemy(&mut app, Cell::new(4, 0), Vec3::new(9.0, 0.0, 1.0));
 
         // 一条「立刻落地」的火球行动：射手这一帧就出手
-        let schedule = ScheduledAction::declared_at(timing::SHOOT, 0.0).with_zero_windup();
+        let schedule = ScheduledAction::declared_at(FIREBALL_TIMING, 0.0).with_zero_windup();
         let action = app
             .world_mut()
             .spawn_scene(fireball_action_scene(
@@ -1132,7 +1132,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ChildOf(enemy),
-                ScheduledAction::declared_at(timing::SHOOT, 0.0),
+                ScheduledAction::declared_at(FIREBALL_TIMING, 0.0),
                 FireballAction::default(),
             ))
             .id();

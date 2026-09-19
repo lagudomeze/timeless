@@ -21,8 +21,8 @@ pub mod stamina;
 pub mod systems;
 
 pub use actions::{
-    DODGE_SECS, PARRY_COST, PARRY_SECS, ROLL_COST, declare_parry_system, declare_roll,
-    declare_roll_system, parry_executor_system, roll_executor_system, roll_step,
+    DODGE_SECS, PARRY_COST, PARRY_SECS, PARRY_TIMING, ROLL_COST, declare_parry_system,
+    declare_roll, declare_roll_system, parry_executor_system, roll_executor_system, roll_step,
 };
 pub use components::{DefenseOutcome, Dodging, ParryAction, Parrying};
 pub use events::{ParryCommand, RollCommand};
