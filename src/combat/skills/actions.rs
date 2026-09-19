@@ -19,7 +19,7 @@ use crate::combat::defense::Stamina;
 use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
 use crate::timeline::{
-    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction, ready_actor,
+    ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
 };
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
@@ -122,7 +122,7 @@ pub fn declare_skill_system(
     mut fires: MessageReader<FireCommand>,
     mut melees: MessageReader<MeleeCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    players: Query<(Entity, &Cell, &DecisionSlot, &Transform, &Faction), With<InputDriven>>,
+    players: Query<(Entity, &Cell, &Transform, &Faction, &DecisionSlot), With<InputDriven>>,
     units: Query<(&Transform, &Faction)>,
 ) {
     let request = fires.read().last().copied();
@@ -130,8 +130,7 @@ pub fn declare_skill_system(
     if request.is_none() && !melee {
         return;
     }
-    let Some((player, cell, _slot, transform, faction)) =
-        ready_actor(players.iter(), |(_, _, slot, _, _)| slot, &mut blocked)
+    let Some((player, cell, transform, faction, _)) = players.iter().first_ready(&mut blocked)
     else {
         return;
     };

@@ -18,7 +18,7 @@ use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
 use crate::timeline::{
-    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction, ready_actor,
+    ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
 };
 
 use super::actions::MELEE_TIMING;
@@ -158,10 +158,10 @@ type FireballPlayer<'w, 's> = Query<
     (
         Entity,
         &'static Cell,
-        &'static DecisionSlot,
         &'static mut crate::combat::defense::Stamina,
         &'static Transform,
         &'static Faction,
+        &'static DecisionSlot,
     ),
     With<InputDriven>,
 >;
@@ -181,11 +181,9 @@ pub fn declare_fireball_system(
     let Some(request) = fires.read().last().copied() else {
         return;
     };
-    let Some((player, cell, _, mut stamina, transform, faction)) = ready_actor(
-        players.iter_mut(),
-        |(_, _, slot, _, _, _)| slot,
-        &mut blocked,
-    ) else {
+    let Some((player, cell, mut stamina, transform, faction, _)) =
+        players.iter_mut().first_ready(&mut blocked)
+    else {
         return; // 忙或没有玩家
     };
     if !stamina.can_afford(FIREBALL_COST) {
@@ -232,14 +230,13 @@ pub fn declare_melee_system(
     intent: Res<FocusIntent>,
     mut melees: MessageReader<MeleeCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    players: Query<(Entity, &Cell, &DecisionSlot, &Transform, &Faction), With<InputDriven>>,
+    players: Query<(Entity, &Cell, &Transform, &Faction, &DecisionSlot), With<InputDriven>>,
     units: Query<(&Transform, &Faction)>,
 ) {
     if melees.read().last().is_none() {
         return;
     }
-    let Some((player, cell, _, transform, faction)) =
-        ready_actor(players.iter(), |(_, _, slot, _, _)| slot, &mut blocked)
+    let Some((player, cell, transform, faction, _)) = players.iter().first_ready(&mut blocked)
     else {
         return;
     };

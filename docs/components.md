@@ -134,8 +134,10 @@ recover_focus_system           每 10 虚拟秒回 1 点 Focus
 （帧末 ClockSet）process_pause_requests -> apply_clock：**唯一**写 Time<Virtual> 的地方
 ```
 
-`ready_actor` 不是系统，而是**声明系统共用的入口函数**：挑出此刻能决策的行动者
-（判据只有「槽是 `Empty`」一份），挑不到就写一条 `ActionBlocked::BUSY`。
+`FirstReady::first_ready` 不是系统，而是**声明系统共用的入口**：迭代器上的一个方法，
+挑出此刻能决策的行动者（判据只有「槽是 `Empty`」一份），挑不到就写一条 `ActionBlocked::BUSY`。
+哪个分量是决策槽由 `HasDecisionSlot` 回答，因此调用点只要
+`players.iter().first_ready(&mut blocked)`（约定：**决策槽放在查询元组末位**）。
 
 `interrupt_observer`（住 `combat::formula`）/ `recover_stamina_observer` / 两个退款 Observer 都不在系统链里：
 它们是 EntityEvent 的 Observer，触发那一刻当场执行（见 [timeline.md](timeline.md) 第四 / 五节）。

@@ -21,7 +21,7 @@
 //! 「谁在写槽」因此是穷举的、可审计的；不会出现「标记忘了摘」这类
 //! 状态与时间戳打架的 bug。
 //!
-//! **声明的入口只有 [`ready_actor`] 一个**：「槽必须是 `Empty`」这条判据与
+//! **声明的入口只有 [`FirstReady::first_ready`] 一个**：「槽必须是 `Empty`」这条判据与
 //! 「被拒时告诉 HUD 为什么」都写在那里，各领域不再各抄一份。
 
 use bevy::prelude::*;
@@ -65,34 +65,83 @@ impl DecisionSlot {
     }
 }
 
+/// 「这个查询项里带着行动者的决策槽」。
+///
+/// 为什么需要它：`QueryData` 的 item 是**元组**，Rust 没法从泛型元组里按类型取出
+/// 某个分量。与其给 `Query<'w, 's, (…), F>` 写一堆带 GAT 的 impl，不如在**元组**
+/// 上写几行——`Query::iter()` / `iter_mut()` 吐出来的就是元组本身。
+///
+/// 约定：**决策槽放在查询元组的最后一位**。这样只需要"每个元数一份"impl
+/// （前面几个分量全是泛型，`&mut Stamina` / `Mut<Stamina>` 都能被吸收），
+/// 不必为"槽在第几位"写组合数个版本。
+pub trait HasDecisionSlot {
+    /// 取出这一项里的决策槽。
+    fn decision_slot(&self) -> &DecisionSlot;
+}
+
+impl<A> HasDecisionSlot for (A, &DecisionSlot) {
+    fn decision_slot(&self) -> &DecisionSlot {
+        self.1
+    }
+}
+
+impl<A, B> HasDecisionSlot for (A, B, &DecisionSlot) {
+    fn decision_slot(&self) -> &DecisionSlot {
+        self.2
+    }
+}
+
+impl<A, B, C> HasDecisionSlot for (A, B, C, &DecisionSlot) {
+    fn decision_slot(&self) -> &DecisionSlot {
+        self.3
+    }
+}
+
+impl<A, B, C, D> HasDecisionSlot for (A, B, C, D, &DecisionSlot) {
+    fn decision_slot(&self) -> &DecisionSlot {
+        self.4
+    }
+}
+
+impl<A, B, C, D, E> HasDecisionSlot for (A, B, C, D, E, &DecisionSlot) {
+    fn decision_slot(&self) -> &DecisionSlot {
+        self.5
+    }
+}
+
 /// **占一个决策槽的唯一入口**：挑出那个现在能决策的行动者，挑不到就替 HUD
 /// 记下原因（[`ActionBlocked::BUSY`]）。
 ///
-/// 各声明系统的查询元组形状不同（有的还要 `Cell` / `Stamina` / `Transform`），
-/// 所以由调用方给出「从查询项里取出决策槽」的投影，本函数只管挑人：
+/// 迭代器上的一个方法，所以调用点是主语在前的一句话：
 ///
 /// ```text
-/// let Some((player, cell, _)) =
-///     ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
-/// else {
+/// let Some((player, cell, _)) = players.iter().first_ready(&mut blocked) else {
 ///     return;
 /// };
 /// ```
 ///
-/// 判据只有一份的好处是：以后要放宽（比如"后摇里也允许排下一手"）或改提示
-/// （比如区分"前摇中"与"后摇中"），只改这一个函数。
-pub fn ready_actor<T>(
-    actors: impl Iterator<Item = T>,
-    slot_of: impl Fn(&T) -> &DecisionSlot,
-    blocked: &mut MessageWriter<ActionBlocked>,
-) -> Option<T> {
-    let ready = actors.into_iter().find(|actor| slot_of(actor).is_empty());
-    if ready.is_none() {
-        // 静默丢弃是最差的手感：告诉 HUD"现在还动不了"
-        blocked.write(ActionBlocked::BUSY);
+/// 哪个分量是决策槽由 [`HasDecisionSlot`] 回答（槽在末位），因此这里不需要
+/// 调用方再给一个投影闭包。判据只有一份的好处是：以后要放宽
+/// （比如"后摇里也允许排下一手"）或改提示（比如区分"前摇中"与"后摇中"），
+/// 只改这一个方法。
+pub trait FirstReady: Iterator + Sized {
+    /// 第一个决策槽是 `Empty` 的项；一个都没有就报一条 `BUSY`。
+    fn first_ready(self, blocked: &mut MessageWriter<ActionBlocked>) -> Option<Self::Item>
+    where
+        Self::Item: HasDecisionSlot,
+    {
+        let ready = self
+            .into_iter()
+            .find(|actor| actor.decision_slot().is_empty());
+        if ready.is_none() {
+            // 静默丢弃是最差的手感：告诉 HUD"现在还动不了"
+            blocked.write(ActionBlocked::BUSY);
+        }
+        ready
     }
-    ready
 }
+
+impl<I: Iterator> FirstReady for I {}
 
 #[cfg(test)]
 mod tests {
@@ -129,9 +178,9 @@ mod tests {
     /// 挑人：空槽的中选；一个都没有就替 HUD 记一条 `BUSY`。
     ///
     /// 这条守着「声明的判据只有一份」——9 个声明系统原来各写一遍这段，
-    /// 现在只有 `ready_actor` 会写 `ActionBlocked`。
+    /// 现在只有 `first_ready` 会写 `ActionBlocked`。
     #[test]
-    fn ready_actor_picks_the_first_empty_slot_or_reports_busy() {
+    fn first_ready_picks_the_first_empty_slot_or_reports_busy() {
         #[derive(Resource, Default)]
         struct Picked {
             actor: Option<Entity>,
@@ -143,7 +192,9 @@ mod tests {
             mut blocked: MessageWriter<ActionBlocked>,
             mut out: ResMut<Picked>,
         ) {
-            out.actor = ready_actor(actors.iter(), |(_, slot)| slot, &mut blocked)
+            out.actor = actors
+                .iter()
+                .first_ready(&mut blocked)
                 .map(|(entity, _)| entity);
         }
 

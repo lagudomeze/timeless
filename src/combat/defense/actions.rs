@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use crate::combat::Faction;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
 use crate::timeline::{
-    ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction, ready_actor,
+    ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
 };
 
 use super::components::{ParryAction, Parrying};
@@ -89,14 +89,13 @@ pub fn declare_roll_system(
     intent: Res<FocusIntent>,
     mut requests: MessageReader<RollCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    rollers: Query<(Entity, &Cell, &Stamina, &DecisionSlot, &Transform), With<InputDriven>>,
+    rollers: Query<(Entity, &Cell, &Stamina, &Transform, &DecisionSlot), With<InputDriven>>,
     units: Query<(&Transform, &Faction)>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    let Some((entity, cell, stamina, _, transform)) =
-        ready_actor(rollers.iter(), |(_, _, _, slot, _)| slot, &mut blocked)
+    let Some((entity, cell, stamina, transform, _)) = rollers.iter().first_ready(&mut blocked)
     else {
         return;
     };
@@ -188,8 +187,7 @@ pub fn declare_parry_system(
     if requests.read().last().is_none() {
         return;
     }
-    let Some((player, stamina, _)) = ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
-    else {
+    let Some((player, stamina, _)) = players.iter().first_ready(&mut blocked) else {
         return;
     };
     if !stamina.can_afford(PARRY_COST) {

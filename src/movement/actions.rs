@@ -10,8 +10,8 @@
 use bevy::prelude::*;
 
 use crate::timeline::{
-    ActionBlocked, ActionTiming, DecisionSlot, Focus, FocusIntent, InputDriven, ScheduledAction,
-    Uncancellable, ready_actor,
+    ActionBlocked, ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven,
+    ScheduledAction, Uncancellable,
 };
 
 use super::cell::{Cell, MoveGoal};
@@ -141,9 +141,8 @@ pub fn declare_move_system(
     if (dx, dz) == (0, 0) {
         return;
     }
-    // 忙（前摇 / 后摇 / 位移中）或没有玩家时，ready_actor 会替 HUD 记下原因
-    let Some((player, cell, _)) = ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
-    else {
+    // 忙（前摇 / 后摇 / 位移中）或没有玩家时，first_ready 会替 HUD 记下原因
+    let Some((player, cell, _)) = players.iter().first_ready(&mut blocked) else {
         return;
     };
 
@@ -176,8 +175,7 @@ pub fn declare_move_to_system(
     let Some(target) = requests.read().last().map(|request| request.cell) else {
         return;
     };
-    let Some((player, cell, _)) = ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
-    else {
+    let Some((player, cell, _)) = players.iter().first_ready(&mut blocked) else {
         return;
     };
     if *cell == target {
@@ -247,7 +245,7 @@ pub fn declare_jump_system(
     if requests.read().last().is_none() {
         return;
     }
-    let Some((player, _)) = ready_actor(players.iter(), |(_, slot)| slot, &mut blocked) else {
+    let Some((player, _)) = players.iter().first_ready(&mut blocked) else {
         return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
     let now = time.elapsed_secs();

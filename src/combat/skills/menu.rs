@@ -15,7 +15,7 @@ use crate::combat::defense::{ROLL_COST, RollCommand, Stamina};
 use crate::combat::skills::events::{FireCommand, MeleeCommand};
 use crate::movement::CELL_SIZE;
 use crate::movement::Cell;
-use crate::timeline::{DecisionSlot, InputDriven, ready_actor};
+use crate::timeline::{DecisionSlot, FirstReady, InputDriven};
 
 use super::registry::{SKILLS, SkillKind};
 
@@ -142,8 +142,7 @@ pub fn use_selected_skill_system(
         return;
     };
     // 决策槽不是空的就是"这次输入被拒"（前摇 / 后摇 / 位移中）
-    let Some((player, stamina, _)) = ready_actor(players.iter(), |(_, _, slot)| slot, &mut blocked)
-    else {
+    let Some((player, stamina, _)) = players.iter().first_ready(&mut blocked) else {
         return; // 忙（前摇 / 后摇）或没有玩家
     };
     let Some(def) = SKILLS.get(selection.index()) else {

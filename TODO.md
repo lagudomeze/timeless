@@ -151,7 +151,8 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       ③ `ScheduledAction` 因此只剩 `{ execute_at }`：打断抗性本来就是 `ActionTiming`
       （载荷节奏）的一部分，而两者挂在**同一个行动实体**上，不必再抄一份快照。
       ④ 删掉死方法 `PauseReasons::remove`（暂停原因改「每帧重建」后只剩测试在用它）。
-      ⑤ `timeline::ready_actor(actors, slot_of, &mut blocked)` 成为**声明的唯一入口**：
+      ⑤ `timeline::FirstReady::first_ready` 成为**声明的唯一入口**（迭代器上的方法，
+      槽的位置由 `HasDecisionSlot` 回答——约定放在查询元组末位，实测零 GAT/推断摩擦）：
       「槽必须是 `Empty`」这条判据与「被拒时报 `ActionBlocked::BUSY`」原来在 9 个声明系统里
       各写一遍（其中 8 个是活路径、1 个是未注册的 `declare_skill_system`），现在收成一处。
       验收：181 测试全绿（179 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过 /
