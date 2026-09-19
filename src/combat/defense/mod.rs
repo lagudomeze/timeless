@@ -34,8 +34,10 @@ pub fn parry_action_scene(
     target_attack: Entity,
     timing: crate::timeline::ActionTiming,
     schedule: crate::timeline::ScheduledAction,
+    actor: Entity,
 ) -> impl Scene {
     bsn! {
+        ChildOf({actor})
         ParryAction {
             target_attack: {target_attack},
         }

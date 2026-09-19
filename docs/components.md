@@ -40,7 +40,7 @@ L0 引擎零件      Transform / Visibility / Children / Mesh3d / Node / Text / 
 | `Transform.rotation` / `scale` | `billboard_system`（纸片偏航）、`update_preview_indicators_system`（扇形朝向）、`shadow_system`（阴影缩放）、`camera_*` | `lerp` 与渲染 |
 | `GlobalTransform` | Bevy 的 transform propagation | `cursor_ray`、`billboard_system` |
 | `Visibility` | `interaction`（高亮 / 预演）、`voxel_render` | Bevy 渲染 |
-| `Children` / `ChildOf` | `unit_scene`（纸片 + 阴影）、`setup_hud` | `shadow_system` 用 `ChildOf` 找父单位 |
+| `Children` / `ChildOf` | `unit_scene`（纸片 + 阴影）、`setup_hud`、**各行动场景工厂**（`ChildOf({actor})`） | `shadow_system` 用 `ChildOf` 找父单位；时间线系的执行器 / 撤销 / 打断 / HUD 用它取行动者 |
 | `Mesh3d` / `MeshMaterial3d` | `interaction`（高亮、预演）、`voxel_render`（区块网格）、`spawn`（纸片 / 阴影）、`combat::skills`（攻击视觉） | Bevy 渲染 |
 | `Mesh` / `StandardMaterial` / `Image` / `Font` 资产 | `setup_voxel_materials`、`spawn_hover_highlight`、`spawn_preview_indicators`、`load_unit_sprites`、`setup_hud` | 渲染 / 文本 |
 | `Camera3d` / `MainCamera` / `IsDefaultUiCamera` | `presentation::camera::main_camera` | `cursor_ray`、`billboard_system` |
@@ -345,7 +345,7 @@ UnitSprites   --> unit_scene  --^
       v                 v                      v
   input/ai 声明行动   时间线：决策槽三态 / 暂停原因      HUD / 相机只读
       |                 |
-      `-> 行动实体（载荷 + ScheduledAction + Uncancellable）--add_child--> 行动者
+      `-> 行动实体（载荷 + ScheduledAction + Uncancellable）--ChildOf(actor) 由工厂写进模板--> 行动者
                               |
                               v
                           执行器 -> 攻击实体
@@ -370,7 +370,7 @@ UnitSprites   --> unit_scene  --^
 | `follow_terrain_system` | `Transform`、`Cell`、`Jumping`(排除)、`TerrainConfig` | `Transform.y` |
 | `jump_motion_system` | `Jumping`、`Time` | `Transform.y`、`Jumping`(remove) |
 | `decide_intent_system` | `Transform`、`Cell`、`Faction`、`Health`、`AttackRange`、`EnemyBrain`、`DecisionSlot`、`Threatens` | `Intent` |
-| `enemy_declare_system` | `Intent`、`DecisionSlot`、`Cell`、`Faction`、`Stamina`、`Transform` | 行动实体、`DecisionSlot::Windup` + `ChildOf` |
+| `enemy_declare_system` | `Intent`、`DecisionSlot`、`Cell`、`Faction`、`Stamina`、`Transform` | 行动实体（工厂自带 `ChildOf`）、`DecisionSlot::Windup` |
 | `select_skill_system` / `cycle_skill_system` | `SelectSkill` / `CycleSkill`、`Stamina`（`InputDriven`）、`DecisionSlot` | `MenuSelection` |
 | `use_selected_skill_system` | `UseSelectedSkill`、`MenuSelection`、`Stamina`、`DecisionSlot`、`InputDriven`、`Transform`、`Faction` | `FireCommand` / `MeleeCommand` / `RollCommand`、`ActionBlocked` |
 | `declare_fireball_system` | `FireCommand`、`InputDriven`、`DecisionSlot`、`Cell`、`Stamina`、`Transform`、`Faction`、`Focus`、`FocusIntent` | 行动实体（带 `Threatens`）、`Stamina`、`DecisionSlot::Windup` + `ChildOf` |

@@ -20,7 +20,6 @@ use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
 use crate::timeline::{
     ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
-    attach_action,
 };
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
@@ -46,8 +45,13 @@ pub struct MeleeAction;
 pub const MELEE_CANCEL_PENALTY: u32 = 1;
 
 /// 射击行动工厂。
-pub fn shoot_action_scene(timing: ActionTiming, schedule: ScheduledAction) -> impl Scene {
+pub fn shoot_action_scene(
+    timing: ActionTiming,
+    schedule: ScheduledAction,
+    actor: Entity,
+) -> impl Scene {
     bsn! {
+        ChildOf({actor})
         ShootAction
         template_value(timing)
         template_value(schedule)
@@ -63,11 +67,13 @@ pub fn melee_action_scene(
     target_cell: Cell,
     timing: ActionTiming,
     schedule: ScheduledAction,
+    actor: Entity,
 ) -> impl Scene {
     let threatens = Threatens {
         cells: melee_arc_cells(from_cell, target_cell),
     };
     bsn! {
+        ChildOf({actor})
         MeleeAction
         template_value(threatens)
         template_value(timing)
@@ -173,10 +179,15 @@ pub fn declare_melee_at(
     schedule: ScheduledAction,
 ) -> Entity {
     let action = commands
-        .spawn_scene(melee_action_scene(from_cell, target_cell, timing, schedule))
+        .spawn_scene(melee_action_scene(
+            from_cell,
+            target_cell,
+            timing,
+            schedule,
+            actor,
+        ))
         .id();
-    // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
-    attach_action(commands, actor, action);
+    commands.entity(actor).insert(DecisionSlot::Windup);
     action
 }
 

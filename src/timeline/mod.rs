@@ -70,7 +70,7 @@ pub mod schedule;
 
 pub use clock::{MANUAL, PauseReasons, PauseRequest, SLOT_EMPTY, THREAT};
 pub use clock::{apply_clock, compute_player_awaiting_system, process_pause_requests};
-pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven, attach_action};
+pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven};
 pub use decision::{recovery_system, undo_system};
 pub use events::{
     ActionBlocked, ActionCancelled, BlockReason, DecisionReady, PlayerIntent, UndoCommand, UseFocus,

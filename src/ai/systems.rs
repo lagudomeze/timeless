@@ -26,7 +26,7 @@ use crate::combat::{AttackRange, Faction, Health};
 use crate::movement::{
     CELL_SIZE, Cell, MOVE_TIMING, ROLL_TIMING, move_action_scene, step_from_axis,
 };
-use crate::timeline::{DecisionSlot, ScheduledAction, attach_action};
+use crate::timeline::{DecisionSlot, ScheduledAction};
 
 use super::components::{EnemyBrain, Intent};
 
@@ -204,15 +204,14 @@ pub fn enemy_declare_system(
                     continue;
                 }
                 let to_cell = Cell::new(cell.x + dx, cell.z + dz);
-                let action = commands
-                    .spawn_scene(move_action_scene(
-                        *cell,
-                        to_cell,
-                        MOVE_TIMING,
-                        ScheduledAction::declared_at(MOVE_TIMING, now),
-                    ))
-                    .id();
-                attach_action(&mut commands, entity, action);
+                commands.spawn_scene(move_action_scene(
+                    *cell,
+                    to_cell,
+                    MOVE_TIMING,
+                    ScheduledAction::declared_at(MOVE_TIMING, now),
+                    entity,
+                ));
+                commands.entity(entity).insert(DecisionSlot::Windup);
             }
             Intent::Melee => {
                 declare_melee_at(

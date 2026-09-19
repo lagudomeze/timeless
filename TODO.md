@@ -161,6 +161,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       ① `timeline::attach_action(commands, actor, action)` 补上"声明"的另一半——
       `first_ready` 管「谁」，它管「账怎么记」（挂成行动者的子实体 + 决策槽推进 `Windup`）。
       这两句原来在 **8 处**一字不差，且横跨玩家路径与 AI 路径，其中三个是两边共用的工厂。
+      **（这一条随后被 M21 撤掉了：`attach_action` 把"占槽"这次状态转换藏了起来。）**
       ② `timeline/` 从 **9 个文件收到 7 个**，每个文件回答一个问题：
       `decision.rs`（谁能决策 + 决策的一生：`undo_system` / `recovery_system`）、
       `schedule.rs`（这一手何时落地：`ScheduledAction` / `ActionTiming` / `Uncancellable`）、
@@ -172,6 +173,18 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       ③ `interrupt_system` 并进 `undo_system`：它的名字骗人（真正的打断 `InterruptEvent`
       已搬去 `combat`），实际做的是"玩家表达了新意图 → 撤掉旧那一手"。现在 `undo_system`
       直接收两个来源（`UndoCommand` 右键 / `PlayerIntent` 换手），少一条消息转发。
+      验收：181 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过 / `cargo run` 无 panic。
+- [x] **M21 撤掉 `attach_action`：让场景工厂自带 `ChildOf`**（本次）：
+      M20 ① 把「挂成子实体」与「决策槽推进 `Windup`」打包成一个 `attach_action`，
+      但后者是**整个模型最关键的一次状态转换**（`decision.rs` 自己写着"转换只有五条路，
+      每条都只有一个作者"），打包之后读声明系统的人看不出"这里把玩家的决策槽占了"
+      ——为省 8 处各 1 行牺牲了可审计性，不划算。改成让**实体出生时**就成立：
+      7 个行动场景工厂各多收一个 `actor: Entity`，把 `ChildOf({actor})` 直接写进 `bsn!` 模板，
+      声明点于是不再需要 `add_child`，而 `insert(DecisionSlot::Windup)` 恢复在每个声明点明写。
+      **顺带纠正一个我的错误推断**：我以为 BSN 写不了 `ChildOf`（`Template` 只有
+      `impl<T: Clone + Default + Unpin>`，而 `ChildOf` 没有 `Default`），实测
+      `bsn! { ChildOf({actor}) ... }` **可以编译且语义正确**（`the_world_keeps_making_progress`
+      证明 AI 的行动确实被链到行动者）。
       验收：181 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过 / `cargo run` 无 panic。
 - [x] **CJK 字体**：`assets/fonts/NotoSansSC-Regular.otf`（OFL-1.1），
       HUD 显式指定，战斗日志中文不再显示成豆腐块。

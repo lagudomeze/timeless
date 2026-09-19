@@ -35,7 +35,7 @@
 | 一个领域 = 一个目录 = 一个 `Plugin` | `mod.rs` 只做 `pub mod` + `pub use` 门面 | 领域边界消失，循环依赖 |
 | 输入只翻译、不执行 | 键盘 / 鼠标只写消息，落盘由消费领域负责 | 输入系统变成上帝系统 |
 | 消息与消费系统同域 | 新增消息在**消费方**插件 `build` 里 `add_message::<T>()` | 生产者与消费者绑死 |
-| 行动实体化 | 行动 = 独立实体（载荷 + `ScheduledAction` + 可选的 `Uncancellable`），`add_child` 挂在行动者下 | 调度器开始认识载荷 |
+| 行动实体化 | 行动 = 独立实体（载荷 + `ScheduledAction` + 可选的 `Uncancellable`），场景工厂把 `ChildOf(actor)` 写进模板 | 调度器开始认识载荷 |
 | 暂停只用 `Time<Virtual>` | 唯一写时钟的是帧末的 `apply_clock`（原因集合 `PauseReasons`） | 各领域冒出 `if paused` 分支 |
 | 状态写在决策槽里 | 前摇 / 后摇由 `DecisionSlot` 的三态回答，时刻由 `execute_at` 与 `until` 回答 | 标记与时间戳打架（重复触发 / 忘了摘） |
 | 决策按格、结算按真实距离 | `Cell` 管决策，`Transform` 距离管命中 | 两套坐标各算一半，命中飘忽 |
@@ -93,7 +93,7 @@ src/
 │   └── plugin.rs               #   CombatPlugin（战斗流水线）
 ├── timeline/                   # 每个文件回答一个问题
 │   ├── decision.rs             #   谁能决策：DecisionSlot 三态 / InputDriven /
-│   │                           #   FirstReady+HasDecisionSlot（声明入口）/ attach_action
+│   │                           #   FirstReady+HasDecisionSlot（声明入口；"占槽"在各声明点明写）
 │   │                           #   + 决策的一生：undo_system / recovery_system
 │   ├── schedule.rs             #   这一手何时落地：ScheduledAction / ActionTiming / Uncancellable
 │   ├── clock.rs                #   世界何时冻结：PauseRequest / PauseReasons / 三个原因常量
@@ -207,7 +207,7 @@ unit_scene        共用零件（Faction / Health / Collidable / HitRadius / Att
 ├── player_scene  + InputDriven（输入归属）+ MoveSpeed(5.0) + ChunkLoader
 └── enemy_scene   + MoveSpeed(2.0) + EnemyBrain（#[require(Intent)]）
 
-行动实体           声明系统 spawn_scene 出行动实体后 add_child 挂在行动者下（ChildOf）
+行动实体           场景工厂把 ChildOf(actor) 写进模板 —— 行动实体生下来就是行动者的子实体
 
 setup_scene       方向光 → 相机 → 玩家 → 敌人 → 地表装饰（Startup）
 reset_battle_system  清场 → 用同一组工厂重建（F5 的按键读取在 input，功能胶水不是领域）
@@ -226,8 +226,8 @@ ai ──▶ movement / combat（只声明行动实体）
 ```
 
 `input` 对 `spawn` 的依赖只有一条 `ResetBattle` 消息（`F5`），组装车间反过来
-不认识键盘。行动实体的归属则走 **`ChildOf` 父子关系**：声明侧
-`commands.spawn_scene(..).id()` + `commands.entity(actor).add_child(action)`，
+不认识键盘。行动实体的归属则走 **`ChildOf` 父子关系**：**场景工厂**把
+`ChildOf({actor})` 写进 `bsn!` 模板（实体生下来就是行动者的子实体），
 读取侧（七个执行器、`undo_system`、`interrupt_observer`、`detect_threat_system`、
 HUD 时间轴与行动行）用 `&ChildOf` 的 `parent()` 取行动者。
 

@@ -52,7 +52,8 @@ cargo fmt --check                           # 格式校验
   格子坐标、位移行动与投射物飞行；火球 / 爆炸等战斗内容归 `combat`，
   通过 `ProjectileArrived` 衔接。
 - **动作实体化**：行动 = 独立实体（载荷组件 + `ScheduledAction` + 可选的
-  `Uncancellable`），以 `ChildOf` 挂在行动者之下；调度器不感知载荷，新增动作
+  `Uncancellable`），场景工厂把 `ChildOf(actor)` 写进模板（即行动实体生下来就是
+  行动者的子实体）；调度器不感知载荷，新增动作
   只需新增载荷与执行器。**行动者的阶段写在决策槽里**（`DecisionSlot::{Empty,
   Windup, Recovery { until }}`），时间戳只回答「到点没有」
   （`now < execute_at` 前摇 / `now > execute_at` 该执行），

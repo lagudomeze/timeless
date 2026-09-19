@@ -1068,17 +1068,15 @@ mod tests {
 
         // 一条「立刻落地」的火球行动：射手这一帧就出手
         let schedule = ScheduledAction::immediate(0.0);
-        let action = app
-            .world_mut()
+        app.world_mut()
             .spawn_scene(fireball_action_scene(
                 Cell::new(0, 0),
                 Cell::new(4, 0),
                 FIREBALL_TIMING,
                 schedule,
+                player,
             ))
-            .expect("火球行动场景应当能实例化")
-            .id();
-        app.world_mut().entity_mut(action).insert(ChildOf(player));
+            .expect("火球行动场景应当能实例化");
         app.world_mut()
             .entity_mut(player)
             .insert(DecisionSlot::Windup);

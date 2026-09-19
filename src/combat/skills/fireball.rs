@@ -19,7 +19,6 @@ use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
 use crate::timeline::{
     ActionTiming, DecisionSlot, FirstReady, Focus, FocusIntent, InputDriven, ScheduledAction,
-    attach_action,
 };
 
 use super::actions::MELEE_TIMING;
@@ -74,11 +73,13 @@ pub fn fireball_action_scene(
     target_cell: Cell,
     timing: ActionTiming,
     schedule: ScheduledAction,
+    actor: Entity,
 ) -> impl Scene {
     let threatens = Threatens {
         cells: trajectory_cells(from_cell, target_cell),
     };
     bsn! {
+        ChildOf({actor})
         FireballAction { target_cell: {target_cell} }
         template_value(threatens)
         template_value(timing)
@@ -283,10 +284,10 @@ pub fn declare_fireball_at(
             target_cell,
             timing,
             schedule,
+            actor,
         ))
         .id();
-    // 行动是行动者的**子实体**：父节点（人）没了，没落地的行动跟着没
-    attach_action(commands, actor, action);
+    commands.entity(actor).insert(DecisionSlot::Windup);
     action
 }
 
