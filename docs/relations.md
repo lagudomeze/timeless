@@ -1,7 +1,7 @@
 # 关系模型：物理附着 与 逻辑关系
 
-> ⚠️ **目标设计**：标 🚧 的部分代码里还没有——现状是**只有** `ChildOf`
-> （连行动实体都用它）。本篇的规则是接下来要落地的目标（见 `TODO.md` M22）。
+> ⚠️ **目标设计**：标 🚧 的部分代码里还没有——行动归属（`ActionOf` / `Actions`）
+> **已落地**（M22），装备（`EquippedTo`）还是纸面设计。
 >
 > 本篇只回答一件事：**两个实体之间的"关系"该用什么表达。**
 > 结论一句话：**要跟着 `Transform` 走的用 `ChildOf`；纯逻辑的用自定义关系。**
@@ -66,9 +66,20 @@ pub struct Actions(Vec<Entity>);
 2. **类型 / 容量校验用 Observer 监听 `OnInsert`**：例如"这个槽只收剑"，就在
    `OnInsert, EquippedTo` 里检查，不符合当场移除——不要在采购 / UI 侧各写一遍。
 
-## 五、待实测（写进文档但还没验证的）
+## 五、实测记录：`bsn!` 能不能写自定义关系
 
-- `bsn!` 里能不能直接写**自定义**关系组件（`ActionOf({actor})`）。
-  `ChildOf({actor})` 实测可以（见 `TODO.md` M21：我先按 `Template` 的约束推断"不行"，
-  实测打脸），自定义关系走的是同一套关系机制，**大概率可以，但必须实测**——
-  这条经验值得记：静态推断不如跑一遍。
+能。**M22 一开始就实测了这条**，因为它决定「关系组件写不写得进场景工厂」：
+
+```rust
+// src/timeline/ownership.rs 的用例 a_scene_can_declare_the_custom_relationship
+app.world_mut().spawn_scene(bsn! { ActionOf({actor}) })
+```
+
+结论与机制：`bsn!` 认的是**组件有没有 `FromTemplate` 派生 + 字段有没有 `#[entities]`**，
+和"是不是 Bevy 内置的 `ChildOf`"无关——自己定义的关系走的是同一条路。
+（`ChildOf` 自己也正是这么写的：`#[derive(Component, FromTemplate, …)]` +
+`pub struct ChildOf(#[entities] pub Entity)`。）
+
+**教训**：M21 那次我先按 `Template` 的约束（`impl<T: Clone + Default + Unpin>`，
+而 `ChildOf` 没有 `Default`）推断"不行"，一跑就编译过了。**静态推断不如跑一遍**，
+以后遇到「宏能不能接受某个类型」这类问题，直接写个用例问编译器。

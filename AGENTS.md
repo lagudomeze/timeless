@@ -31,7 +31,7 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 181 通过（179 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 182 通过（180 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check                           # 格式校验
 ```
@@ -52,8 +52,10 @@ cargo fmt --check                           # 格式校验
   格子坐标、位移行动与投射物飞行；火球 / 爆炸等战斗内容归 `combat`，
   通过 `ProjectileArrived` 衔接。
 - **动作实体化**：行动 = 独立实体（载荷组件 + `ScheduledAction` + 可选的
-  `Uncancellable`），场景工厂把 `ChildOf(actor)` 写进模板（即行动实体生下来就是
-  行动者的子实体）；调度器不感知载荷，新增动作
+  `Uncancellable`），场景工厂把 `ActionOf({actor})` 写进模板（即行动实体生下来就
+  记着自己归谁）；归属是**自定义关系**（`ActionOf` / `Actions`，`linked_spawn`），
+  **不是 `ChildOf`**——行动没有 `Transform`，物理附着这个词不该被挪用
+  （见 [`docs/relations.md`](docs/relations.md)）。调度器不感知载荷，新增动作
   只需新增载荷与执行器。**行动者的阶段写在决策槽里**（`DecisionSlot::{Empty,
   Windup, Recovery { until }}`），时间戳只回答「到点没有」
   （`now < execute_at` 前摇 / `now > execute_at` 该执行），

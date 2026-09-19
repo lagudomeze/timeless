@@ -9,7 +9,7 @@
 | 概念 | 管什么 | 住在哪 |
 | :--- | :--- | :--- |
 | **决策槽** | 这个单位此刻能不能决策、决定了没有 | 单位身上 |
-| **行动实体** | 这一手什么时候落地 | 独立实体，挂 `ActionOf(行动者)` 🚧 |
+| **行动实体** | 这一手什么时候落地 | 独立实体，挂 `ActionOf(行动者)` |
 | **时钟** | 世界现在停不停 | `Time<Virtual>`，只由 `apply_clock` 写 |
 
 ## 一、决策槽 🚧
@@ -126,7 +126,7 @@ frozen ⟺ 本帧的 PauseReasons 非空
 | [`ActionTiming`](skills.md)（前摇 / 后摇 / 打断抗性） | 行动实体 | 这类动作的节奏（**值归各域**） |
 | `ScheduledAction { execute_at }` | 行动实体 | 这一手什么时候落地 |
 | `Uncancellable` | 行动实体 | 不许撤（跳跃那种"起跳不插队"） |
-| `ActionOf(actor)` / `Actions` 🚧 | 行动 ↔ 行动者 | 这一手是谁的 |
+| `ActionOf(actor)` / `Actions` | 行动 ↔ 行动者 | 这一手是谁的 |
 
 **归属用自定义关系而不是 `ChildOf`**：行动实体没有 `Transform`，归属是纯逻辑；
 `Actions` 标了 `linked_spawn`，因此"行动者阵亡 / 重置 → 名下行动跟着销毁"这条

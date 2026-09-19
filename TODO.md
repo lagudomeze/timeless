@@ -186,6 +186,19 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `bsn! { ChildOf({actor}) ... }` **可以编译且语义正确**（`the_world_keeps_making_progress`
       证明 AI 的行动确实被链到行动者）。
       验收：181 测试全绿 / clippy 零警告 / `cargo fmt --check` 通过 / `cargo run` 无 panic。
+- [x] **M22 关系模型：行动归属从 `ChildOf` 换成自定义关系 `ActionOf` / `Actions`**（本次）：
+      `ChildOf` 是**空间层级**（父 `Transform` 传给子级），而行动实体连 `Transform` 都没有；
+      拿它表达归属会让纸片、阴影、行动三种完全不同的东西挤进同一个 `Children`
+      ——「谁是谁的孩子」这句话直接不可读。新增 `src/timeline/ownership.rs`
+      （一个文件回答一个问题：这一手是谁的），`Actions` 标 `linked_spawn`，
+      所以「行动者阵亡 / 重置 → 名下行动跟着销毁」这条结构性保证一分不少。
+      **先实测后动手**（M21 的教训）：`bsn!` 认的是「组件有没有派生 `FromTemplate` +
+      字段有没有 `#[entities]`」，和"是不是内置的 `ChildOf`"无关——`bsn! { ActionOf({actor}) }`
+      一次编译通过，`Actions` 的 hook 维护与级联销毁都有用例守着（3 条新用例）。
+      改动面：7 个场景工厂 + 10 个读取点（执行器 / 撤销 / 打断 / 威胁 / HUD）
+      （`child_of.parent()` → `action_of.actor()`）+ 20 处测试夹具；**行为不变**。
+      验收：182 测试全绿（179 + 3 新）/ clippy 零警告 / `cargo fmt --check` 通过 /
+      `cargo run` 无 panic。
 - [x] **CJK 字体**：`assets/fonts/NotoSansSC-Regular.otf`（OFL-1.1），
       HUD 显式指定，战斗日志中文不再显示成豆腐块。
 - [x] **文档整合**：文档收敛为「入口 + 架构 + 时间线 + 组件对照 + 设计 + 素材 +
@@ -194,7 +207,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 ## 设计落地路线（M22+，本轮定稿）
 
 > 一次设计评审的结论。**文档已按目标态重建**（`docs/index.md` 是新入口），
-> 代码还停在旧模型上——所以下面每一条都是"文档已写、代码待落"。
+> 代码正按下面的顺序往上落（M22 已完成）——所以每一条都是"文档已写、代码待落"，
 > 目标态与现状的差异在每篇文档顶部都标了 ⚠️ / 🚧。
 
 **逐条定夺的结果**（8 条冲突 + 3 条结构性决定）：
@@ -222,10 +235,12 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ### 待办（按顺序）
 
-- [ ] **M22 关系模型**：行动归属从 `ChildOf` 换成 `ActionOf` / `Actions`（`linked_spawn`）。
+- [x] **M22 关系模型**：行动归属从 `ChildOf` 换成 `ActionOf` / `Actions`（`linked_spawn`）。
       **先实测 `bsn!` 能不能写自定义关系组件**——M21 那次"按 `Template` 约束推断不行、
       实测却可以"的教训要记住。改动面：7 个场景工厂 + 所有 `child_of.parent()` 读取点
       （执行器 / 撤销 / 打断 / 威胁 / HUD）+ 两个测试。行为不变（级联销毁保留）。
+      **已落地**：新增 `timeline/ownership.rs`；实测 `bsn!` 可以，机制是 `FromTemplate`
+      + `#[entities]`（见 `docs/relations.md` 第五节）。
 - [ ] **M23 意图式决策槽**（最大的一步）：槽换形状、声明系统改成**填意图**、
       新增"开闸物化"一步、闸门判据从"有 `InputDriven` 空槽"改成"有槽 `!ready`"。
       执行器 / `ScheduledAction` / `ActionTiming` / 暂停机制**都不动**。
