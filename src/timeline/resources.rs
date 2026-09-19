@@ -42,11 +42,6 @@ impl PauseReasons {
         self.0.insert(reason);
     }
 
-    /// 撤掉一个原因。
-    pub fn remove(&mut self, reason: &str) {
-        self.0.remove(reason);
-    }
-
     /// 全部撤掉（每帧重建与 `Resume` 都走它）。
     pub fn clear(&mut self) {
         self.0.clear();
@@ -130,8 +125,7 @@ mod tests {
             "多个原因可以叠加，互不覆盖"
         );
 
-        reasons.remove(MANUAL);
-        assert!(reasons.is_frozen(), "还有原因就仍然冻着");
+        // 每帧重建走的就是 clear()：清空前一直冻着，清空后才解冻
         reasons.clear();
         assert!(!reasons.is_frozen(), "清空之后才解冻");
     }

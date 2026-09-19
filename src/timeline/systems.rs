@@ -183,7 +183,7 @@ pub fn apply_clock(reasons: Res<PauseReasons>, mut time: ResMut<Time<Virtual>>) 
 }
 
 /// 3d5：三个五面骰之和（3..=15）。打断对抗用它给双方各加一点运气。
-pub fn roll_3d5() -> i32 {
+fn roll_3d5() -> i32 {
     (0..3).map(|_| rand::random_range(1..=5)).sum()
 }
 
