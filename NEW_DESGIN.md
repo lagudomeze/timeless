@@ -1,5 +1,24 @@
 # 任务：重构 Bevy 时间线与战斗结算
 
+> ⚠️ **这是第 1 轮重构的设计草稿，只作历史快照，不是当前设计。**
+> 以它为核心的改造**已经落地**，随后又被两轮讨论取代。当前设计的唯一入口是
+> [`docs/index.md`](docs/index.md)，进度见 [`TODO.md`](TODO.md)。
+>
+> 读之前先看这张对照表——下面这些写法**都已经不是现在的设计**：
+>
+> | 本文件的写法 | 现在的设计（权威出处） |
+> | :--- | :--- |
+> | `DecisionSlot { Empty, Filled }` + `Busy { until }` 推阶段 | `Idle { intent }` / `Executing { until }`——**槽装决策，不装阶段**；阶段由行动实体的 `execute_at` 回答（[timeline.md](docs/timeline.md)） |
+> | `ScheduledAction { actor, declared_at, execute_at, recovery, interrupt_resist }` | 只剩 `{ execute_at }`：**归属**归 `ActionOf`、**节奏**归 `ActionTiming`，两者本来就挂在同一个行动实体上，不抄快照（[timeline.md](docs/timeline.md) / [relations.md](docs/relations.md)） |
+> | `Cancellable { Free, Cost { refund, penalty }, Never }` 枚举 | `Uncancellable` 标记 + 「退款由花钱的域自己订阅 `ActionCancelled`」（[domain.md](docs/domain.md)） |
+> | `PauseRequest::Pause/Resume(String)` 边沿触发、需要谁去撤销 | **每帧断言**：`Pause(原因)` 每帧写、`Resume` 不带原因、只清空此刻已收集的原因（[timeline.md](docs/timeline.md)） |
+> | 打断 Observer 住在 `timeline` | 住 `combat::formula`——**战斗裁决不进调度器**（[combat.md](docs/combat.md)） |
+> | 威胁检测只发 `Pause("threat")` | 换成 `ReactionSlot` + `CounterSuggestion` + `CounterCost`（[combat.md](docs/combat.md)） |
+> | 伤害 / debuff 的组件族 | 保留（[combat.md](docs/combat.md) 第三节就是它的展开） |
+> | `Focus` 换前摇 | 保留，但归 `combat`（代码里还在 `timeline/focus.rs`，待搬） |
+>
+> 本文件等替代完成后与 `architecture.md` / `components.md` 一起删除（`TODO.md` M29）。
+
 ## 项目背景
 
 Bevy 0.19 游戏，无回合战斗时间线 + 戴森球式供应链 + roguelike 策略。
