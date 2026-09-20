@@ -1,7 +1,9 @@
 # 战斗：命中管线 · 对抗 · 伤害
 
-> ⚠️ **目标设计**：标 🚧 的部分代码里还没有（现状是"闪避 → 招架 → 护甲 → 扣血"，
-> 打断用掷骰、无格挡、无标签）。
+> ⚠️ **目标设计**：标 🚧 的部分代码里还没有。现状是"闪避 → 招架 → 护甲 → 扣血"
+> （见第一节，格挡 ③ 未落地），打断用掷骰且**无标签**（第二节未落地），
+> 威胁检测已落地但**反应槽 / 反制未落地**（第四节）。
+> 已经落地的部分标 ✅，引用前先 `grep` 确认。
 
 本域回答三个问题：**谁打中了谁**、**扣多少**、**能不能把对方那一手打掉**。
 
@@ -60,7 +62,7 @@ pub struct CombatTags {
 
 | 输出侧（攻击实体） | 防御侧（单位） |
 | :--- | :--- |
-| `PhysicalDamage(i32)` 🚧 已有 | `PhysicalResist(f32)` 🚧（现在是 `Armor(i32)`） |
+| `PhysicalDamage(i32)` ✅ | `Armor(i32)` ✅（`PhysicalResist(f32)` 🚧 是目标形态） |
 | `FireDamage(i32)` 🚧 | `FireResist(f32)` 🚧 |
 | `IceDamage(i32)` 🚧 | `IceResist(f32)` 🚧 |
 
@@ -71,18 +73,31 @@ pub struct CombatTags {
 
 ## 四、威胁与反应槽 🚧
 
+> **现状（与本文差异最大的一节）**：威胁检测**已落地**（`detect_threat_system`
+> 写 `PauseRequest::Pause(THREAT)`），但反应槽这一整节还没落地：
+>
+> | 本文 | 代码里现在是 |
+> | :--- | :--- |
+> | `ReactionSlot { threat, suggestions, resolved }` 挂玩家身上 | **不存在**；窗口状态在资源 `ThreatWindow { threatening, opening_action, answered }`（`combat/reaction/components.rs`） |
+> | `CounterSuggestion` / `affordable` | **不存在**；没有反制建议列表 |
+> | `CounterCommand` / `AbandonReaction` | **不存在**；玩家表态靠"那一手变了没有"推断 |
+> | 破坏性做出反制（插一条行动） | 只有暂停 + 解冻，**没有反制插入** |
+> | `CounterCost` | **不存在**（`skills::defs` 里 `AbilityDef` 没有 `counter` 字段） |
+>
+> 因此这一节整体是**目标设计**，读的时候不要以为 `ReactionSlot` 能 grep 到。
+
 威胁 = "有敌对的东西正打在玩家头上"。它触发**自动暂停**，并给玩家一个反应窗口。
 
 ```rust
 /// 一次威胁开一个窗口（挂在**被威胁的玩家**身上）
-pub struct ReactionSlot {
+pub struct ReactionSlot {   // 🚧
     pub threat: Entity,                       // 是哪条行动 / 哪颗投射物
     pub suggestions: Vec<CounterSuggestion>,  // 能拿哪几手反制（见下）
     pub resolved: bool,                       // 玩家表态了没有
 }
 
 /// 一条反制建议 = **一个技能 + 它作为反制要付的代价**。
-pub struct CounterSuggestion {
+pub struct CounterSuggestion {   // 🚧
     pub ability: AbilityId,
     pub cost: CounterCost,   // 技能的静态属性，见 skills.md 第四节
     pub affordable: bool,    // 现在付得起吗（HUD 决定亮不亮）
@@ -113,7 +128,7 @@ pub struct CounterSuggestion {
 ### 反制的落地
 
 ```rust
-pub enum CounterCost {
+pub enum CounterCost {   // 🚧
     Free,                  // 白送：反制插入，原决策保留
     Resource(u32),         // 花反制资源（当前是 Focus），原决策保留
     CancelDecision,        // 从时间轴移除原决策，插入反制
@@ -126,7 +141,7 @@ pub enum CounterCost {
 - 付不起的那一条**仍然列出来**（`affordable: false`），只是 HUD 画成不可选：
   玩家看得见"我本来能用招架，但精力不够"，这比看不见更有信息量。
 
-### HUD 怎么表现（`presentation` 只读）
+### HUD 怎么表现（`presentation` 只读）🚧
 
 | 位置 | 画什么 |
 | :--- | :--- |
@@ -134,15 +149,19 @@ pub enum CounterCost {
 | 顶部时间轴 | 高亮 `threat` 那一条（玩家能看出"打过来的是它"） |
 | 提示条 | 一行文案：反制可选 / 右键放弃 |
 
-HUD 只读 `ReactionSlot`，不认识 `CounterCost` 的语义——它只画
-"亮 / 不亮、代价是多少"。**输入只翻译**：技能键 → `CounterCommand { ability }`，
-右键 → `AbandonReaction`；两者都由 `combat::reaction` 消费
+（这三行都是**目标设计**：`suggestions` / `threat` 实体引用都还不存在。）
+
+HUD 只读 `ReactionSlot` 🚧，不认识 `CounterCost` 的语义——它只画
+"亮 / 不亮、代价是多少"。**输入只翻译**：技能键 → `CounterCommand { ability }` 🚧，
+右键 → `AbandonReaction` 🚧；两者都由 `combat::reaction` 消费
 （右键本来就同时写 `UndoCommand`，没有窗口时 `AbandonReaction` 自然被忽略，
 输入域因此不需要去读游戏状态）。
 
-> 这一节取代当前的 `ThreatWindow` 资源。旧实现靠"玩家那一手变了没有"推断表态，
-> 玩家在**前摇中**被冻结时换手也等不到表态，双方会永久冻死；新模型直接存
-> `threat: Entity` + `resolved: bool`，没有这个洞。
+> 这一节**将要取代**当前的 `ThreatWindow` 资源（**它现在还在**，
+> `combat/reaction/components.rs`）。旧实现靠"玩家那一手变了没有"推断表态——
+> `ThreatWindow.answered` 就是这个推断的落点——玩家在**前摇中**被冻结时换手
+> 也等不到表态，会有双方永久冻死的风险；新模型直接存
+> `threat: Entity` + `resolved: bool` 来堵这个洞。
 
 ## 五、单位身上的战斗资源
 
@@ -150,7 +169,7 @@ HUD 只读 `ReactionSlot`，不认识 `CounterCost` 的语义——它只画
 | :--- | :--- |
 | `Health { current, max }` | 唯一的生命真相 |
 | `Stamina { current, max }` | 动作消耗；**后摇结束时回 1 点**（订阅 `DecisionReady`） |
-| `Focus { current, max }` 🚧 | **反制资源**：1 点把一次声明的前摇归零 / 付 `CounterCost::Resource`；每 10 虚拟秒回 1 点 |
+| `Focus { current, max }` | **反制资源** ✅：1 点把一次声明的前摇归零（`FOCUS_MAX = 3`，每 `FOCUS_RECOVER_INTERVAL = 10.0` 虚拟秒回 1 点）。付 `CounterCost::Resource` 🚧 还没落地 |
 | `BlockChance` 🚧 | 格挡率（盾牌 / 姿态给的），命中管线第 ③ 关读它 |
 | `Faction { Player \| Enemy }` | **只管战斗目标过滤**，不代表"谁在操作"（那是 `InputDriven`） |
 

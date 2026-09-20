@@ -58,12 +58,14 @@ pub enum Target {
 ```
 
 **意图只描述"想做什么"，不做任何落地**：不扣资源、不生成实体、不改世界。
-填意图之前跑一次 [`can_cast`](skills.md)（条件够不够），被拒就写一条
-`ActionBlocked` 给 HUD —— 和玩家按键失败的手感是同一条路。
+填意图之前跑一次 [`can_cast`](skills.md)（条件够不够）🚧，被拒就写一条
+`ActionBlocked` 给 HUD —— 和玩家按键失败的手感是同一条路
+（`ActionBlocked` 与"各声明系统自己查条件"已落地，`can_cast` 这个统一入口还没有）。
 
 > **名字的层级**（三层，不要混）：`ai::Situation`（读到的战况）→ `ai::Tactic`
-> （战术选择：靠近 / 贪刀 / 闪避）→ `Intent`（**动作决策**，就是这里这个）。
-> 玩家的 `PlayerTakeover` 是"我要改主意"这一条**输入层事实**，不是一个意图。
+> （战术选择：靠近 / 贪刀 / 闪避，**已落地**）→ `Intent`（**动作决策**，就是这里这个 🚧）。
+> 玩家的 `PlayerTakeover` 是"我要改主意"这一条**输入层事实**，不是一个意图
+> （**已落地**：`input` / `interaction` 写、`timeline::undo_system` 消费）。
 
 ## 三、一轮里发生什么
 
@@ -71,8 +73,9 @@ pub enum Target {
 顺序走：
 
 ```text
-① 非 PC 的决策        所有空着的决策槽 → can_cast → 填 Intent → 立刻物化成行动实体
-                      （execute_at = 现在 + 自己的前摇）。AI 在这一步决策。
+① 非 PC 的决策        所有空着的决策槽 → can_cast 🚧 → 填 Intent 🚧
+                      → 立刻物化成行动实体（execute_at = 现在 + 自己的前摇）。
+                      AI 在这一步决策。
 ② 威胁扫描            前摇中、玩家还没表态的行动 → 与 PC 所在格相交 → 记入 ReactionSlot
 ③ PC 的决策           槽空                    → 断言 Pause("awaiting")
                       有威胁 且 ReactionSlot 空 → 断言 Pause("threat")
@@ -107,9 +110,9 @@ pub enum Target {
 只有 ③ 那两条断言与玩家的手动暂停：
 
 ```text
-PC 的决策槽还空着（还没决定）  → 断言 Pause("awaiting")
-PC 正被威胁、反应槽还空着      → 断言 Pause("threat")
-玩家按了暂停键                → 输入域断言 Pause("manual")
+PC 的决策槽还空着（还没决定）  → 断言 Pause(SLOT_EMPTY)   // 语义 = "awaiting"
+PC 正被威胁、反应槽还空着      → 断言 Pause(THREAT)
+玩家按了暂停键                → 输入域断言 Pause(MANUAL)
 ```
 
 敌人"无感"：AI 在 ① 就把意图填好，所以 `"awaiting"` 实际上只等玩家。
@@ -128,8 +131,12 @@ frozen ⟺ 本帧的 PauseReasons 非空
   顺序是确定的：输入域（`Resume` 的来源）排在 `TimelineSet` 之前，各域的断言排在它之后
   ——手动解冻那一帧，仍然成立的断言会照常加回来。
 
-当前的原因：`"manual"`（玩家按了暂停键）/ `"awaiting"`（PC 还没决定，代码里现在
-还叫 `"slot_empty"` 🚧）/ `"threat"`（PC 被威胁且反应槽空着）。
+当前的原因：`"manual"`（玩家按了暂停键）/ **`"slot_empty"`**（PC 还没决定）
+/ `"threat"`（PC 被威胁且反应槽空着）。
+
+> 命名差异：`"slot_empty"` 是**当前代码里的常量名**（`timeline::SLOT_EMPTY`），
+> 本文其余地方按语义写作 `"awaiting"` 🚧——改名是后续项，不是现状。
+> 引用常量一律用 `SLOT_EMPTY` / `MANUAL` / `THREAT`，**不要硬编码字符串**。
 
 **唯一**写 `Time<Virtual>` 的地方是帧末 `ClockSet` 里的 `apply_clock`。Bevy 每帧把虚拟
 时间拷进通用 `Time`，因此位移、投射物、`Lifetime`、后摇计时全部自动停表，
