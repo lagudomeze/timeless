@@ -307,9 +307,13 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **M28 每个 mod 出 `plugin.rs`**：`CombatPlugin` 只编排子域顺序、不注册系统；
       顺带把 `combat/skills` 改名 `combat/attack`（D2 的收尾）。与其它步独立，随时可做。
 - [ ] **M29 删掉 `architecture.md` / `components.md` / `NEW_DESGIN.md`**：替代完成后的收尾。
-- [ ] **M30 `utils::Shape`（D3）**：把纯几何从各处的"临时算格子"里提出来
-      （伤害 `Point` / 回血正方形 / 爆炸 `Circle` / 近战 `Arc`），
-      `Threatens.cells` 改成由它在格尺度上算出来。与 M24/M25 独立，可随时插队。
+- [x] **M30 形状按需抽取（D3）—— 结论：不建 `utils` 域、不建 `Shape` 枚举。**
+      形状改为**一个形状一个组件**（`HitRadius` / `MeleeShape`），判定系统紧贴各自的
+      形状（`combat/targeting/`），与 `combat.md` 第三节"不要中心化类型枚举"一致。
+      验收：顶层 `src/utils/` 不存在（`voxel_render/meshing/utils.rs` 是网格化内部模块，
+      与本次结论无关）；`docs/domain.md` / `docs/skills.md` 已改写。
+      **触发条件**：只有出现"只吃参数、不碰组件"的几何（如 `hit_test(&Shape, ..)`）
+      且被两个以上域复用时，才重新考虑抽公共模块。
 
 ## 待办
 

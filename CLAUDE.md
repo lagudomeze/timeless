@@ -43,8 +43,13 @@ cargo fmt --check                           # 必须通过
 顶层域：`world`（体素数据，零渲染依赖）· `voxel_render`（网格化 / 材质 / 明暗）·
 `movement`（`Cell` 决策 + `Velocity` 位移 + 移动 / 跳跃 / 翻滚）· `combat`（战斗全部子域）·
 `skills`（技能**静态定义**：`AbilityId` / `AbilityDef` / `can_cast`）· `timeline`（无回合调度）·
-`ai`（敌人战术）· `input`（键盘 / 鼠标 → 消息）· `interaction`（鼠标拾取 / 高亮 / 点击）·
+`ai`（敌人战术）· `input`（键盘 / 鼠标 → 消息）· `interaction`（鼠标拾取 / 点击翻译 / 高亮与预演画面）·
 `presentation`（相机 / 纸片 / HUD / 日志，只读）· `spawn`（组装车间）。
+
+两处**域内分层**值得照抄：`interaction/` 分 `pointer.rs`（翻译，不产生实体）与
+`visual.rs`（画面，只读状态）；`presentation/hud/timeline/` 分 `model.rs`（纯函数 +
+快照，可脱离 App 单测）/ `scene.rs`（UI 夹具）/ `system.rs`（取数 → 比对 → 写 UI）。
+新增 UI 一律照这个三层走，别把几何、夹具与逐帧写入塞回一个文件。
 
 - 「玩家」「敌人」**不是模块**，是组件的组合体：零件归各领域（`Health` → combat、
   `Velocity` → movement、`EnemyBrain` → ai、`ChunkLoader` → world），组装归 `spawn/`。
@@ -103,6 +108,27 @@ WorldSet ──────────────────────▶�
 - **`world` 是纯数据域**：不引用 `Mesh3d` / `StandardMaterial` / `Assets<…>`，可用 `MinimalPlugins` 单测；
   网格化与材质一律在 `voxel_render`，两域只经区块消息通信。
 - **功能不是领域**：只把已有系统拼一次的胶水留在调用方（如 `spawn/restart.rs`）。
+- **形状 = 一个形状一个组件**（`HitRadius` / `MeleeShape`），没有中心化 `Shape` 枚举，
+  也**没有 `utils` 域**——判定系统紧贴各自的形状（`combat/targeting/`）。
+
+### BSN（`bsn!` + `spawn_scene`）
+
+局内所有**一次性的实体组装**都用 `bsn!`；长元组 `spawn((...))` 只该出现在测试里。
+
+- 裸写组件名即可（`Name("X")` / `HoverHighlight` / `Transform { .. }`），
+  组件要 `Clone + Default` 才能这么写（`bevy_ecs::template` 的 blanket impl）。
+- **非 Default 的初值用 `template_value(x)`**（`DecisionSlot::Empty`、`Health::new(50)`、`ActionOf(actor)`）。
+- 现场造资产用 `asset_value(expr)`，里面是**普通 Rust 表达式**，可以写 `..default()`。
+- 字段值不是字面量时包 `{expr}`；**不要写 `..default()` 做结构体剩余字段**
+  （那是 `asset_value` 里才有的写法）。
+- `Children [a, b]` 的元素必须是 `Scene` 而不是 `Bundle`——现有 UI 工厂返回 `impl Bundle`，
+  所以 HUD 根挂子节点走 `add_children`（见 `presentation/hud/layout.rs`）。
+- **`Commands::spawn_scene` 需要 `AssetServer` + `ScenePlugin`**：`world` 域（要能用裸
+  `MinimalPlugins` 单测）和 `voxel_render` 的网格化（手里是 `Handle`，不建材质）都因此
+  继续用 `spawn`。给 `world` 加 BSN 会破坏它的零渲染依赖铁律。
+- 用 `bsn!` 的场景工厂**必须有测试钉住组件真的挂上了**：漏写一行不报编译错，
+  只表现为「高亮永远显示 / 永远不显示」（`interaction/visual.rs` 的
+  `the_scene_factories_attach_their_markers` 是范例）。
 
 ### 通信
 

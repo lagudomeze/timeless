@@ -23,7 +23,8 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 
 领域：`world`（体素数据，零渲染依赖）· `voxel_render`（网格化 / 材质 / 明暗）·
 `movement` · `combat` · `skills`（技能**静态定义**）· `timeline` · `ai` · `input` ·
-`interaction` · `presentation` · `spawn`（组装车间）。`utils` 是纯几何工具，不是领域。
+`interaction` · `presentation` · `spawn`（组装车间）。纯几何不单独建域——形状是
+**一个形状一个组件**（`HitRadius` / `MeleeShape`），判定紧贴各自的系统。
 完整说明见 [`docs/domain.md`](docs/domain.md)。
 
 ## 构建、测试与开发命令

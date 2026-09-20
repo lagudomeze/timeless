@@ -6,8 +6,9 @@
 > `SkillRegistry` / `RegisterAbility`，`movement` 与 `combat` 各自在 `Startup`
 > 交上自己的定义，`AbilityId::ALL` 由整机测试自检完整性。
 >
-> 还没落地的是：**`can_cast` / `Requirement`（第三节）**、`Shape` 与 `utils` 域
-> （第六节）、`Effect` / `Phase`（第七节）、以及定义里的 `counter` 字段。
+> 还没落地的是：**`can_cast` / `Requirement`（第三节）**、`Effect` / `Phase`（第七节）、
+> 以及定义里的 `counter` 字段。尺寸几何**已按"一个形状一个组件"落地**（第六节），
+> 不再计划 `Shape` 枚举 / `utils` 域。
 > 条件校验目前由各声明系统各自做（`Stamina` → `ActionBlocked::NO_ENERGY`）。
 
 技能是**这一手"是什么"**，行动是**这一次"发生了什么"**。两者分开：
@@ -144,28 +145,22 @@ pub enum TargetSelector {
 ```
 
 **选目标只产出"打哪儿"，命中的几何判定归 [combat.md](combat.md)**：
-决策层用格（`Cell`），结算层用**形状**（`Shape`，见下节）。
+决策层用格（`Cell`），结算层用**形状组件**（见下节）。
 
-## 六、范围与形状：`utils` 里的纯几何 🚧
+## 六、范围与形状：**一个形状一个组件**
 
-> **现状**：`utils` 域**还没建**，`Shape` 不存在。今天的几何判定分散在
-> `combat/formula/domain.rs`（命中 / 反制）与 `movement/cell.rs`（格与距离）。
+攻击范围 / 影响范围是几何，但落地形态不是中心化枚举：
 
-攻击范围 / 影响范围只是**几何**，不是领域：`Shape` 住在 `utils`，谁都能直接引用
-（[domain.md](domain.md) 的 import 规则第 3 条）。
+| 早先设想 🚧 | 现在的代码 ✅ | 为什么 |
+| :--- | :--- | :--- |
+| `enum Shape { Point, Square, Circle, Arc }` 住在 `utils` | **一个形状一个组件**：`HitRadius(f32)`（圆）、`MeleeShape { range, half_arc }`（扇形）；决策层的 `Threatens { cells }` 另算 | 与 [combat.md](combat.md) 第三节同一条理由：**不要中心化的类型枚举**。加一种形状 = 加一个组件 + 一个与既有判定同形的系统，伤害 / 生命 / 日志 / 撤销都不必知道它存在 |
 
-```rust
-// src/utils/shape.rs 🚧（没有 Plugin、没有组件、纯数据 + 纯函数）
-pub enum Shape {
-    Point,                    // 单体：伤害、位移落点
-    Square { half: f32 },     // 正方形范围：回血、增益光环
-    Circle { radius: f32 },   // 爆炸半径
-    Arc { radius: f32, half_angle: f32 },  // 近战扇形
-}
-```
-
-- **具体实现直接引用它，或者包一层**：伤害就是 `Point`，回血就是正方形
-  `Square`——`Shape` 不区分"伤害 / 回血"，它只回答"覆盖哪些格 / 哪些点"。
+- 判定系统住在 [`combat::targeting`](combat.md)：`detect_collisions_system` 用 `CollisionTarget`
+  挂候选，`detect_melee_system` 用 `MeleeShape` 扫扇形。
+- **`utils` 域从未建立，也不打算建**：没有出现真正需要跨领域复用的几何
+  （现在这些判定都紧贴各自的系统，抽出去只会多一层转发）。等出现"只吃参数、
+  不碰组件"的 `hit_test(&Shape, ..)` 这类纯函数再说——**那时才是抽取时机**。
+- `TargetSelector` 回答"要什么目标"（设计意图），形状组件回答"覆盖多大"（几何），两者不合并。
 - `TargetSelector` 回答"要什么目标"（设计意图），`Shape` 回答"覆盖多大"
   （几何计算），两者不合并。
 - `Threatens { cells }`（[combat.md](combat.md)）是**决策层**的格子集合，
