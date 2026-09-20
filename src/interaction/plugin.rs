@@ -1,13 +1,18 @@
-//! 交互域插件：注册资源、高亮与预演指示器，并把点击翻成各领域的消息。
+//! 交互域插件：拾取悬停格、画高亮与预演，并把点击翻成各领域的消息。
+//!
+//! 系统顺序（`InteractionSet` 内 `.chain()`）：先拾取（写 `HoveredCell`），
+//! 再画高亮 / 预演（读它），然后发预演读数、最后翻译点击——**同一帧内**，
+//! 玩家看到的画面与点击的解释用的是同一个悬停格。
 
 use bevy::prelude::*;
 
 use super::InteractionSet;
 use super::components::{AoePreview, ConePreview, HoverHighlight, HoverTint, HoveredCell};
 use super::events::PointerCommand;
-use super::systems::{
-    hover_cell_system, pointer_command_system, spawn_hover_highlight, spawn_preview_indicators,
-    update_hover_highlight_system, update_preview_indicators_system, update_preview_readout_system,
+use super::pointer::{hover_cell_system, pointer_command_system, update_preview_readout_system};
+use super::visual::{
+    spawn_hover_highlight, spawn_preview_indicators, update_hover_highlight_system,
+    update_preview_indicators_system,
 };
 
 /// 鼠标交互插件：悬停拾取 + 高亮 + 点击 → 消息 + 行动预演指示器。
