@@ -19,10 +19,12 @@ pub fn setup_scene(
     terrain: Res<TerrainConfig>,
     sprites: Res<UnitSprites>,
 ) {
-    commands.spawn((
-        DirectionalLight::default(),
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.5, 0.8, 0.0)),
-    ));
+    commands.spawn_scene(bsn! {
+        template_value(DirectionalLight::default())
+        Transform {
+            rotation: {Quat::from_euler(EulerRot::XYZ, -0.5, 0.8, 0.0)},
+        }
+    });
 
     commands.spawn_scene(camera::main_camera());
     commands.spawn_scene(camera::light());

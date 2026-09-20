@@ -18,7 +18,7 @@ pub struct HoveredCell(pub Option<Cell>);
 pub struct HoverHighlight;
 
 /// 高亮的当前颜色（**进组件**而不是只藏在材质里：BRP 能直接读出来排查）。
-#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq)]
+#[derive(Component, Reflect, Debug, Default, Clone, Copy, PartialEq)]
 #[reflect(Component)]
 pub struct HoverTint(pub Color);
 

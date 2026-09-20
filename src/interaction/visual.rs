@@ -49,71 +49,72 @@ pub const CONE_PREVIEW: Color = Color::srgba(0.95, 0.84, 0.42, 0.22);
 pub const CONE_ARC: f32 = std::f32::consts::TAU / 3.0;
 
 /// 开局生成唯一的高亮方块（之后只搬位置 / 改颜色）。
-pub fn spawn_hover_highlight(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    commands.spawn((
-        Name::new("HoverHighlight"),
-        HoverHighlight,
-        HoverTint(Color::NONE),
-        Mesh3d(meshes.add(Rectangle::new(
+pub fn spawn_hover_highlight(mut commands: Commands) {
+    commands.spawn_scene(bsn! {
+        Name("HoverHighlight")
+        HoverHighlight
+        HoverTint(Color::NONE)
+        Mesh3d(asset_value(Rectangle::new(
             CELL_SIZE * HIGHLIGHT_FILL,
             CELL_SIZE * HIGHLIGHT_FILL,
-        ))),
-        MeshMaterial3d(materials.add(StandardMaterial {
+        )))
+        MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
             base_color: Color::NONE,
             unlit: true,
             alpha_mode: AlphaMode::Blend,
             double_sided: true,
             ..default()
-        })),
+        }))
         // 平铺在地面上（和单位阴影同一套做法）
-        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-        Visibility::Hidden,
-        NotShadowCaster,
-    ));
+        Transform {
+            rotation: {Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)},
+        }
+        Visibility::Hidden
+        // 高亮方块不该投影：它只是一层指示，投出影子反而像实体
+        NotShadowCaster
+    });
 }
 
 /// 开局生成两个预演指示器：火球 AOE 圆盘 + 近战扇形（都默认隐藏）。
 ///
 /// 它们和悬停高亮是两回事：高亮回答"我指着哪一格"，预演回答"**这一手会打到哪**"。
-pub fn spawn_preview_indicators(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let mut material = |color: Color| {
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: color,
+pub fn spawn_preview_indicators(mut commands: Commands) {
+    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    commands.spawn_scene(bsn! {
+        Name("AoePreview")
+        AoePreview
+        Mesh3d(asset_value(Circle::new(FIREBALL_RADIUS)))
+        MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
+            base_color: AOE_PREVIEW,
             unlit: true,
             alpha_mode: AlphaMode::Blend,
             double_sided: true,
             ..default()
         }))
-    };
-
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-    commands.spawn((
-        Name::new("AoePreview"),
-        AoePreview,
-        Mesh3d(meshes.add(Circle::new(FIREBALL_RADIUS))),
-        material(AOE_PREVIEW),
-        Transform::from_rotation(flat),
-        Visibility::Hidden,
-        NotShadowCaster,
-    ));
-    commands.spawn((
-        Name::new("ConePreview"),
-        ConePreview,
+        Transform {
+            rotation: {flat},
+        }
+        Visibility::Hidden
+        NotShadowCaster
+    });
+    commands.spawn_scene(bsn! {
+        Name("ConePreview")
+        ConePreview
         // 扇形从局部 +X 轴张开；下面按"朝向悬停格"整体旋转
-        Mesh3d(meshes.add(CircularSector::new(MELEE_REACH, CONE_ARC))),
-        material(CONE_PREVIEW),
-        Transform::from_rotation(flat),
-        Visibility::Hidden,
-        NotShadowCaster,
-    ));
+        Mesh3d(asset_value(CircularSector::new(MELEE_REACH, CONE_ARC)))
+        MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
+            base_color: CONE_PREVIEW,
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            double_sided: true,
+            ..default()
+        }))
+        Transform {
+            rotation: {flat},
+        }
+        Visibility::Hidden
+        NotShadowCaster
+    });
 }
 
 /// 按**当前选中的技能**决定显示哪个预演：火球给 AOE 圆盘、近战给扇形。
@@ -273,6 +274,61 @@ fn tint_for(cell: Cell, occupants: &Query<(&Cell, &Faction)>) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::scene::ScenePlugin;
+
+    /// 场景工厂验收：BSN 建出来的实体必须**真的带上**标记组件。
+    ///
+    /// 这条守着一次真实的坑——`bsn!` 改成补丁式写法后，少写一行 `HoverHighlight`
+    /// 或 `Visibility::Hidden` 不会编译报错，只会让高亮**永远显示 / 永远不显示**。
+    /// 所以这里不看"长得对不对"，只钉死"标记在不在、默认藏没藏"。
+    #[test]
+    fn the_scene_factories_attach_their_markers() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins((AssetPlugin::default(), ScenePlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>();
+        app.add_systems(Startup, (spawn_hover_highlight, spawn_preview_indicators));
+        app.update();
+
+        let mut query = app
+            .world_mut()
+            .query_filtered::<(Entity, &Visibility), With<HoverHighlight>>();
+        let highlights: Vec<(Entity, Visibility)> = query
+            .iter(app.world())
+            .map(|(entity, visibility)| (entity, *visibility))
+            .collect();
+        assert_eq!(highlights.len(), 1, "高亮方块应当只有一个");
+        assert_eq!(
+            highlights[0].1,
+            Visibility::Hidden,
+            "没悬停时就该藏着（少了 `Visibility::Hidden` 会整块糊在场上）"
+        );
+
+        // 两个预演指示器各一个，且都默认隐藏
+        for (name, count) in [("AoePreview", 1), ("ConePreview", 1)] {
+            let found = match name {
+                "AoePreview" => app
+                    .world_mut()
+                    .query_filtered::<&Visibility, With<AoePreview>>()
+                    .iter(app.world())
+                    .count(),
+                _ => app
+                    .world_mut()
+                    .query_filtered::<&Visibility, With<ConePreview>>()
+                    .iter(app.world())
+                    .count(),
+            };
+            assert_eq!(found, count, "{name} 应当由场景工厂建出来");
+        }
+        let mut hidden = app
+            .world_mut()
+            .query_filtered::<&Visibility, (With<AoePreview>, Without<HoverHighlight>)>();
+        assert!(
+            hidden.iter(app.world()).all(|v| *v == Visibility::Hidden),
+            "预演指示器开局应当都是隐藏的"
+        );
+    }
 
     fn highlight_app(hovered: Option<Cell>) -> (App, Entity) {
         let mut app = App::new();
