@@ -162,7 +162,7 @@ impl UnitRow {
             "dodging"
         } else if self.parrying {
             "parrying"
-        } else if self.slot.is_empty() {
+        } else if self.slot.ready() {
             "ready"
         } else {
             "busy"
@@ -185,6 +185,7 @@ pub fn tactic_label(tactic: Tactic) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::decision::BUSY_SENTINEL;
 
     #[test]
     fn bar_percent_maps_the_ratio_and_clamps() {
@@ -202,7 +203,7 @@ mod tests {
             stamina: Some(Stamina::new(3)),
             cell,
             position,
-            slot: DecisionSlot::Empty,
+            slot: DecisionSlot::Idle { intent: None },
             dodging: false,
             parrying: false,
             airborne: false,
@@ -213,7 +214,9 @@ mod tests {
     #[test]
     fn state_line_carries_defense_and_intent() {
         let mut enemy = row(Faction::Enemy, Cell::new(3, 3), Vec3::ZERO);
-        enemy.slot = DecisionSlot::Windup;
+        enemy.slot = DecisionSlot::Executing {
+            until: BUSY_SENTINEL,
+        };
         enemy.dodging = true;
         enemy.tactic = Some(Tactic::Approach);
 

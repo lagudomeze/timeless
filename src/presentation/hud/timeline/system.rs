@@ -135,7 +135,7 @@ pub fn update_timeline_system(
     // 没有决策槽的单位按空闲算（与旧的 `unwrap_or_default()` 一致）
     let ready: Vec<Entity> = actors
         .iter()
-        .filter(|(_, _, slot)| slot.is_none_or(|slot| slot.is_empty()))
+        .filter(|(_, _, slot)| slot.is_none_or(|slot| slot.is_idle()))
         .map(|(entity, _, _)| entity)
         .collect();
 
@@ -249,6 +249,7 @@ mod tests {
     use super::*;
     use crate::movement::MOVE_TIMING;
     use crate::presentation::hud::timeline::model::{BLOCK_POOL_PER_LANE, LANE_POOL};
+    use crate::timeline::decision::BUSY_SENTINEL;
 
     fn timeline_app() -> App {
         let mut app = App::new();
@@ -290,7 +291,9 @@ mod tests {
         for actor in [player, enemy] {
             app.world_mut()
                 .entity_mut(actor)
-                .insert(DecisionSlot::Windup);
+                .insert(DecisionSlot::Executing {
+                    until: BUSY_SENTINEL,
+                });
         }
 
         app.update();
@@ -339,7 +342,7 @@ mod tests {
 
         let player = app
             .world_mut()
-            .spawn((Faction::Player, DecisionSlot::Empty))
+            .spawn((Faction::Player, DecisionSlot::Idle { intent: None }))
             .id();
         let chip = app
             .world_mut()
@@ -377,7 +380,9 @@ mod tests {
         ));
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Windup);
+            .insert(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            });
         app.update();
         assert_eq!(display(&app, chip), Display::None, "有排期就不再候场");
         assert_eq!(display(&app, block), Display::Flex, "排期画在自己的车道里");

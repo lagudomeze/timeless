@@ -26,7 +26,8 @@ use crate::combat::{AttackRange, Faction, Health};
 use crate::movement::{
     CELL_SIZE, Cell, MOVE_TIMING, ROLL_TIMING, move_action_scene, step_from_axis,
 };
-use crate::timeline::{DecisionSlot, ScheduledAction};
+use crate::skills::AbilityId;
+use crate::timeline::{DecisionSlot, Intent, ScheduledAction, Target};
 
 use super::components::{EnemyBrain, Tactic};
 
@@ -74,7 +75,7 @@ pub fn decide_tactic_system(
     threats: Query<&Threatens>,
 ) {
     for (transform, cell, faction, health, range, brain, slot, mut tactic) in &mut enemies {
-        if *slot != DecisionSlot::Empty {
+        if !slot.is_idle() {
             continue; // 忙（前摇 / 后摇）：这一轮不重新决策
         }
         let distance = bodies
@@ -150,7 +151,7 @@ pub fn enemy_declare_system(
     let now = time.elapsed_secs();
 
     for (entity, transform, cell, faction, stamina, slot, mut tactic) in &mut enemies {
-        if *slot != DecisionSlot::Empty {
+        if !slot.is_idle() {
             continue;
         }
         // 精力不够时不能真的闪：降级为普通决策结果
@@ -211,7 +212,14 @@ pub fn enemy_declare_system(
                     ScheduledAction::declared_at(MOVE_TIMING, now),
                     entity,
                 ));
-                commands.entity(entity).insert(DecisionSlot::Windup);
+                commands.entity(entity).insert(DecisionSlot::declared(
+                    Intent {
+                        ability: AbilityId::Move,
+                        target: Target::Cell(to_cell),
+                    },
+                    &MOVE_TIMING,
+                    now,
+                ));
             }
             Tactic::Melee => {
                 declare_melee_at(
@@ -353,7 +361,7 @@ mod tests {
         }
         app.world_mut()
             .entity_mut(enemy)
-            .insert(DecisionSlot::Empty);
+            .insert(DecisionSlot::Idle { intent: None });
 
         // 一发「正在前摇」的攻击把敌人脚下的格写进威胁 → 战术变成 Dodge
         app.world_mut().spawn((
@@ -378,7 +386,7 @@ mod tests {
         );
         assert_eq!(
             app.world().get::<DecisionSlot>(player).copied(),
-            Some(DecisionSlot::Empty),
+            Some(DecisionSlot::Idle { intent: None }),
             "玩家的决策槽不该被 AI 的行动消耗掉"
         );
     }

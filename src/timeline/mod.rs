@@ -69,11 +69,11 @@ pub mod ownership;
 pub mod plugin;
 pub mod schedule;
 
-pub use clock::{LatchedReasons, MANUAL, PauseReasons, PauseRequest, SLOT_EMPTY, THREAT};
+pub use clock::{AWAITING, LatchedReasons, MANUAL, PauseReasons, PauseRequest, THREAT};
 pub use clock::{
     apply_clock, apply_pause_toggles_system, compute_player_awaiting_system, process_pause_requests,
 };
-pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven};
+pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven, Intent, Target};
 pub use decision::{recovery_system, undo_system};
 pub use events::{
     ActionBlocked, ActionCancelled, BlockReason, DecisionReady, PlayerTakeover, UndoCommand,

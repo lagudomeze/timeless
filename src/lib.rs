@@ -163,6 +163,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::decision::BUSY_SENTINEL;
     use bevy::input::keyboard::KeyCode;
     use bevy::scene::ScenePlugin;
     use bevy::time::TimeUpdateStrategy;
@@ -319,7 +320,7 @@ mod tests {
                 MoveSpeed(5.0),
                 Stamina::default(),
                 cell,
-                DecisionSlot::Empty,
+                DecisionSlot::Idle { intent: None },
                 InputDriven,
                 Transform::from_translation(world),
             ))
@@ -338,7 +339,7 @@ mod tests {
                 MoveSpeed(2.0),
                 Stamina::default(),
                 cell,
-                DecisionSlot::Empty,
+                DecisionSlot::Idle { intent: None },
                 Transform::from_translation(world),
             ))
             .id()
@@ -448,10 +449,13 @@ mod tests {
         press(&mut app, KeyCode::ArrowUp);
         app.update(); // 声明：行动实体 + 决策槽 Filled
         assert_eq!(actions::<MoveAction>(&mut app), 1, "按一次应当产生一条移动");
+        // 声明即排期：`until` = 这一手的前摇 + 后摇（`MOVE_TIMING.total()`）
         assert_eq!(
             slot_of(&app, player),
-            DecisionSlot::Windup,
-            "声明之后决策槽进入前摇"
+            DecisionSlot::Executing {
+                until: MOVE_TIMING.total()
+            },
+            "声明之后槽进时间轴"
         );
         assert_eq!(
             velocity_of(&mut app, player),
@@ -519,7 +523,7 @@ mod tests {
 
         assert_eq!(
             slot_of(&app, player),
-            DecisionSlot::Empty,
+            DecisionSlot::Idle { intent: None },
             "后摇结束应当清空决策槽"
         );
     }
@@ -827,7 +831,7 @@ mod tests {
         }
         let slot = slot_of(&app, player);
         assert!(
-            matches!(slot, DecisionSlot::Recovery { .. }),
+            matches!(slot, DecisionSlot::Executing { .. }),
             "火球还在飞的时候射手不该拿到决策权（他还在飞行的后摇里），实际 {slot:?}"
         );
 
@@ -890,7 +894,14 @@ mod tests {
             1,
             "声明火球时先扣掉 2 点精力"
         );
-        assert_eq!(slot_of(&app, player), DecisionSlot::Windup);
+        // 声明即排期：火球忙到「前摇 + 后摇」
+        assert_eq!(
+            slot_of(&app, player),
+            DecisionSlot::Executing {
+                until: FIREBALL_TIMING.total()
+            },
+            "声明之后槽进时间轴"
+        );
 
         app.world_mut().write_message(UndoCommand);
         app.update();
@@ -898,7 +909,7 @@ mod tests {
         assert_eq!(actions::<FireballAction>(&mut app), 0, "行动实体应当被销毁");
         assert_eq!(
             slot_of(&app, player),
-            DecisionSlot::Empty,
+            DecisionSlot::Idle { intent: None },
             "撤销之后立刻能改主意"
         );
         assert_eq!(
@@ -948,7 +959,7 @@ mod tests {
         );
         let slot = slot_of(&app, player);
         assert!(
-            matches!(slot, DecisionSlot::Recovery { .. }),
+            matches!(slot, DecisionSlot::Executing { .. }),
             "零前摇的行动过了那一帧就该离开前摇，实际 {slot:?}"
         );
     }
@@ -1008,7 +1019,9 @@ mod tests {
 
         assert_ne!(
             slot_of(&app, player),
-            DecisionSlot::Windup,
+            DecisionSlot::Executing {
+                until: BUSY_SENTINEL
+            },
             "玩家还没动手，槽不该被谁占上"
         );
     }
@@ -1033,7 +1046,7 @@ mod tests {
         // 玩家在**后摇**里：表态路径（换一手）此刻走不通
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Recovery { until: 999.0 });
+            .insert(DecisionSlot::Executing { until: 999.0 });
         app.world_mut().spawn((
             ActionOf(enemy),
             FIREBALL_TIMING,
@@ -1102,7 +1115,7 @@ mod tests {
         );
         assert_eq!(
             slot_of(&app, enemy),
-            DecisionSlot::Empty,
+            DecisionSlot::Idle { intent: None },
             "被打断的人立刻拿回决策槽"
         );
         assert_eq!(
@@ -1164,7 +1177,9 @@ mod tests {
             .expect("火球行动场景应当能实例化");
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Windup);
+            .insert(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            });
         app.update(); // 声明这一帧：零前摇的行动还不该落地
         app.update(); // 执行器发射投射物
         assert_eq!(actions::<Fireball>(&mut app), 1, "火球应当在飞行中");
@@ -1232,7 +1247,9 @@ mod tests {
             .id();
         app.world_mut()
             .entity_mut(enemy)
-            .insert(DecisionSlot::Windup);
+            .insert(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            });
 
         app.world_mut().write_message(DamageEvent {
             source: None,

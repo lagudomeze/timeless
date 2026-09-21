@@ -9,9 +9,10 @@ use bevy::prelude::*;
 
 use crate::combat::Faction;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
+use crate::skills::AbilityId;
 use crate::timeline::{
-    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, PendingFocus,
-    ScheduledAction,
+    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, Intent, PendingFocus,
+    ScheduledAction, Target,
 };
 
 use super::components::{ParryAction, Parrying};
@@ -70,7 +71,17 @@ pub fn declare_roll(
             from_cell, to_cell, timing, schedule, actor,
         ))
         .id();
-    commands.entity(actor).insert(DecisionSlot::Windup);
+    // 这个工厂只有 `schedule`，没有"现在几点"——但声明时刻就是
+    // `execute_at − windup`（前摇的定义），所以不必再传一个 now 进来。
+    let declared_at = schedule.execute_at - timing.windup;
+    commands.entity(actor).insert(DecisionSlot::declared(
+        Intent {
+            ability: AbilityId::Roll,
+            target: Target::Cell(to_cell),
+        },
+        &timing,
+        declared_at,
+    ));
     action
 }
 
@@ -204,13 +215,21 @@ pub fn declare_parry_system(
     let now = time.elapsed_secs();
     let schedule =
         ScheduledAction::with_focus(PARRY_TIMING, now, &mut focus, pending_focus.wants());
+    // `now` 用于上面的排期与下面的槽（声明即排期：`until = now + total`）
     commands.spawn_scene(crate::combat::defense::parry_action_scene(
         target_attack,
         PARRY_TIMING,
         schedule,
         player,
     ));
-    commands.entity(player).insert(DecisionSlot::Windup);
+    commands.entity(player).insert(DecisionSlot::declared(
+        Intent {
+            ability: AbilityId::Parry,
+            target: Target::Entity(target_attack),
+        },
+        &PARRY_TIMING,
+        now,
+    ));
 }
 
 /// 执行招架：给行动者挂 [`Parrying`]，绑定被挡的那次攻击。

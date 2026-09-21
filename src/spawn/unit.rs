@@ -32,7 +32,7 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
         AttackRange::MELEE
         Collidable
         template_value(Velocity(Vec3::ZERO))
-        template_value(DecisionSlot::Empty)
+        template_value(DecisionSlot::Idle { intent: None })
         template_value(stamina)
         template_value(cell)
         Transform {

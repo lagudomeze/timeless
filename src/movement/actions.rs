@@ -9,9 +9,10 @@
 
 use bevy::prelude::*;
 
+use crate::skills::AbilityId;
 use crate::timeline::{
-    ActionBlocked, ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven,
-    PendingFocus, ScheduledAction, Uncancellable,
+    ActionBlocked, ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, Intent,
+    PendingFocus, ScheduledAction, Target, Uncancellable,
 };
 
 use super::cell::{Cell, MoveGoal};
@@ -165,7 +166,15 @@ pub fn declare_move_system(
         schedule,
         player,
     ));
-    commands.entity(player).insert(DecisionSlot::Windup);
+    // 填意图 + 当场物化：无回合模型里没有「提交」这一步，所以声明即排期
+    commands.entity(player).insert(DecisionSlot::declared(
+        Intent {
+            ability: AbilityId::Move,
+            target: Target::Cell(to_cell),
+        },
+        &MOVE_TIMING,
+        now,
+    ));
 }
 
 /// 声明移动（点地板）：`MoveToCommand` → 朝目标格走**一条直线**的行动。
@@ -200,7 +209,15 @@ pub fn declare_move_to_system(
         schedule,
         player,
     ));
-    commands.entity(player).insert(DecisionSlot::Windup);
+    // 填意图 + 当场物化（目标可能跨好几格，`MoveAction` 自己朝目标格走直线）
+    commands.entity(player).insert(DecisionSlot::declared(
+        Intent {
+            ability: AbilityId::Move,
+            target: Target::Cell(target),
+        },
+        &MOVE_TIMING,
+        now,
+    ));
 }
 
 /// 执行：到点的移动行动 → 朝**目标格中心**设速度，到位后由 `move_entities_system` 停下。
@@ -262,7 +279,15 @@ pub fn declare_jump_system(
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(JUMP_TIMING, now, &mut focus, pending_focus.wants());
     commands.spawn_scene(jump_action_scene(JUMP_TIMING, schedule, player));
-    commands.entity(player).insert(DecisionSlot::Windup);
+    // 原地起跳：不需要目标
+    commands.entity(player).insert(DecisionSlot::declared(
+        Intent {
+            ability: AbilityId::Jump,
+            target: Target::None,
+        },
+        &JUMP_TIMING,
+        now,
+    ));
 }
 
 /// 执行：到点后给行动者一个向上初速度，剩下交给 [`jump_motion_system`]。
@@ -404,7 +429,7 @@ mod tests {
 
         app.update();
 
-        let DecisionSlot::Recovery { until } = *app
+        let DecisionSlot::Executing { until } = *app
             .world()
             .get::<DecisionSlot>(actor)
             .expect("执行完应当进入后摇")
