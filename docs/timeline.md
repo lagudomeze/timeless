@@ -112,7 +112,7 @@ pub enum Target {
 ```text
 PC 的决策槽还空着（还没决定）  → 断言 Pause(SLOT_EMPTY)   // 语义 = "awaiting"
 PC 正被威胁、反应槽还空着      → 断言 Pause(THREAT)
-玩家按了暂停键                → 输入域断言 Pause(MANUAL)
+玩家按了暂停键                → 输入域发 Toggle(MANUAL)（翻转冻结状态）
 ```
 
 敌人"无感"：AI 在 ① 就把意图填好，所以 `"awaiting"` 实际上只等玩家。
@@ -123,15 +123,24 @@ PC 正被威胁、反应槽还空着      → 断言 Pause(THREAT)
 frozen ⟺ 本帧的 PauseReasons 非空
 ```
 
-- 原因是**断言式**的：谁这一帧还想让世界停着就写一条 `PauseRequest::Pause(reason)`；
-  下一帧不再断言，原因自然消失，**不需要谁去撤销**。
-- `PauseRequest::Resume` 不带原因，表示"清空此刻已收集的原因、让时间流动"，
-  只由输入域发（玩家手动解冻）。
-- 集合每帧重建：`process_pause_requests` 先 `clear()`，再按**发出顺序**处理这一帧的请求。
-  顺序是确定的：输入域（`Resume` 的来源）排在 `TimelineSet` 之前，各域的断言排在它之后
-  ——手动解冻那一帧，仍然成立的断言会照常加回来。
+- 请求有**两种时序**，别混：
+  - `PauseRequest::Pause(reason)` 是**断言式**：谁这一帧还想让世界停着就写一条；
+    下一帧不再断言，原因自然消失，**不需要谁去撤销**（各领域走这条）。
+  - `PauseRequest::Toggle(reason)` 是**翻转**：冻着就**清空原因集合**（世界立刻动）、
+    没冻就停住并把原因闩进 `timeline::LatchedReasons`（此后每帧自己续上）。
+    输入域只发一条 `Toggle`，**不读** `PauseReasons`。
+- **为什么分成两种**：断言式原因每帧都要重新声明，而玩家按键是**一次性事件**。
+  共用一条消息就得先猜"上一帧有没有人断言过这个原因"——而集合里同时躺着别人的
+  原因，猜不准。曾经的 bug 就是从 `PauseReasons` 反推手动暂停：威胁冻着时集合里
+  只有 `"threat"`，于是把"继续"误判成"暂停"，空格按下去反而又停一层。
+- **落地顺序是语义的一部分**：`Toggle` 由 `apply_pause_toggles_system` 在
+  `TimelineSet` **最前面**落地（早于各领域的断言），否则同一帧里"威胁还在断言
+  `Pause(THREAT)`"会把玩家刚清掉的原因加回来。各领域的断言在帧末
+  `process_pause_requests` 统一收进集合（手动开关 + 本帧断言）。
+  顺序确定：输入域先、各域断言后——**同一帧里仍然成立的原因会照常加回来**
+  （比如"还等着你决策"），所以"放开世界"不等于"跳过决策"。
 
-当前的原因：`"manual"`（玩家按了暂停键）/ **`"slot_empty"`**（PC 还没决定）
+当前的原因：`"manual"`（玩家翻开的开关）/ **`"slot_empty"`**（PC 还没决定）
 / `"threat"`（PC 被威胁且反应槽空着）。
 
 > 命名差异：`"slot_empty"` 是**当前代码里的常量名**（`timeline::SLOT_EMPTY`），

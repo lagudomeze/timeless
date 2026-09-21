@@ -53,7 +53,8 @@ pub use health::{DamageEvent, DeathEvent, Health, apply_damage_system, despawn_d
 pub use lifecycle::{HitOnce, Lifetime, Projectile};
 pub use plugin::CombatPlugin;
 pub use reaction::{
-    TargetCell, ThreatWindow, Threatens, detect_threat_system, melee_arc_cells, trajectory_cells,
+    TargetCell, ThreatWindow, Threatened, Threatens, detect_threat_system, mark_threatened_system,
+    melee_arc_cells, trajectory_cells,
 };
 pub use skills::{
     FIREBALL_COST, FireCommand, Fireball, FireballAction, MeleeAction, MeleeCommand, MenuSelection,
