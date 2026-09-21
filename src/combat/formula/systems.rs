@@ -178,13 +178,14 @@ pub fn interrupt_observer(
     info!("⚡ 打断成功：{source:?} 打掉了 {target:?} 的行动");
     commands.entity(action).despawn();
     if let Ok(mut actor) = commands.get_entity(target) {
-        actor.insert(DecisionSlot::Empty);
+        actor.insert(DecisionSlot::Idle { intent: None });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::decision::BUSY_SENTINEL;
 
     /// 打断对抗不关心具体载荷的节奏：自己造一个。
     const TEST_TIMING: ActionTiming = ActionTiming::new(0.2, 0.3, 3);
@@ -208,7 +209,12 @@ mod tests {
     #[test]
     fn interrupt_despawns_a_pending_action_and_frees_the_slot() {
         let mut app = interrupt_app();
-        let target = app.world_mut().spawn(DecisionSlot::Windup).id();
+        let target = app
+            .world_mut()
+            .spawn(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            })
+            .id();
         let action = app
             .world_mut()
             .spawn((
@@ -241,7 +247,7 @@ mod tests {
         );
         assert_eq!(
             app.world().get::<DecisionSlot>(target).copied(),
-            Some(DecisionSlot::Empty),
+            Some(DecisionSlot::Idle { intent: None }),
             "被打断的人应当立刻拿回决策槽"
         );
     }
@@ -250,7 +256,12 @@ mod tests {
     #[test]
     fn an_action_that_came_due_this_frame_survives_an_interrupt() {
         let mut app = interrupt_app();
-        let target = app.world_mut().spawn(DecisionSlot::Windup).id();
+        let target = app
+            .world_mut()
+            .spawn(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            })
+            .id();
         // 声明于 -1s 的行动：它在「现在」早就到点了
         let action = app
             .world_mut()

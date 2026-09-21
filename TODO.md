@@ -91,7 +91,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       「决策槽 + `ScheduledAction.execute_at` + 后摇」：
       执行器自己判 `due()`、自己销毁行动实体、自己写行动者的后摇（无 `scheduler_system`、
       无 `begin_action` / `end_action`）。暂停改成**原因集合**（`"manual"` /
-      `"slot_empty"` / `"threat"`，唯一的时钟写入点是 `apply_clock`，空格不再只前进一帧）；
+      `"awaiting"` / `"threat"`，唯一的时钟写入点是 `apply_clock`，空格不再只前进一帧）；
       新增**反应系统**（`Threatens` / `TargetCell` → `detect_threat_system` → 冻结等玩家表态）
       与 **Focus**（Shift + 决策键：扣 1 点把前摇归零）；打断改成
       `InterruptEvent`（EntityEvent + Observer，掷骰对抗打掉**还没到点**的行动）；
@@ -293,10 +293,21 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `cargo run` 无 panic。
 - [ ] **M24b `can_cast` + 菜单迁移**：`Requirement` 一族 + `can_cast` 收成唯一的条件校验点
       （落在填意图之前）；菜单 / HUD 改读目录，删掉 `combat::skills::registry` 的 `SKILLS`。
-- [ ] **M23 意图式决策槽**（最大的一步）：槽换形状（`Idle { intent }` / `Executing { until }`）、
+- [x] **M23 意图式决策槽**（本次）：槽换形状（`Idle { intent }` / `Executing { until }`）、
       声明系统改成**填意图 + 当场物化**（**各域自己物化，不做全局派发器**）、
-      按上面 ①→④ 的顺序落一帧、`"slot_empty"` 改名 `"awaiting"`。
+      `"slot_empty"` 改名 `"awaiting"`。
       执行器 / `ScheduledAction` / `ActionTiming` / 暂停机制**都不动**。
+      **两个判据被拆开了**（这是本次最有价值的一处）：`is_idle()` 问"能不能占这个槽"
+      （声明入口），`ready()` 问"要不要等他"（暂停断言）——旧模型只有一个
+      `is_empty()` 兼两职，`Idle { intent: Some }` 这一段根本无法表达。
+      `until` 的语义也统一了：**声明时** = 前摇 + 后摇（`ActionTiming::total()`），
+      **执行器收尾时** = `max(后摇, 效果延迟)`（只有那时才知道要飞多久）。
+      踩到的坑：`Windup` 是无时间戳的，所以测试里到处用
+      `Executing { until: 0.0 }` 当"忙"——但那其实是**已经忙完**了，
+      `recovery_system` 下一帧就清槽。给测试加了 `BUSY_SENTINEL = f32::INFINITY`，
+      并规定生产代码里不许出现 `until: 0.0`（改用 `declared(..)`）。
+      `Intent` 暂时**没有读者**（声明即物化），已在代码注释里写明原因与将来的用途。
+      验收：217 测试全绿（215 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过。
 - [ ] **M25 对抗标签 + 格挡**：`CombatTags` 闸门（含霸体）+ 防御链补格挡
       （格挡率来自装备 / 姿态 `BlockChance`）；**保留**掷骰对抗 `interrupt_lands`。
 - [ ] **M26 反应槽 + 反制（D4）**：`ReactionSlot` 取代 `ThreatWindow`（**顺带修掉

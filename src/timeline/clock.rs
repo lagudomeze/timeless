@@ -9,7 +9,7 @@
 //! 谁也不碰 `Time<Virtual>`，各领域因此不需要任何 `if paused` 分支。
 //!
 //! ```text
-//! compute_player_awaiting_system（断言 "slot_empty"）
+//! compute_player_awaiting_system（断言 "awaiting"）
 //!        └─▶ process_pause_requests（每帧重建原因集合）
 //!                └─▶ apply_clock（唯一的 Time<Virtual> 写入点）
 //! ```
@@ -46,7 +46,7 @@ pub enum PauseRequest {
     ///   此后它每帧自己续上（所以手动暂停不会"只生效一帧"）。
     ///
     /// **放开不等于一切归零**：清空之后那一帧仍然成立的断言会照常加回来
-    /// （等玩家决策 `slot_empty`），而"威胁"这类**边沿触发**的只惊动一次
+    /// （等玩家决策 `awaiting`），而"威胁"这类**边沿触发**的只惊动一次
     /// （见 `combat::reaction` 的 `Threatened`），所以按一下真的能走
     /// ——代价是那一击照常落地，**忍受伤害也是一种决策**。
     Toggle(&'static str),
@@ -54,8 +54,8 @@ pub enum PauseRequest {
 
 /// 暂停原因：手动暂停。
 pub const MANUAL: &str = "manual";
-/// 暂停原因：有一名 `InputDriven` 的行动者空着决策槽，正等玩家决策。
-pub const SLOT_EMPTY: &str = "slot_empty";
+/// 暂停原因：有一名 `InputDriven` 的行动者**还没决定**（`!slot.ready()`），正等他。
+pub const AWAITING: &str = "awaiting";
 /// 暂停原因：combat 检测到有威胁瞄准玩家（见 `combat::reaction`）。
 pub const THREAT: &str = "threat";
 
@@ -73,7 +73,7 @@ pub struct PauseReasons(HashSet<&'static str>);
 
 /// **闩住的手动原因**：开关式暂停（手动 / 将来的调试开关）的持久状态。
 ///
-/// 只存"玩家按下的开关"，不存断言式原因（`slot_empty` / `threat` 每帧自己说）。
+/// 只存"玩家按下的开关"，不存断言式原因（`awaiting` / `threat` 每帧自己说）。
 /// 与 [`PauseReasons`] 分开是刻意的：后者是**这一帧谁在停表**（混着别人的原因），
 /// 前者是**玩家自己按下的开关**。混用会让"按一下是暂停还是继续"猜错。
 #[derive(Resource, Debug, Default, Clone)]
@@ -125,7 +125,10 @@ impl PauseReasons {
     }
 }
 
-/// 有 `InputDriven`（玩家）空着决策槽吗 → 世界该停下来等他。
+/// 有 `InputDriven`（玩家）**还没决定**吗 → 世界该停下来等他。
+///
+/// 判据是 [`DecisionSlot::ready`]（"决定了没有"），不是"槽空不空"：
+/// 声明之后槽进 `Executing`，那时他已经决定了，世界不该再等他。
 ///
 /// 这是「无回合」里唯一的时间门控需求：敌人不等玩家，玩家一空闲，世界就停。
 /// 没有 `InputDriven` 单位时（单测、组装之前）一律当作「不等输入」，避免把世界冻住。
@@ -136,8 +139,8 @@ pub fn compute_player_awaiting_system(
     actors: Query<&DecisionSlot, With<InputDriven>>,
     mut pause: MessageWriter<PauseRequest>,
 ) {
-    if actors.iter().any(|slot| slot.is_empty()) {
-        pause.write(PauseRequest::Pause(SLOT_EMPTY));
+    if actors.iter().any(|slot| slot.is_idle()) {
+        pause.write(PauseRequest::Pause(AWAITING));
     }
 }
 
@@ -176,7 +179,7 @@ pub fn apply_pause_toggles_system(
 ///
 /// 重建 = 开着的**手动开关**（[`LatchedReasons`]，每帧自己续上）+ 这一帧各领域的
 /// [`Pause`](PauseRequest::Pause) 断言。断言会照常加回来，这正是"放开不是免费的"：
-/// 按一下能清掉威胁窗口，但"还等着你决策"（`slot_empty`）会立刻把世界按回去。
+/// 按一下能清掉威胁窗口，但"还等着你决策"（`awaiting`）会立刻把世界按回去。
 pub fn process_pause_requests(
     mut requests: MessageReader<PauseRequest>,
     mut reasons: ResMut<PauseReasons>,
@@ -233,6 +236,7 @@ pub(crate) fn assert_manual(latch: Res<ManualLatch>, mut pause: MessageWriter<Pa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::decision::BUSY_SENTINEL;
     use crate::timeline::test_support::timeline_app;
 
     #[test]
@@ -241,11 +245,11 @@ mod tests {
         assert!(!reasons.is_frozen(), "没有原因就不冻结");
 
         reasons.insert(MANUAL);
-        reasons.insert(SLOT_EMPTY);
+        reasons.insert(AWAITING);
         assert!(reasons.is_frozen());
         assert_eq!(
             reasons.labels(),
-            vec![MANUAL, SLOT_EMPTY],
+            vec![AWAITING, MANUAL],
             "多个原因可以叠加，互不覆盖"
         );
 
@@ -264,13 +268,15 @@ mod tests {
         let mut app = timeline_app();
         let player = app
             .world_mut()
-            .spawn((InputDriven, DecisionSlot::Empty))
+            .spawn((InputDriven, DecisionSlot::Idle { intent: None }))
             .id();
 
         app.update(); // 空槽 → 世界本来就冻着
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Windup);
+            .insert(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            });
         app.update();
         assert!(
             !app.world().resource::<Time<Virtual>>().is_paused(),
@@ -300,7 +306,7 @@ mod tests {
         let mut app = timeline_app();
         let player = app
             .world_mut()
-            .spawn((InputDriven, DecisionSlot::Empty))
+            .spawn((InputDriven, DecisionSlot::Idle { intent: None }))
             .id();
 
         app.update(); // slot_empty
@@ -308,13 +314,15 @@ mod tests {
         app.update(); // manual + slot_empty
         assert_eq!(
             app.world().resource::<PauseReasons>().labels(),
-            vec![MANUAL, SLOT_EMPTY],
+            vec![AWAITING, MANUAL],
             "两个原因可以同时挂着"
         );
 
         app.world_mut()
             .entity_mut(player)
-            .insert(DecisionSlot::Windup);
+            .insert(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            });
         app.update();
         assert!(
             app.world().resource::<Time<Virtual>>().is_paused(),

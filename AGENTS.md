@@ -58,8 +58,8 @@ cargo fmt --check                           # 格式校验
   记着自己归谁）；归属是**自定义关系**（`ActionOf` / `Actions`，`linked_spawn`），
   **不是 `ChildOf`**——行动没有 `Transform`，物理附着这个词不该被挪用
   （见 [`docs/relations.md`](docs/relations.md)）。调度器不感知载荷，新增动作
-  只需新增载荷与执行器。**行动者的阶段写在决策槽里**（`DecisionSlot::{Empty,
-  Windup, Recovery { until }}`），时间戳只回答「到点没有」
+  只需新增载荷与执行器。**行动者的阶段写在决策槽里**（`DecisionSlot::{Idle { intent },
+  Executing { until }}`），时间戳只回答「到点没有」
   （`now < execute_at` 前摇 / `now > execute_at` 该执行），
   不再有 `Declared` / `Pending` / `Committed` 这类标记。暂停用 `Time<Virtual>`，
   不手写阶段门控。
@@ -108,7 +108,7 @@ cargo fmt --check                           # 格式校验
   「效果延迟发生」的动作（移动 / 火球 / 箭矢）必须把 `effect_delay` 给到效果真的发生
   （走到格中心 / 飞到落点），否则玩家一空闲世界就冻住、效果停在半路。
 - **暂停是两种时序**：各领域这一帧还想停表就写一条
-  `PauseRequest::Pause(reason)`（`"slot_empty"` / `"threat"`）；下一帧不再断言，
+  `PauseRequest::Pause(reason)`（`"awaiting"` / `"threat"`）；下一帧不再断言，
   原因自然消失，不需要谁去撤销。玩家的空格是**翻转**：`PauseRequest::Toggle("manual")`
   冻着就清空原因（世界立刻动）、没冻就停住并闩进 `timeline::LatchedReasons`。
   **两种时序别混**：断言每帧重来，按键是一次性事件；共用一条消息就得从原因集合猜

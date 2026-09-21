@@ -5,29 +5,32 @@
 //!
 //! 行动者的**决策槽**：谁能声明行动，由它一个人说了算。
 //!
-//! 三个阶段**直接写在槽里**，而不是靠「有没有行动实体 / 有没有后摇标记」推导：
+//! 槽里装的是**决策**，不是**阶段**——「这一手执行到哪一步」由行动实体自己的
+//! `ScheduledAction.execute_at` 回答（`now < execute_at` 前摇 / 过了该执行），
+//! 槽不重复表达一遍：
 //!
-//! | 状态 | 含义 | 行动实体 | 可撤销 | 可打断 |
-//! | :--- | :--- | :--- | :--- | :--- |
-//! | `Empty` | 空闲，可以声明 | 无 | — | — |
-//! | `Windup` | 前摇中 | 有 | ✓ | ✓ |
-//! | `Recovery { until }` | 后摇中 | 无 | ✗ | ✗ |
+//! | 状态 | 含义 | 行动实体 |
+//! | :--- | :--- | :--- |
+//! | `Idle { intent: None }` | 空闲，可以声明 | 无 |
+//! | `Idle { intent: Some(..) }` | 已决定、但这一手还没排进时间轴 | 无 |
+//! | `Executing { until }` | 这一手在时间轴上，忙到 `until` | 有（前摇中）/ 已销毁（后摇中） |
 //!
-//! 转换只有五条路，每条都只有一个作者：
+//! 判据只有一个（[`DecisionSlot::ready`]）：**这个单位此刻算不算「已经决定了」**。
+//! 暂停断言（等玩家决策）只看它。
+//!
+//! 转换只有四条路，每条都只有一个作者：
 //!
 //! ```text
-//! Empty ──声明（8 个声明系统）──▶ Windup ──执行器收尾──▶ Recovery { until }
-//!   ▲                              │                        │
-//!   │                              ├── 撤销（undo_system）──┤
-//!   │                              └── 打断（combat）───────┤
-//!   └──────────────── recovery_system（now >= until）───────┘
+//! Idle ──声明（9 个声明系统）──▶ Executing { until } ──recovery_system──▶ Idle
+//!   ▲                                    │
+//!   └────── 撤销（undo_system）/ 打断（combat）──────┘
 //! ```
 //!
 //! 「谁在写槽」因此是穷举的、可审计的；不会出现「标记忘了摘」这类
 //! 状态与时间戳打架的 bug。
 //!
-//! **声明的入口只有 [`FirstReady::first_ready`] 一个**：「槽必须是 `Empty`」这条判据与
-//! 「被拒时告诉 HUD 为什么」都写在那里，各领域不再各抄一份。
+//! **声明的入口只有 [`FirstReady::first_ready`] 一个**：「槽必须是空闲且没意图」
+//! 这条判据与「被拒时告诉 HUD 为什么」都写在那里，各领域不再各抄一份。
 //!
 //! 决策来自玩家输入的单位由 [`InputDriven`] 标记：「这行动是谁的」由 [`ActionOf`] 回答，
 //! 「这个单位听玩家的」则由这个标记回答。
@@ -58,25 +61,96 @@ use super::events::{ActionBlocked, ActionCancelled, DecisionReady, PlayerTakeove
 use super::ownership::ActionOf;
 use super::schedule::{ActionTiming, ScheduledAction, Uncancellable};
 
+/// 一次「已决定、还没排进时间轴」的决策。
+///
+/// ⚠️ **目前没有读者**：9 个声明系统都是"填意图 + **当场物化**"（各域自己物化，
+/// 没有全局派发器），所以意图在同一帧里就被行动实体取代了。留着它是因为它是
+/// 「决策」这个词的**形状**——`can_cast`（M24b）与将来的"先声明、后统一提交"
+/// 都要读它。在等到第一个读者之前，`first_ready` 只依赖它的 `Some` / `None`。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Intent {
+    /// 这一手是什么（[`crate::skills::AbilityId`]：移动 / 跳跃 / 翻滚 / 横扫 / 火球…）
+    pub ability: crate::skills::AbilityId,
+    /// 打哪儿 / 走哪儿
+    pub target: Target,
+}
+
+/// 意图的目标（**设计意图**，不是几何：覆盖多大由形状组件回答）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Target {
+    /// 不需要目标（跳跃、招架自己找威胁）
+    None,
+    /// 锁一格（火球落点、移动目标格）
+    Cell(crate::movement::Cell),
+    /// 单体目标（招架绑定的那次攻击）
+    Entity(Entity),
+}
+
 /// 行动者的决策槽状态机。
-#[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
+///
+/// 「知道了没有」与「在不在执行」由这一个字段回答；前摇 / 后摇**不在这里**——
+/// 它们在行动实体的 `execute_at` 与槽里的 `until` 上（见本文件文首的表格）。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub enum DecisionSlot {
-    /// 空闲：可以声明行动
-    #[default]
-    Empty,
-    /// 前摇中：行动实体还活着，随时可以反悔（撤销 / 打断）
-    Windup,
-    /// 后摇中：`until`（虚拟秒）之前不接受新决策
-    Recovery {
+    /// 空闲：`intent` 空 = 还没决定；有 = 已决定、但这一手还没排进时间轴
+    Idle { intent: Option<Intent> },
+    /// 这一手已经在时间轴上（前摇 → 执行 → 后摇），`until` = 忙到什么时候
+    Executing {
         /// 重新可决策时刻（虚拟秒）
         until: f32,
     },
 }
 
+/// 「忙着，而且永远不会到点」——**只给测试用**的哨兵。
+///
+/// 造"槽被占着"的场景时不能用 `until: 0.0`：那是**已经忙完**了，
+/// `recovery_system` 下一帧就会把槽清空。
+#[cfg(test)]
+pub(crate) const BUSY_SENTINEL: f32 = f32::INFINITY;
+
+impl Default for DecisionSlot {
+    /// 出生就是「空闲、还没决定」——无回合模型里开局谁都可以决策。
+    fn default() -> Self {
+        Self::Idle { intent: None }
+    }
+}
+
 impl DecisionSlot {
-    /// 现在能不能声明行动。
-    pub fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty)
+    /// 这个单位**此刻算不算「已经决定了」**——暂停断言只看这一条。
+    ///
+    /// - `Executing` → 是（他正忙着一手，别等他）；
+    /// - `Idle { intent: Some }` → 是（他决定了，只是还没排期）；
+    /// - `Idle { intent: None }` → **否**（正等他决策，世界该停下来）。
+    pub fn ready(&self) -> bool {
+        match self {
+            Self::Executing { .. } => true,
+            Self::Idle { intent } => intent.is_some(),
+        }
+    }
+
+    /// 现在能不能声明行动（= 空闲**且**还没有意图）。
+    ///
+    /// 这是声明系统的入口判据；与 [`Self::ready`] 不同：`ready` 问"要不要等他"，
+    /// 它问"能不能占这个槽"。
+    pub fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle { intent: None })
+    }
+
+    /// 声明：**填意图 + 把这一手排进时间轴**。
+    ///
+    /// 无回合模型里没有「提交」这一步，所以声明即排期：`until` 由这一手的
+    /// 前摇 + 后摇（[`ActionTiming::total`]）算出来。效果比后摇晚的动作
+    /// （移动走到格中心、火球飞到落点）由**执行器收尾**时再往后推
+    /// （见 [`Self::recovering`]），因为只有那时才知道要飞多久。
+    ///
+    /// `intent` 只用于**校验调用方确实想好了要做什么**，不进槽：行动在同一帧里
+    /// 就被物化了（各域自己物化），槽立刻转成 `Executing`，`intent` 字段
+    /// 没有机会被读到。等"先声明、后统一提交"落地时再把它存进去
+    /// （那时 `Idle { intent: Some }` 这一段才有实际长度）。
+    pub fn declared(_intent: Intent, timing: &ActionTiming, now: f32) -> Self {
+        Self::Executing {
+            until: now + timing.total(),
+        }
     }
 
     /// 执行器收尾：进入后摇。
@@ -88,7 +162,7 @@ impl DecisionSlot {
     /// 传时长而不是「忙到哪个时刻」，是因为忙到的那一刻永远是
     /// `now + 这段时长`——少一次加法，也少一个"现在几点"的重复概念。
     pub fn recovering(timing: &ActionTiming, now: f32, effect_delay: f32) -> Self {
-        Self::Recovery {
+        Self::Executing {
             until: now + timing.recovery.max(effect_delay),
         }
     }
@@ -154,14 +228,14 @@ impl<A, B, C, D, E> HasDecisionSlot for (A, B, C, D, E, &DecisionSlot) {
 /// （比如"后摇里也允许排下一手"）或改提示（比如区分"前摇中"与"后摇中"），
 /// 只改这一个方法。
 pub trait FirstReady: Iterator + Sized {
-    /// 第一个决策槽是 `Empty` 的项；一个都没有就报一条 `BUSY`。
+    /// 第一个**空闲且还没意图**的项；一个都没有就报一条 `BUSY`。
     fn first_ready(self, blocked: &mut MessageWriter<ActionBlocked>) -> Option<Self::Item>
     where
         Self::Item: HasDecisionSlot,
     {
         let ready = self
             .into_iter()
-            .find(|actor| actor.decision_slot().is_empty());
+            .find(|actor| actor.decision_slot().is_idle());
         if ready.is_none() {
             // 静默丢弃是最差的手感：告诉 HUD"现在还动不了"
             blocked.write(ActionBlocked::BUSY);
@@ -230,13 +304,13 @@ pub fn undo_system(
         commands.entity(entity).despawn();
         // 行动者可能已经死了：往不存在的实体上写命令会让 Bevy 直接 panic
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
-            actor_commands.insert(DecisionSlot::Empty);
+            actor_commands.insert(DecisionSlot::Idle { intent: None });
         }
         break; // 一次决策只有一条行动
     }
 }
 
-/// 后摇：`Recovery { until }` 到点就清空决策槽，并广播 [`DecisionReady`]。
+/// 忙完：`Executing { until }` 到点就清空决策槽，并广播 [`DecisionReady`]。
 ///
 /// 「又轮到它决策了」这件事只由时间线宣布；因此**谁能拿到它**（比如精力回复）
 /// 由关心它的领域自己写 observer——时间线不反向依赖任何资源。
@@ -247,14 +321,14 @@ pub fn recovery_system(
 ) {
     let now = time.elapsed_secs();
     for (entity, mut slot) in &mut recovering {
-        // 只处理后摇：前摇归执行器与撤销 / 打断管，空闲没什么可恢复的
-        let DecisionSlot::Recovery { until } = *slot else {
+        // 只处理"在时间轴上"的：空闲没什么可恢复的，意图也不用在这里清
+        let DecisionSlot::Executing { until } = *slot else {
             continue;
         };
         if now < until {
             continue;
         }
-        *slot = DecisionSlot::Empty;
+        *slot = DecisionSlot::Idle { intent: None };
         commands.trigger(DecisionReady { entity });
     }
 }
@@ -267,12 +341,37 @@ mod tests {
     /// 调度器的测试不该依赖任何具体载荷：自己造一个节奏。
     const TEST_TIMING: ActionTiming = ActionTiming::new(0.2, 0.3, 3);
 
+    /// 出生就是「空闲、还没决定」——**注意这时 `ready()` 是 false**：
+    /// `ready` 问的是"该不该等他"，而空闲的人正是要等的那一个。
     #[test]
-    fn a_fresh_slot_is_empty() {
-        assert_eq!(DecisionSlot::default(), DecisionSlot::Empty);
-        assert!(DecisionSlot::Empty.is_empty());
-        assert!(!DecisionSlot::Windup.is_empty());
-        assert!(!DecisionSlot::Recovery { until: 1.0 }.is_empty());
+    fn a_fresh_slot_is_idle_and_not_ready() {
+        let fresh = DecisionSlot::default();
+        assert_eq!(fresh, DecisionSlot::Idle { intent: None });
+        assert!(fresh.is_idle(), "空闲且没意图 → 可以声明");
+        assert!(!fresh.ready(), "还没决定 → 世界该等他");
+    }
+
+    /// 两个判据问的是不同的事，别混：
+    ///
+    /// - `is_idle`：**能不能占这个槽**（声明系统的入口）
+    /// - `ready`：**要不要等他**（暂停断言）
+    ///
+    /// `Executing` 两边都是"占着 + 别等"；`Idle { Some }` 是"占着 + 别等"
+    /// （他决定了，只是还没排期）——这时 `is_idle` 为假，所以不会有人挤掉他的意图。
+    #[test]
+    fn the_two_predicates_answer_different_questions() {
+        let executing = DecisionSlot::Executing { until: 1.0 };
+        assert!(!executing.is_idle(), "在时间轴上 → 不能声明");
+        assert!(executing.ready(), "忙着一手 → 别等他");
+
+        let decided = DecisionSlot::Idle {
+            intent: Some(Intent {
+                ability: crate::skills::AbilityId::Move,
+                target: Target::None,
+            }),
+        };
+        assert!(!decided.is_idle(), "已经有意图了 → 不能再声明");
+        assert!(decided.ready(), "已经决定了 → 别等他");
     }
 
     /// 后摇取「一个后摇」与「效果还要多久」里更晚的那个。
@@ -281,12 +380,12 @@ mod tests {
         // 效果比后摇晚（移动 / 火球）：忙到效果真的发生
         assert_eq!(
             DecisionSlot::recovering(&TEST_TIMING, 1.0, 0.4),
-            DecisionSlot::Recovery { until: 1.4 }
+            DecisionSlot::Executing { until: 1.4 }
         );
         // 效果瞬间完成（近战 / 招架）：只忙一个后摇
         assert_eq!(
             DecisionSlot::recovering(&TEST_TIMING, 1.0, 0.0),
-            DecisionSlot::Recovery {
+            DecisionSlot::Executing {
                 until: 1.0 + TEST_TIMING.recovery
             }
         );
@@ -326,14 +425,19 @@ mod tests {
             .add_systems(Update, (pick, count).chain());
 
         // 全是忙的：挑不到人，而且要报一条原因
-        app.world_mut().spawn(DecisionSlot::Windup);
+        app.world_mut().spawn(DecisionSlot::Executing {
+            until: BUSY_SENTINEL,
+        });
         app.update();
         let picked = app.world().resource::<Picked>();
         assert_eq!(picked.actor, None, "没人空着就挑不到");
         assert_eq!(picked.blocks, 1, "被拒时要替 HUD 记一条原因");
 
         // 来了个空槽的：挑中他，而且不再报原因
-        let ready = app.world_mut().spawn(DecisionSlot::Empty).id();
+        let ready = app
+            .world_mut()
+            .spawn(DecisionSlot::Idle { intent: None })
+            .id();
         app.update();
         let picked = app.world().resource::<Picked>();
         assert_eq!(picked.actor, Some(ready), "空槽的人中选");
@@ -350,16 +454,21 @@ mod tests {
         let mut app = timeline_app();
         let actor = app
             .world_mut()
-            .spawn(DecisionSlot::Recovery { until: 0.35 })
+            .spawn(DecisionSlot::Executing { until: 0.35 })
             .id();
-        let winding_up = app.world_mut().spawn(DecisionSlot::Windup).id();
+        let winding_up = app
+            .world_mut()
+            .spawn(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            })
+            .id();
 
         // 「到点」是唯一的清槽条件：虚拟时间没走到 until 就一直留着
         let mut frames = 0;
         while app.world().resource::<Time<Virtual>>().elapsed_secs() < 0.35 {
             assert_eq!(
                 slot_of(&app, actor),
-                Some(DecisionSlot::Recovery { until: 0.35 }),
+                Some(DecisionSlot::Executing { until: 0.35 }),
                 "后摇没到点不该清槽"
             );
             app.update();
@@ -368,12 +477,14 @@ mod tests {
         }
         assert_eq!(
             slot_of(&app, actor),
-            Some(DecisionSlot::Empty),
+            Some(DecisionSlot::Idle { intent: None }),
             "后摇到点应当清空决策槽"
         );
         assert_eq!(
             slot_of(&app, winding_up),
-            Some(DecisionSlot::Windup),
+            Some(DecisionSlot::Executing {
+                until: BUSY_SENTINEL
+            }),
             "前摇归执行器与撤销 / 打断管，后摇系统不该碰它"
         );
     }
@@ -388,7 +499,12 @@ mod tests {
         let mut app = timeline_app();
         let player = app
             .world_mut()
-            .spawn((InputDriven, DecisionSlot::Windup))
+            .spawn((
+                InputDriven,
+                DecisionSlot::Executing {
+                    until: BUSY_SENTINEL,
+                },
+            ))
             .id();
         let action = app
             .world_mut()
@@ -412,7 +528,7 @@ mod tests {
         );
         assert_eq!(
             app.world().get::<DecisionSlot>(player).copied(),
-            Some(DecisionSlot::Empty),
+            Some(DecisionSlot::Idle { intent: None }),
             "撤销之后应当立刻能重新决策"
         );
     }
@@ -423,7 +539,12 @@ mod tests {
         let mut app = timeline_app();
         let player = app
             .world_mut()
-            .spawn((InputDriven, DecisionSlot::Windup))
+            .spawn((
+                InputDriven,
+                DecisionSlot::Executing {
+                    until: BUSY_SENTINEL,
+                },
+            ))
             .id();
         let action = app
             .world_mut()
@@ -447,7 +568,9 @@ mod tests {
         );
         assert_eq!(
             app.world().get::<DecisionSlot>(player).copied(),
-            Some(DecisionSlot::Windup),
+            Some(DecisionSlot::Executing {
+                until: BUSY_SENTINEL
+            }),
             "行动还在，决策槽也还占着"
         );
     }
@@ -458,7 +581,12 @@ mod tests {
         let mut app = timeline_app();
         let player = app
             .world_mut()
-            .spawn((InputDriven, DecisionSlot::Windup))
+            .spawn((
+                InputDriven,
+                DecisionSlot::Executing {
+                    until: BUSY_SENTINEL,
+                },
+            ))
             .id();
         let action = app
             .world_mut()
@@ -496,7 +624,12 @@ mod tests {
         app.init_resource::<Undos>().add_observer(count_undos);
         let player = app
             .world_mut()
-            .spawn((InputDriven, DecisionSlot::Windup))
+            .spawn((
+                InputDriven,
+                DecisionSlot::Executing {
+                    until: BUSY_SENTINEL,
+                },
+            ))
             .id();
         app.world_mut().spawn((
             ActionOf(player),

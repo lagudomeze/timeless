@@ -18,9 +18,10 @@ use crate::combat::Faction;
 use crate::combat::defense::Stamina;
 use crate::combat::reaction::{Threatens, melee_arc_cells};
 use crate::movement::Cell;
+use crate::skills::AbilityId;
 use crate::timeline::{
-    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, PendingFocus,
-    ScheduledAction,
+    ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, Intent, PendingFocus,
+    ScheduledAction, Target,
 };
 
 use super::arrow::{ARROW_SPEED, arrow_scene};
@@ -189,7 +190,16 @@ pub fn declare_melee_at(
             actor,
         ))
         .id();
-    commands.entity(actor).insert(DecisionSlot::Windup);
+    // 这个工厂只有 `schedule`：声明时刻就是 `execute_at − windup`（前摇的定义）
+    let declared_at = schedule.execute_at - timing.windup;
+    commands.entity(actor).insert(DecisionSlot::declared(
+        Intent {
+            ability: AbilityId::Melee,
+            target: Target::Cell(target_cell),
+        },
+        &timing,
+        declared_at,
+    ));
     action
 }
 

@@ -167,7 +167,7 @@ pub fn player_skill_input_system(
 /// 由时间线在 [`process_pause_requests`](crate::timeline::process_pause_requests) 里落地。
 ///
 /// 这里刻意**不读 [`PauseReasons`](crate::timeline::PauseReasons)**：集合里同时躺着
-/// 别人的原因（`slot_empty` / `threat`），从它反推"手动暂停开着吗"会把
+/// 别人的原因（`awaiting` / `threat`），从它反推"手动暂停开着吗"会把
 /// 「威胁正冻着」误判成「玩家已手动暂停」，于是空格变成又一次"暂停"而不是"继续"。
 /// 输入域只表达"玩家翻了一下"，剩下的（包括"恢复之后哪些原因马上会回来"）是时间线的事。
 pub fn pause_input_system(
