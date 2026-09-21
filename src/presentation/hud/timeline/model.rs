@@ -166,7 +166,7 @@ pub fn resolve_mark_percent(windup: f32, total: f32) -> f32 {
 /// 把这一帧的世界算成一份快照。**纯函数**：不碰 `World`，只读切片。
 ///
 /// - `frozen`：本帧冻结的原因（`None` = 时间在走），只影响状态行文案；
-/// - `roster`：场上单位（顺序不限，这里按 [`faction_rank`] + 实体序号排稳）；
+/// - `roster`：场上单位（顺序不限，这里按 `faction_rank` + 实体序号排稳）；
 /// - `rows`：所有未落地的行动；
 /// - `ready`：决策槽空着的单位（候场候选人）；
 /// - `now`：当前虚拟秒。
