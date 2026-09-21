@@ -23,7 +23,8 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 
 领域：`world`（体素数据，零渲染依赖）· `voxel_render`（网格化 / 材质 / 明暗）·
 `movement` · `combat` · `skills`（技能**静态定义**）· `timeline` · `ai` · `input` ·
-`interaction` · `presentation` · `spawn`（组装车间）。`utils` 是纯几何工具，不是领域。
+`interaction` · `presentation` · `spawn`（组装车间）。纯几何不单独建域——形状是
+**一个形状一个组件**（`HitRadius` / `MeleeShape`），判定紧贴各自的系统。
 完整说明见 [`docs/domain.md`](docs/domain.md)。
 
 ## 构建、测试与开发命令
@@ -95,6 +96,9 @@ cargo fmt --check                           # 格式校验
   可以合成一个文件（如 `timeline/decision.rs` 同时装 `DecisionSlot` 与 `undo_system`）。
   **系统跟着它操作的数据走**，不要为了凑一个 `systems.rs` 把不相干的系统堆在一起。
   `mod.rs` 只做 `pub mod` + `pub use` 门面。
+- **组合域只编排**：`combat` / `world` / `voxel_render` 这类装着子域的父域，父域
+  `Plugin` 只负责**子域之间的顺序**，不自己注册系统。现状是 `combat` 7 个子域
+  仍由一个 `CombatPlugin` 直接接线（子域 `plugin.rs` 是目标，见 `docs/domain.md`）。
 - **角色实体不是模块**：零件归各领域（`Health` → combat、`Velocity` → movement、
   `EnemyBrain` → ai、`ChunkLoader` → world），组装归 `spawn/`（`unit_scene` 给共用
   零件，`player.rs` / `enemy.rs` 追加驱动源）；**没有任何领域依赖 `spawn` 的组装逻辑**

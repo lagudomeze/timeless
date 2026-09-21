@@ -27,39 +27,56 @@ use super::{
 };
 
 /// HUD 根标记（整屏容器）。
-#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Default, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 #[reflect(Component)]
 pub struct HudRoot;
 
 /// Startup 一次：组装整套 HUD（在资源预载之后跑，因为要用单位精灵当头像）。
+///
+/// 根节点用 BSN 建（`bsn!` + `spawn_scene`）；六个区域仍是 `impl Bundle` 的工厂，
+/// 用 `add_children` 挂上去——`Children [...]` 要求每个子节点是 `Scene` 而不是
+/// `Bundle`，把六个工厂全改成场景是另一件独立的事（见 `docs/` 的 BSN 待办）。
 pub fn setup_hud(mut commands: Commands, assets: Res<AssetServer>, sprites: Res<UnitSprites>) {
     let font: Handle<Font> = assets.load(HUD_FONT);
     let root = commands
-        .spawn((
-            Name::new("HudRoot"),
-            HudRoot,
+        .spawn_scene(bsn! {
+            Name("HudRoot")
+            template_value(HudRoot)
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(0.0),
                 top: Val::Px(0.0),
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                ..default()
-            },
+            }
             // 根只是布局容器：默认的 Block 会把整屏的鼠标事件吃掉
-            FocusPolicy::Pass,
-            children![
-                panels::unit_panel(&font, Faction::Player, sprites.sprite(Faction::Player)),
-                panels::unit_panel(&font, Faction::Enemy, sprites.sprite(Faction::Enemy)),
-                skills::skill_bar(&font, &assets),
-                log_panel::log_panel(&font),
-                hint::hint_panel(&font),
-                help::help_panel(&font),
-            ],
-        ))
+            template_value(FocusPolicy::Pass)
+        })
         .id();
 
-    // 时间轴要建一个色块池（循环 spawn），所以不放进 `children![]`
+    let regions = [
+        commands
+            .spawn(panels::unit_panel(
+                &font,
+                Faction::Player,
+                sprites.sprite(Faction::Player),
+            ))
+            .id(),
+        commands
+            .spawn(panels::unit_panel(
+                &font,
+                Faction::Enemy,
+                sprites.sprite(Faction::Enemy),
+            ))
+            .id(),
+        commands.spawn(skills::skill_bar(&font, &assets)).id(),
+        commands.spawn(log_panel::log_panel(&font)).id(),
+        commands.spawn(hint::hint_panel(&font)).id(),
+        commands.spawn(help::help_panel(&font)).id(),
+    ];
+    commands.entity(root).add_children(&regions);
+
+    // 时间轴要建一个色块池（循环 spawn），所以不走上面的工厂数组
     let timeline = timeline::spawn_timeline(&mut commands, &font);
     commands.entity(root).add_child(timeline);
 }

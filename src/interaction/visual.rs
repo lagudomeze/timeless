@@ -1,29 +1,33 @@
-//! 交互域系统：光标 → 世界格 → 高亮实体。
+//! 交互域的**画面**：悬停高亮方块 + 行动预演指示器（AOE 圆盘 / 近战扇形）。
 //!
-//! 两个系统分工明确：`hover_cell_system` 只回答"现在指着哪一格"（写资源），
-//! `update_hover_highlight_system` 只负责把那个答案画出来。中间那层资源是
-//! **纯数据**，所以"高亮没出现"时可以先读它，一眼分辨是拾取问题还是画面问题。
+//! 这三样东西回答「**我指着哪一格、这一手会打到哪**」，是纯表现：只有网格、
+//! 材质与 `Transform`，不翻译输入、不写游戏状态。它们与
+//! [`super::pointer`] 的分工是单向的——那边产出 [`HoveredCell`]，这边读它：
+//!
+//! ```text
+//! 光标 ─▶ pointer::hover_cell_system ─▶ HoveredCell ─┬─▶ visual::update_hover_highlight_system
+//!                                                    └─▶ visual::update_preview_indicators_system
+//! 菜单选中 ───────────────────────────────────────────┘
+//! ```
+//!
+//! 它们留在交互域而不是搬去 `presentation`：那样会让表现层读本域的
+//! `HoveredCell`（别人的 `Resource`），违反 import 规则。交互的**画面**与交互的
+//! **翻译**是同一个功能的两半，放在一个域里最省事；域内部再按"读的 / 画的"分文件。
+//!
+//! 预演判据与点击派发**必须一致**：都是「攻击按距离二选一」（贴脸近战、否则火球）。
+//! 改一边记得改另一边。
 
 use bevy::prelude::*;
 // 高亮方块不该投影：它只是一层指示，投出影子反而像实体
 use bevy::light::NotShadowCaster;
-use bevy::window::PrimaryWindow;
 
 use crate::combat::Faction;
-use crate::combat::skills::{
-    FIREBALL_RADIUS, MELEE_REACH, MenuSelection, SKILLS, SkillKind, UseSelectedSkill,
-};
+use crate::combat::skills::{FIREBALL_RADIUS, MELEE_REACH, MenuSelection, SKILLS, SkillKind};
 use crate::movement::CELL_SIZE;
 use crate::movement::Cell;
-use crate::movement::MoveToCommand;
-use crate::presentation::MainCamera;
-use crate::presentation::hud::PreviewReadout;
-use crate::timeline::{PlayerTakeover, UndoCommand};
 use crate::world::{TerrainConfig, ground_position};
 
 use super::components::{AoePreview, ConePreview, HoverHighlight, HoverTint, HoveredCell};
-use super::events::PointerCommand;
-use super::raycast::{cursor_ray, pick_cell};
 
 /// 高亮方块离地高度（世界单位）：贴着地但不和地面 z-fighting。
 pub const HIGHLIGHT_LIFT: f32 = 0.03;
@@ -45,95 +49,72 @@ pub const CONE_PREVIEW: Color = Color::srgba(0.95, 0.84, 0.42, 0.22);
 pub const CONE_ARC: f32 = std::f32::consts::TAU / 3.0;
 
 /// 开局生成唯一的高亮方块（之后只搬位置 / 改颜色）。
-pub fn spawn_hover_highlight(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    commands.spawn((
-        Name::new("HoverHighlight"),
-        HoverHighlight,
-        HoverTint(Color::NONE),
-        Mesh3d(meshes.add(Rectangle::new(
+pub fn spawn_hover_highlight(mut commands: Commands) {
+    commands.spawn_scene(bsn! {
+        Name("HoverHighlight")
+        HoverHighlight
+        HoverTint(Color::NONE)
+        Mesh3d(asset_value(Rectangle::new(
             CELL_SIZE * HIGHLIGHT_FILL,
             CELL_SIZE * HIGHLIGHT_FILL,
-        ))),
-        MeshMaterial3d(materials.add(StandardMaterial {
+        )))
+        MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
             base_color: Color::NONE,
             unlit: true,
             alpha_mode: AlphaMode::Blend,
             double_sided: true,
             ..default()
-        })),
+        }))
         // 平铺在地面上（和单位阴影同一套做法）
-        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-        Visibility::Hidden,
-        NotShadowCaster,
-    ));
-}
-
-/// 每帧：光标 → 世界格，只在变化时写资源。
-///
-/// **不读任何 `Time`**：玩家等输入时虚拟时间是冻结的，但悬停必须照常响应。
-pub fn hover_cell_system(
-    windows: Query<&Window, With<PrimaryWindow>>,
-    cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    terrain: Res<TerrainConfig>,
-    mut hovered: ResMut<HoveredCell>,
-) {
-    let next = windows
-        .single()
-        .ok()
-        .and_then(|window| window.cursor_position())
-        .and_then(|cursor| {
-            let (camera, transform) = cameras.iter().next()?;
-            cursor_ray(camera, transform, cursor)
-        })
-        .and_then(|ray| pick_cell(ray, &terrain));
-
-    if hovered.0 != next {
-        hovered.0 = next;
-    }
+        Transform {
+            rotation: {Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)},
+        }
+        Visibility::Hidden
+        // 高亮方块不该投影：它只是一层指示，投出影子反而像实体
+        NotShadowCaster
+    });
 }
 
 /// 开局生成两个预演指示器：火球 AOE 圆盘 + 近战扇形（都默认隐藏）。
 ///
 /// 它们和悬停高亮是两回事：高亮回答"我指着哪一格"，预演回答"**这一手会打到哪**"。
-pub fn spawn_preview_indicators(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let mut material = |color: Color| {
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: color,
+pub fn spawn_preview_indicators(mut commands: Commands) {
+    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    commands.spawn_scene(bsn! {
+        Name("AoePreview")
+        AoePreview
+        Mesh3d(asset_value(Circle::new(FIREBALL_RADIUS)))
+        MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
+            base_color: AOE_PREVIEW,
             unlit: true,
             alpha_mode: AlphaMode::Blend,
             double_sided: true,
             ..default()
         }))
-    };
-
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-    commands.spawn((
-        Name::new("AoePreview"),
-        AoePreview,
-        Mesh3d(meshes.add(Circle::new(FIREBALL_RADIUS))),
-        material(AOE_PREVIEW),
-        Transform::from_rotation(flat),
-        Visibility::Hidden,
-        NotShadowCaster,
-    ));
-    commands.spawn((
-        Name::new("ConePreview"),
-        ConePreview,
+        Transform {
+            rotation: {flat},
+        }
+        Visibility::Hidden
+        NotShadowCaster
+    });
+    commands.spawn_scene(bsn! {
+        Name("ConePreview")
+        ConePreview
         // 扇形从局部 +X 轴张开；下面按"朝向悬停格"整体旋转
-        Mesh3d(meshes.add(CircularSector::new(MELEE_REACH, CONE_ARC))),
-        material(CONE_PREVIEW),
-        Transform::from_rotation(flat),
-        Visibility::Hidden,
-        NotShadowCaster,
-    ));
+        Mesh3d(asset_value(CircularSector::new(MELEE_REACH, CONE_ARC)))
+        MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
+            base_color: CONE_PREVIEW,
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            double_sided: true,
+            ..default()
+        }))
+        Transform {
+            rotation: {flat},
+        }
+        Visibility::Hidden
+        NotShadowCaster
+    });
 }
 
 /// 按**当前选中的技能**决定显示哪个预演：火球给 AOE 圆盘、近战给扇形。
@@ -290,185 +271,63 @@ fn tint_for(cell: Cell, occupants: &Query<(&Cell, &Faction)>) -> Color {
         .unwrap_or(HOVER_GROUND)
 }
 
-/// 预演读数：把「这一手会变成什么 · 多远 · 预计多少伤害」写到 HUD 的提示条上。
-///
-/// 只在**文案真的变了**时发消息——每帧发会把 HUD 的淡出节奏打乱，也白白唤醒 UI。
-#[allow(clippy::too_many_arguments)]
-pub fn update_preview_readout_system(
-    hovered: Res<HoveredCell>,
-    selection: Res<MenuSelection>,
-    terrain: Res<TerrainConfig>,
-    units: Query<(&Transform, &Faction)>,
-    mut readouts: MessageWriter<PreviewReadout>,
-    mut last: Local<Option<String>>,
-) {
-    let kind = SKILLS
-        .get(selection.index())
-        .map(|def| def.kind)
-        .unwrap_or(SkillKind::Attack);
-    let player = units
-        .iter()
-        .find(|(_, faction)| **faction == Faction::Player)
-        .map(|(transform, _)| transform.translation);
-
-    let text = match (player, hovered.0) {
-        (Some(player), Some(cell)) => {
-            let center = cell.center();
-            let target = ground_position(&terrain, center.x, center.y);
-            let distance = player.distance(target);
-            // 「攻击」按距离派发：读数直接告诉玩家这一下会变成近战还是火球
-            let effective = match kind {
-                SkillKind::Attack if distance <= MELEE_REACH => SkillKind::Melee,
-                SkillKind::Attack => SkillKind::Fireball,
-                other => other,
-            };
-            let power = SKILLS
-                .iter()
-                .find(|def| def.kind == effective)
-                .map(|def| def.power)
-                .unwrap_or_default();
-            Some(format!(
-                "{} · cell ({},{}) · dist {distance:.1} · dmg {power}",
-                effective.label().to_uppercase(),
-                cell.x,
-                cell.z
-            ))
-        }
-        _ => None,
-    };
-
-    if text != *last {
-        *last = text.clone();
-        readouts.write(PreviewReadout(text));
-    }
-}
-
-/// 点击 → 各领域的消息。
-///
-/// 规则（就是鼠标左 / 右键的语义）：
-///
-/// | 操作 | 情形 | 结果 |
-/// | :--- | :--- | :--- |
-/// | 左键 | 点在单位上（敌我皆可） | 用**当前选中的技能**打这一格 |
-/// | 左键 | 点在空地上 | 走到这一格（`MoveToCommand`，可跨多格） |
-/// | 右键 | —— | 撤销最近一条未结算的玩家行动（`UndoCommand`） |
-///
-/// 左键同时写一条 [`PlayerTakeover`]：它是"玩家这一帧想做事"的输入层事实，
-/// 时间线靠它把玩家那条还没到点的行动撤掉，好让新的这一手抢到决策槽。
-/// 右键不必写——它本来就是一条撤销请求。
-///
-/// 本系统只**写消息**，落地归各自的领域——和 `input` 同一条约定。
-#[allow(clippy::too_many_arguments)]
-pub fn pointer_command_system(
-    mut clicks: MessageReader<PointerCommand>,
-    hovered: Res<HoveredCell>,
-    occupants: Query<(&Cell, &Faction)>,
-    mut moves: MessageWriter<MoveToCommand>,
-    mut skills: MessageWriter<UseSelectedSkill>,
-    mut undos: MessageWriter<UndoCommand>,
-    mut takeovers: MessageWriter<PlayerTakeover>,
-) {
-    for click in clicks.read() {
-        match click {
-            PointerCommand::Secondary => {
-                undos.write(UndoCommand);
-            }
-            PointerCommand::Primary => {
-                let Some(cell) = hovered.0 else {
-                    continue; // 没指到地面（指到天空 / 光标不在窗口里）
-                };
-                if occupants.iter().any(|(occupied, _)| *occupied == cell) {
-                    skills.write(UseSelectedSkill {
-                        target_cell: Some(cell),
-                    });
-                } else {
-                    moves.write(MoveToCommand { cell });
-                }
-                takeovers.write(PlayerTakeover);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::scene::ScenePlugin;
 
-    /// 探针：把本帧写出的消息数成计数，便于断言"点了哪一枪"。
-    #[derive(Resource, Default)]
-    struct Probes {
-        moves: usize,
-        skills: usize,
-        undos: usize,
-        takeovers: usize,
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn probe_system(
-        mut probes: ResMut<Probes>,
-        mut moves: MessageReader<MoveToCommand>,
-        mut skills: MessageReader<UseSelectedSkill>,
-        mut undos: MessageReader<UndoCommand>,
-        mut takeovers: MessageReader<PlayerTakeover>,
-    ) {
-        probes.moves += moves.read().count();
-        probes.skills += skills.read().count();
-        probes.undos += undos.read().count();
-        probes.takeovers += takeovers.read().count();
-    }
-
-    fn click_app() -> App {
+    /// 场景工厂验收：BSN 建出来的实体必须**真的带上**标记组件。
+    ///
+    /// 这条守着一次真实的坑——`bsn!` 改成补丁式写法后，少写一行 `HoverHighlight`
+    /// 或 `Visibility::Hidden` 不会编译报错，只会让高亮**永远显示 / 永远不显示**。
+    /// 所以这里不看"长得对不对"，只钉死"标记在不在、默认藏没藏"。
+    #[test]
+    fn the_scene_factories_attach_their_markers() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .init_resource::<HoveredCell>()
-            .init_resource::<Probes>()
-            .add_message::<PointerCommand>()
-            .add_message::<MoveToCommand>()
-            .add_message::<UseSelectedSkill>()
-            .add_message::<UndoCommand>()
-            .add_message::<PlayerTakeover>()
-            .add_systems(Update, (pointer_command_system, probe_system).chain());
-        app
-    }
-
-    /// 左键的两种去向：空地板 → 移动；有单位 → 用当前技能（没有"确认"这一步）。
-    ///
-    /// 两者都算「玩家自己动手了」；右键不算——它本来就是一条撤销请求。
-    #[test]
-    fn primary_click_picks_the_right_command() {
-        let cell = Cell::new(2, 2);
-
-        // ① 空地板
-        let mut app = click_app();
-        app.insert_resource(HoveredCell(Some(cell)));
-        app.world_mut().write_message(PointerCommand::Primary);
-        app.update();
-        let probes = app.world().resource::<Probes>();
-        assert_eq!((probes.moves, probes.skills), (1, 0), "点地板 = 走过去");
-        assert_eq!(probes.takeovers, 1, "左键算「玩家动手了」");
-
-        // ② 那格上站着单位
-        let mut app = click_app();
-        app.insert_resource(HoveredCell(Some(cell)));
-        app.world_mut()
-            .spawn((cell, Faction::Enemy, Transform::default()));
-        app.world_mut().write_message(PointerCommand::Primary);
-        app.update();
-        let probes = app.world().resource::<Probes>();
-        assert_eq!((probes.moves, probes.skills), (0, 1), "点单位 = 用当前技能");
-        assert_eq!(probes.takeovers, 1, "左键算「玩家动手了」");
-    }
-
-    /// 右键 = 撤销。
-    #[test]
-    fn secondary_click_asks_for_undo() {
-        let mut app = click_app();
-        app.world_mut().write_message(PointerCommand::Secondary);
+            .add_plugins((AssetPlugin::default(), ScenePlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>();
+        app.add_systems(Startup, (spawn_hover_highlight, spawn_preview_indicators));
         app.update();
 
-        let probes = app.world().resource::<Probes>();
-        assert_eq!((probes.undos, probes.moves), (1, 0), "右键只请求撤销");
-        assert_eq!(probes.takeovers, 0, "撤销本身就是改主意，不必再多写一条");
+        let mut query = app
+            .world_mut()
+            .query_filtered::<(Entity, &Visibility), With<HoverHighlight>>();
+        let highlights: Vec<(Entity, Visibility)> = query
+            .iter(app.world())
+            .map(|(entity, visibility)| (entity, *visibility))
+            .collect();
+        assert_eq!(highlights.len(), 1, "高亮方块应当只有一个");
+        assert_eq!(
+            highlights[0].1,
+            Visibility::Hidden,
+            "没悬停时就该藏着（少了 `Visibility::Hidden` 会整块糊在场上）"
+        );
+
+        // 两个预演指示器各一个，且都默认隐藏
+        for (name, count) in [("AoePreview", 1), ("ConePreview", 1)] {
+            let found = match name {
+                "AoePreview" => app
+                    .world_mut()
+                    .query_filtered::<&Visibility, With<AoePreview>>()
+                    .iter(app.world())
+                    .count(),
+                _ => app
+                    .world_mut()
+                    .query_filtered::<&Visibility, With<ConePreview>>()
+                    .iter(app.world())
+                    .count(),
+            };
+            assert_eq!(found, count, "{name} 应当由场景工厂建出来");
+        }
+        let mut hidden = app
+            .world_mut()
+            .query_filtered::<&Visibility, (With<AoePreview>, Without<HoverHighlight>)>();
+        assert!(
+            hidden.iter(app.world()).all(|v| *v == Visibility::Hidden),
+            "预演指示器开局应当都是隐藏的"
+        );
     }
 
     fn highlight_app(hovered: Option<Cell>) -> (App, Entity) {

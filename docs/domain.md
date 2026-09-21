@@ -1,8 +1,13 @@
 # 域地图 与 跨域契约
 
-> ⚠️ **目标设计**：标 🚧 的部分代码里还没有。当前与本文的差异主要是一处：
-> `combat` 还是**一个** `CombatPlugin` 装着 8 个子域（本文要求每个 mod 出自己的
-> `plugin.rs`，父域只编排）。落地进度见 `TODO.md` M22+。
+> ⚠️ **目标设计**：标 🚧 的部分代码里还没有。当前与本文的差异有三处：
+>
+> 1. `combat` 还是**一个** `CombatPlugin` 装着 7 个子域（本文要求每个 mod 出自己的
+>    `plugin.rs`，父域只编排）——**7 个子域目前 0 个 `plugin.rs`**；
+> 2. 攻击子域目录仍叫 `combat/skills`（本文按语义写作 `combat::attack`）；
+> 3. `utils` 域**不建了**（形状改为"一个形状一个组件"，见第一节末）。
+>
+> 落地进度见 `TODO.md` M22+。
 
 > 本篇回答三件事：**有哪些域**、**域之间怎么说话**、**什么算违规**。
 > 铁律在文末；每个域的内部设计见各自的专题篇。
@@ -17,7 +22,7 @@
 | `voxel_render` | 体素**表现**：异步网格化、材质、明暗 | —（消费 `world` 的区块消息） |
 | `movement` | 格子坐标（`Cell`）+ 连续位移（`Velocity`）+ 移动 / 跳跃 / 翻滚载荷与执行器 | `combat`、`ai`、`interaction`、`spawn` |
 | `combat` | 战斗的**全部子域**（见下） | `ai`、`spawn`、`presentation` |
-| `skills` | 技能**静态定义**：`AbilityId` / `AbilityDef` / `Requirement` / `can_cast` / 反制代价；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理 | 几乎所有域（读目录） |
+| `skills` | 技能**静态定义**：`AbilityId` / `AbilityDef` / `CombatTags` 已落地；`Requirement` / `can_cast` / 反制代价 🚧；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理 | 几乎所有域（读目录） |
 | `timeline` | 决策槽 + 行动实体 + 世界何时冻结 | 几乎所有域 |
 | `ai` | 敌人决策（填意图） | — |
 | `input` | 键盘 / 鼠标 → **消息**（只翻译） | —（没有域依赖它） |
@@ -34,7 +39,7 @@
 | `targeting` | 打到了谁（形状相交 / 扇形） |
 | `lifecycle` | 攻击实体的存活、命中计数、清理 |
 | `formula` | 命中结算：防御链 → 减伤 → 扣血 → 触发打断（纯公式住 `domain.rs`，零 Bevy） |
-| `attack` | 攻击行动：火球 / 横扫 / 箭矢 + 爆炸（载荷 + 工厂 + 执行器）🚧 现在这个目录叫 `skills` |
+| `attack` 🚧 | 攻击行动：火球 / 横扫 / 箭矢 + 爆炸（载荷 + 工厂 + 执行器）——**现在这个目录叫 `skills`** |
 | `defense` | 翻滚 / 招架 / 格挡 |
 | `reaction` | 威胁探测 → 开反应槽 → 反制（`ReactionSlot` + `CounterSuggestion`） |
 
@@ -49,7 +54,13 @@
 
 | 名字 | 是什么 | 为什么不是领域 |
 | :--- | :--- | :--- |
-| `utils` | 纯几何 / 纯类型工具（`Shape`…），源码在 `src/utils/` | 没有数据模型、没有系统、没有 Plugin；**纯函数谁都能直接引用**（见第三节第 3 条） |
+| 纯函数（`combat::formula::domain::*`） | 只吃参数的判定（防御链 / 反制 / 打断掷骰） | 没有数据模型、没有系统、没有 Plugin；**谁都能直接引用**（见第三节第 3 条） |
+
+> **早先计划过一个 `utils` 域**（放 `Shape` 一类纯几何）——**不建了**：
+> 形状现在是**一个形状一个组件**（`HitRadius` / `MeleeShape`，见
+> [skills.md](skills.md) 第六节），判定系统各自紧贴自己的形状，没有出现真正需要
+> 跨领域复用的几何。**不要在 `src/` 里按 `utils::` 路径引用任何东西**——
+> 那个模块不存在。
 
 ## 二、域之间怎么说话
 
@@ -71,13 +82,13 @@
 | `FireCommand` / `MeleeCommand` | `input` / `combat::attack` 的菜单派发 | `combat::attack` 的声明系统 |
 | `RollCommand` / `ParryCommand` | `input` | `combat::defense` 的声明系统 |
 | `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` | `combat::attack` 的菜单 |
-| `RegisterAbility` 🚧 | 各机制域（`movement` / `combat`） | `skills` 的注册表 |
+| `RegisterAbility` | 各机制域（`movement` / `combat`） | `skills` 的注册表 |
 | `CounterCommand` / `AbandonReaction` 🚧 | `input` | `combat::reaction` |
 | `PauseRequest` | `input`（手动）/ `timeline`（等 PC 决策）/ `combat::reaction`（威胁） | `timeline::process_pause_requests` |
-| `PlayerTakeover` 🚧 | `input`（键盘）/ `interaction`（左键） | `timeline::undo_system` |
+| `PlayerTakeover` | `input`（键盘）/ `interaction`（左键） | `timeline::undo_system` |
 | `UseFocus` | `input` | `timeline` |
 | `UndoCommand` | `interaction`（右键） | `timeline::undo_system` |
-| `ActionBlocked` | 各声明系统 / `skills::can_cast` 的失败 | `presentation` 的提示条 |
+| `ActionBlocked` | 各声明系统（`can_cast` 🚧 落地后也写它） | `presentation` 的提示条 |
 | `ActionCancelled` | `timeline::undo_system` | 花钱的域（`skills` 退款） |
 | `DecisionReady` | `timeline::recovery_system` | `combat::defense`（回精力） |
 | `DamageEvent` / `DeathEvent` | `combat::formula` / `combat::health` | `combat::health` / `presentation` 的日志 |
@@ -102,8 +113,8 @@
 | 类别 | 能否跨域直接引用 | 说明 |
 | :--- | :--- | :--- |
 | **组件类型**（`Health` / `Cell` / `DecisionSlot` …） | ✅ 可以读 | 组件是**数据契约**；写者仍然唯一（见铁律） |
-| **纯类型 / 常量**（`ActionTiming`、`CELL_SIZE`、`*_TIMING`、`utils::Shape`） | ✅ | 没有行为 |
-| **纯函数**（`combat::formula::domain::*`、`skills::can_cast`、`utils::*`） | ✅ | 零 Bevy、可单测 |
+| **纯类型 / 常量**（`ActionTiming`、`CELL_SIZE`、`*_TIMING`） | ✅ | 没有行为 |
+| **纯函数**（`combat::formula::domain::*`） | ✅ | 零 Bevy、可单测 |
 | **别人的系统** | ❌ 禁止调用 | 排顺序用 `SystemSet`，不要 `run_system` 互调 |
 | **别人的内部状态**（别人的 `Resource`、`Local`） | ❌ | 要么它写成消息/事件，要么它自己算 |
 | **一次操作的请求 / 结果** | ❌ 必须走消息或事件 | 例：撤销退款走 `ActionCancelled`，不是 `defense` 直接改别的域的账 |
@@ -153,4 +164,7 @@ ClockSet 排在帧末：这一帧所有系统看到同一个冻结状态，唯�
 10. **执行器自己收尾**：到点落地 → 销毁行动实体 → 把行动者推进后摇。
     没有集中式收尾函数。
 11. **领域层零 Bevy**：`combat/formula/domain.rs` 可脱离 App 单测；应用层不写公式。
-12. **文档防漂移**：文档里引用的类型名必须先在 `src/` 里 grep 确认存在。
+12. **文档防漂移**：文档里引用的类型名必须先在 `src/` 里 grep 确认存在；
+    还没落地的（`can_cast` / `Requirement` / `Intent` / `combat::attack` / 反应槽）
+    **必须标 🚧**。已删除的设想（`utils` 域、`Shape` 枚举）直接改写或删除，
+    **不要用 🚧 让它假装还存在**。

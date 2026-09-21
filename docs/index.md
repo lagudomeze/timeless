@@ -19,22 +19,24 @@
 | :--- | :--- | :--- |
 | **域地图与跨域契约** | [domain.md](domain.md) | 想知道「这功能该放哪个域」「域之间怎么说话」「什么算违规」 |
 | **关系模型** | [relations.md](relations.md) | 要在两个实体之间建立关系：物理附着还是逻辑关系？ |
-| **技能（静态定义）** | [skills.md](skills.md) 🚧 | 改技能表、加一个动作、改释放条件（`can_cast`）、改反制代价 |
-| **时间线** | [timeline.md](timeline.md) 🚧 | 改决策槽、行动、一轮的顺序、暂停与时钟 |
+| **技能（静态定义）** | [skills.md](skills.md) 🚧 | 改技能表（✅ 已落地）、加一个动作、改释放条件（`can_cast` 🚧）、改反制代价 🚧 |
+| **时间线** | [timeline.md](timeline.md) 🚧 | 改决策槽（✅ 现为 `Empty/Windup/Recovery`）、行动、一轮的顺序、暂停与时钟 |
 
 **专题篇**：
 
 | 主题 | 文档 | 什么时候读 |
 | :--- | :--- | :--- |
 | 战斗 | [combat.md](combat.md) 🚧 | 改命中管线、对抗（打断 / 招架 / 格挡）、伤害与属性、威胁与反应槽 |
-| 装备 | [equipment.md](equipment.md) 🚧 | 装备槽位、穿脱与类型校验 |
+| 装备 | [equipment.md](equipment.md) 🚧 | 装备槽位、穿脱与类型校验（整篇未落地） |
 | 游戏设计总纲 | [game-design.md](game-design.md) | 想知道「为什么做这个机制」 |
 | 素材与字体 | [assets.md](assets.md) | 选素材、换贴图、动 HUD 文案 |
 | Bevy 0.19 速查 | [bevy-019.md](bevy-019.md) | 写任何 Bevy 代码之前 |
 | 进度与 backlog | [../TODO.md](../TODO.md) | 想知道「现在做到哪了」「下一步做什么」 |
 | 仓库指南 | [../AGENTS.md](../AGENTS.md) | 命令、编码风格、提交规范 |
 
-🚧 = **目标设计的草稿**，代码还没落地；落地进度见 `TODO.md`。
+🚧 = **这一条目标设计里还有没落地的部分**；✅ = 已落地（可 grep 到）。
+落地进度见 `TODO.md`。**标注按「条目」而非「整篇」粒度**——一篇里可以两者混合，
+改动前请在 `src/` 里 grep 确认要引用的标识符真的存在。
 
 > **本轮范围 = 战斗时间线**：roguelike 的另一半（供应链 / 信息 / 掉落 / 局外成长）
 > 只有 [game-design.md](game-design.md) 的总纲，机制文档先不做。
