@@ -73,24 +73,31 @@ pub struct RegisterAbility(pub AbilityDef);
   这也是"移动不做特殊处理"能成立的原因：`AbilityId` 只是**静态目录的键**，
   不是调度表。
 
-## 三、释放条件：集中在 `can_cast` 🚧
+## 三、释放条件：集中在 `can_cast` ✅
 
-> **现状**：`can_cast` 与 `Requirement` **都还没落地**（`src/` 里 grep 不到）。
-> 今天各声明系统各自查条件（`skills/menu.rs`、`defense/actions.rs`、`fireball.rs`、
-> `movement/actions.rs` 都是 `Stamina` 判断 → `ActionBlocked::NO_ENERGY`），
-> 「唯一校验点」是**目标状态**。落地时这一节是验收标准。
+> **已落地**（M24b）。实际形态与早先设想有两处不同，都是刻意的——见下方对照表。
 
 ```rust
-pub enum Requirement {          // 🚧
-    NotSilenced, NotStunned, NotRooted,
-    HasStamina(u32), HasWeapon(WeaponType),
-    TargetInRange(f32), TargetIsHostile,
-    NotOnCooldown,
+/// 只列**真的会被检查的**条件——预先堆一个用不上的枚举，只会让 `can_cast`
+/// 里长出一堆永远为真的分支。
+pub enum Requirement {
+    EnoughEnergy,
 }
 
-/// **唯一的条件校验点**：这一次能不能出手。🚧
-pub fn can_cast(caster: Entity, ability: AbilityId, world: &World) -> Result<(), CastFailReason>;
+/// 入参是**事实**（精力多少）而不是 `&World`：这一层零 Bevy、可脱离 App 单测，
+/// "读哪些组件凑出事实"留在调用方。
+pub fn can_cast(def: &AbilityDef, stamina: u32) -> Result<(), BlockReason>;
 ```
+
+| 早先设想 | 实际 | 为什么 |
+| :--- | :--- | :--- |
+| `Requirement` 十条（沉默 / 眩晕 / 冷却…） | **只有 `EnoughEnergy`** | 那些状态还不存在；等它们落地再加 |
+| `can_cast(caster, ability, world)` | `can_cast(def, stamina)` | 拿 `&World` 会把它绑死 Bevy、没法纯测；事实由调用方读出来 |
+| 独立的 `CastFailReason` | 复用 `timeline::BlockReason` | 失败要驱动的提示条本来就是按它写的，平行枚举只会让两边同步维护 |
+
+**它真的成了唯一校验点**：`menu` 的过滤（`affordable_indices` / `SkillDef::affordable`）、
+`fireball` / `roll` / `parry` 的声明系统，连 **AI 判断"闪不闪得动"**都走它。
+剩下唯一的 `Stamina::can_afford` 是它自己的内部实现。
 
 - **在填意图之前跑一次**（见 [timeline.md](timeline.md) 第三节）；失败就写一条
   `ActionBlocked { reason }` 给 HUD——玩家按键失败与 AI 决策失败走同一条路。

@@ -12,12 +12,14 @@
 
 use bevy::prelude::*;
 
+use super::abilities::FIREBALL_ABILITY;
 use crate::combat::Faction;
 use crate::combat::attributes::{AttackFrame, HitRadius, InterruptPower, PhysicalDamage};
 use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
 use crate::skills::AbilityId;
+use crate::skills::can_cast;
 use crate::timeline::{
     ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, Intent, PendingFocus,
     ScheduledAction, Target,
@@ -190,9 +192,10 @@ pub fn declare_fireball_system(
     else {
         return; // 忙或没有玩家
     };
-    if !stamina.can_afford(FIREBALL_COST) {
-        blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
-        info!("火球失败：精力不足");
+    // 条件校验的唯一入口（类别共享条件 + 技能自己的 requirements）
+    if let Err(reason) = can_cast(&FIREBALL_ABILITY, stamina.current) {
+        blocked.write(crate::timeline::ActionBlocked { reason });
+        info!("火球失败：{reason:?}");
         return;
     }
 

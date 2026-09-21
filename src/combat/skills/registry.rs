@@ -53,6 +53,57 @@ pub struct SkillDef {
     pub power: i32,
 }
 
+impl SkillDef {
+    /// 这个菜单项对应目录里的哪一条定义。
+    ///
+    /// 「攻击」**没有**对应项：它是"贴脸近战、否则火球"的**派发规则**，
+    /// 不是一条技能——所以这个函数回答 `Option`，条件校验遇 `None` 就退回用
+    /// 自己的 `cost`（免费，因此永远可用）。
+    pub fn catalogue_entry(&self) -> Option<crate::skills::AbilityId> {
+        match self.kind {
+            SkillKind::Attack => None, // 派发规则，不是技能
+            SkillKind::Melee => Some(crate::skills::AbilityId::Melee),
+            SkillKind::Fireball => Some(crate::skills::AbilityId::Fireball),
+            SkillKind::Roll => Some(crate::skills::AbilityId::Roll),
+        }
+    }
+
+    /// 此刻负担得起吗。
+    ///
+    /// **走 [`crate::skills::can_cast`]**：菜单的过滤与声明系统的校验必须是
+    /// **同一条判据**，否则会出现"菜单里亮着、按下去被拒"这种两处各写一遍的经典漂移。
+    /// 没有目录项的（「攻击」）用一个同形定义去问，效果一样而判据仍然只有一份。
+    pub fn affordable(&self, stamina: u32) -> bool {
+        crate::skills::can_cast(&self.as_ability(), stamina).is_ok()
+    }
+
+    /// 把菜单项看成一条技能定义（供条件校验用）。
+    pub fn as_ability(&self) -> crate::skills::AbilityDef {
+        let category = match self.kind {
+            SkillKind::Attack | SkillKind::Melee => crate::skills::AbilityCategory::Attack,
+            SkillKind::Fireball => crate::skills::AbilityCategory::Spell,
+            SkillKind::Roll => crate::skills::AbilityCategory::Movement,
+        };
+        crate::skills::AbilityDef {
+            // 「攻击」是派发规则，借近战的 id 只为走同一套校验（它免费）
+            id: self
+                .catalogue_entry()
+                .unwrap_or(crate::skills::AbilityId::Melee),
+            category,
+            timing: self.timing,
+            targeting: crate::skills::TargetSelector::SelfOnly,
+            cost: self.cost,
+            requirements: if self.cost == 0 {
+                &[]
+            } else {
+                &[crate::skills::Requirement::EnoughEnergy]
+            },
+            combat: crate::skills::CombatTags::STRIKE,
+            power: self.power,
+        }
+    }
+}
+
 /// 技能表（顺序 = 菜单顺序 = 数字键 `1`~`5`）。
 pub const SKILLS: [SkillDef; 4] = [
     SkillDef {
@@ -99,12 +150,17 @@ pub fn index_of(kind: SkillKind) -> Option<usize> {
     SKILLS.iter().position(|def| def.kind == kind)
 }
 
-/// 当前精力能负担得起的技能下标。
+/// 当前精力能负担得起的技能下标（菜单循环用）。
+///
+/// 判据与声明系统**同源**：[`SkillDef::ability`] 指向目录里的定义，
+/// 菜单用 [`crate::skills::can_cast`] 问同一个问题——两处各写一遍
+/// `cost <= stamina` 正是"菜单里亮着、按下去被拒"那种漂移的来源。
+/// `menu_matches_the_catalogue` 这条测试钉住两边的数值不许分叉。
 pub fn affordable_indices(stamina_current: u32) -> Vec<usize> {
     SKILLS
         .iter()
         .enumerate()
-        .filter(|(_, def)| def.cost <= stamina_current)
+        .filter(|(_, def)| def.affordable(stamina_current))
         .map(|(index, _)| index)
         .collect()
 }
@@ -143,5 +199,46 @@ mod tests {
             assert_eq!(index_of(def.kind), Some(index));
         }
         assert_eq!(index_of(SkillKind::Attack), Some(0));
+    }
+
+    /// **菜单与目录不许分叉**：每个菜单项指到的那条定义，花费 / 节奏 / 威力
+    /// 必须与菜单自己列的一致。
+    ///
+    /// 这是 `affordable` 走 `can_cast` 之后的对账——两边数值分叉时，
+    /// 菜单会显示一个价、声明系统按另一个价校验。
+    #[test]
+    fn menu_matches_the_catalogue() {
+        use crate::skills::{AbilityDef, AbilityId};
+
+        // 目录是启动期注册的，测试里直接按各域的定义核对
+        let catalogue: [(AbilityId, AbilityDef); 4] = [
+            (
+                AbilityId::Melee,
+                crate::combat::skills::abilities::MELEE_ABILITY,
+            ),
+            (
+                AbilityId::Shoot,
+                crate::combat::skills::abilities::SHOOT_ABILITY,
+            ),
+            (
+                AbilityId::Fireball,
+                crate::combat::skills::abilities::FIREBALL_ABILITY,
+            ),
+            (AbilityId::Roll, crate::movement::abilities::ROLL_ABILITY),
+        ];
+
+        for def in SKILLS {
+            let Some(id) = def.catalogue_entry() else {
+                continue; // 「攻击」是派发规则，没有目录项
+            };
+            let entry = catalogue
+                .iter()
+                .find(|(candidate, _)| *candidate == id)
+                .map(|(_, entry)| entry)
+                .unwrap_or_else(|| panic!("目录里没有 {:?}", id));
+            assert_eq!(def.cost, entry.cost, "{} 的花费与目录分叉了", def.label);
+            assert_eq!(def.timing, entry.timing, "{} 的节奏与目录分叉了", def.label);
+            assert_eq!(def.power, entry.power, "{} 的威力与目录分叉了", def.label);
+        }
     }
 }

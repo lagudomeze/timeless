@@ -291,8 +291,16 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       **行为不变**（旧的 `SKILLS` 菜单暂时留着，M24b 再迁）。
       验收：193 测试全绿（191 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过 /
       `cargo run` 无 panic。
-- [ ] **M24b `can_cast` + 菜单迁移**：`Requirement` 一族 + `can_cast` 收成唯一的条件校验点
-      （落在填意图之前）；菜单 / HUD 改读目录，删掉 `combat::skills::registry` 的 `SKILLS`。
+- [x] **M24b `can_cast`**（本次）：`Requirement`（只列真的会检查的：`EnoughEnergy`）+
+      `can_cast(def, stamina)` 收成唯一的条件校验点——菜单过滤 / `fireball` / `roll` /
+      `parry` / AI 的"闪不闪得动"全走它，失败复用 `timeline::BlockReason`。
+      **菜单与目录的对账**由 `menu_matches_the_catalogue` 钉住（花费 / 节奏 / 威力分叉即红）。
+      两处偏离原设计并写进了 `docs/skills.md`：`Requirement` 不预先堆十条、
+      `can_cast` 收事实而不是 `&World`。
+      验收：221 测试全绿（219 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过。
+- [ ] **M24c 菜单改读目录**：`SKILLS`（4 项，其中"攻击"是**派发规则**不是技能）与目录
+      （7 项）不是一一对应，迁移要先定 `MenuSelection` 存什么（`SkillKind` 还是 `AbilityId`）。
+      现状已由 `menu_matches_the_catalogue` 兜住，不急。
 - [x] **M23 意图式决策槽**（本次）：槽换形状（`Idle { intent }` / `Executing { until }`）、
       声明系统改成**填意图 + 当场物化**（**各域自己物化，不做全局派发器**）、
       `"slot_empty"` 改名 `"awaiting"`。

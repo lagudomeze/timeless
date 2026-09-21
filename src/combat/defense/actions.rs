@@ -8,8 +8,10 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
+use crate::combat::skills::abilities::PARRY_ABILITY;
+use crate::movement::abilities::ROLL_ABILITY;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
-use crate::skills::AbilityId;
+use crate::skills::{AbilityId, can_cast};
 use crate::timeline::{
     ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, Intent, PendingFocus,
     ScheduledAction, Target,
@@ -107,8 +109,8 @@ pub fn declare_roll_system(
     else {
         return;
     };
-    if !stamina.can_afford(ROLL_COST) {
-        blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
+    if let Err(reason) = can_cast(&ROLL_ABILITY, stamina.current) {
+        blocked.write(crate::timeline::ActionBlocked { reason });
         return;
     }
 
@@ -198,9 +200,9 @@ pub fn declare_parry_system(
     let Some((player, stamina, _)) = players.iter().first_ready(&mut blocked) else {
         return;
     };
-    if !stamina.can_afford(PARRY_COST) {
-        info!("招架失败：精力不足");
-        blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
+    if let Err(reason) = can_cast(&PARRY_ABILITY, stamina.current) {
+        info!("招架失败：{reason:?}");
+        blocked.write(crate::timeline::ActionBlocked { reason });
         return;
     }
     // 威胁 = 这次攻击的目标正是玩家自己

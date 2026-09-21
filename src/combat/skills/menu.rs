@@ -11,7 +11,7 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::combat::defense::{ROLL_COST, RollCommand, Stamina};
+use crate::combat::defense::{RollCommand, Stamina};
 use crate::combat::skills::events::{FireCommand, MeleeCommand};
 use crate::movement::CELL_SIZE;
 use crate::movement::Cell;
@@ -148,7 +148,7 @@ pub fn use_selected_skill_system(
     let Some(def) = SKILLS.get(selection.index()) else {
         return;
     };
-    if !stamina.can_afford(def.cost) {
+    if !def.affordable(stamina.current) {
         debug!("技能 {} 精力不足（需要 {}）", def.label, def.cost);
         blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
         return;
@@ -191,7 +191,8 @@ pub fn use_selected_skill_system(
             });
         }
         SkillKind::Roll => {
-            if stamina.can_afford(ROLL_COST) {
+            // 与菜单过滤、声明系统同一条判据（`can_cast`）
+            if def.affordable(stamina.current) {
                 roll_commands.write(RollCommand);
             }
         }

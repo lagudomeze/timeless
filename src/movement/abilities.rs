@@ -19,6 +19,8 @@ pub const MOVE_ABILITY: AbilityDef = AbilityDef {
     timing: MOVE_TIMING,
     targeting: TargetSelector::TargetCell,
     cost: 0,
+    // 免费：不需要精力
+    requirements: &[],
     combat: CombatTags::STRIKE,
     power: 0,
 };
@@ -30,6 +32,8 @@ pub const JUMP_ABILITY: AbilityDef = AbilityDef {
     timing: JUMP_TIMING,
     targeting: TargetSelector::SelfOnly,
     cost: 0,
+    // 免费：不需要精力
+    requirements: &[],
     combat: CombatTags::COMMITTED,
     power: 0,
 };
@@ -41,6 +45,8 @@ pub const ROLL_ABILITY: AbilityDef = AbilityDef {
     timing: ROLL_TIMING,
     targeting: TargetSelector::SelfOnly,
     cost: crate::combat::defense::ROLL_COST,
+    // Movement 类的共享条件已是 EnoughEnergy（见 `AbilityCategory::shared_requirement`）
+    requirements: &[],
     combat: CombatTags::COMMITTED,
     power: 0,
 };
