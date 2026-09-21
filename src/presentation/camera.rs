@@ -1,9 +1,10 @@
-//! 相机与方向光：场景零件 + 中键拖拽平移 + 跟随玩家。
+//! 相机与方向光：场景零件 + 中键拖拽平移 + 滚轮缩放 + 跟随玩家。
 //!
-//! **以 PC 为画面中心**：镜头跟着玩家走（[`camera_follow_system`]），中键拖拽只拉出
-//! 一个**相对 PC 的观察偏移**（[`camera_pan_system`]），所以既看得见四周、又不会把
-//! 自己甩出画面。两者都是纯表现：输入域只把鼠标位移翻译成 [`PanCamera`] 消息，
-//! 本模块消费它并改相机机位——游戏状态（单位、时间线）一点没碰。
+//! **机位的数学在 [`super::components`] 的 [`CameraRig`] 里**（纯函数、可单测）；
+//! 本模块只做"读输入 → 调 `CameraRig` 的方法 → 刷新 `Transform`"。
+//!
+//! 输入域只把鼠标位移 / 滚轮翻译成 [`PanCamera`] / [`ZoomCamera`] 消息，
+//! 本模块消费它们并改相机机位——游戏状态（单位、时间线）一点没碰。
 
 use bevy::prelude::*;
 
@@ -48,12 +49,9 @@ pub fn main_camera() -> impl Scene {
 
 /// 中键拖拽 → 拉出**观察偏移**：往哪边拖，地面就往哪边走（grab-drag 手感）。
 ///
-/// 滚轮缩放见 [`camera_zoom_system`]。
-///
-/// 位移按相机自身的朝向换算到地面：拖右 = 镜头左移，拖下 = 镜头前移。
-/// 改的是 [`CameraRig::pan_offset`]（**相对 PC** 的偏移），真正的机位由
-/// [`camera_follow_system`] 拉向「PC + 偏移」——松手后镜头不会弹回，
-/// PC 也不会被甩出画面（偏移上限见 [`CameraRig::PAN_RADIUS`]）。
+/// 换算细节在 [`CameraRig::drag_ground`]；改的是观察偏移而不是 `focus`，
+/// 真正的机位由 [`camera_follow_system`] 拉向「PC + 偏移」——松手后镜头不会弹回，
+/// PC 也不会被甩出画面。
 pub fn camera_pan_system(
     mut requests: MessageReader<PanCamera>,
     // 只读机位朝向、只改观察偏移：机位位置交给 `camera_follow_system`
@@ -68,20 +66,11 @@ pub fn camera_pan_system(
     }
 
     for (mut rig, transform) in &mut rigs {
-        // 相机的屏幕轴投影到地面：拖拽方向直接对应「地面跟着手走」
-        let right = (transform.rotation * Vec3::X)
-            .with_y(0.0)
-            .normalize_or_zero();
-        let forward = (transform.rotation * Vec3::NEG_Z)
-            .with_y(0.0)
-            .normalize_or_zero();
-        let shift = (right * -delta.x + forward * delta.y) * PAN_PER_PIXEL;
-        rig.pan_offset =
-            (rig.pan_offset + Vec2::new(shift.x, shift.z)).clamp_length_max(CameraRig::PAN_RADIUS);
+        rig.drag_ground(transform.rotation, delta, PAN_PER_PIXEL);
     }
 }
 
-/// 滚轮缩放：把请求累加后按每格 [`ZOOM_PER_NOTCH`] 改机位倍率（上下限在 `CameraRig`）。
+/// 滚轮缩放：把请求累加后按每格 [`ZOOM_PER_NOTCH`] 改机位倍率（上下限在 [`CameraRig`]）。
 pub fn camera_zoom_system(
     mut requests: MessageReader<ZoomCamera>,
     mut rigs: Query<(&mut CameraRig, &mut Transform)>,
@@ -103,7 +92,7 @@ pub fn camera_zoom_system(
 ///
 /// - 用 `Time<Real>` 而不是虚拟时间：世界冻结（等玩家输入）时镜头也该把上一段移动
 ///   追完，否则会僵在半路；
-/// - 第一帧**直接吸附**，避免开局从初始机位慢慢飘过去；
+/// - 第一帧**直接吸附**（[`CameraRig::follow_blend`]），避免开局从初始机位慢慢飘过去；
 /// - 玩家不存在（死亡 / 重置的中间帧）就保持原位。
 pub fn camera_follow_system(
     time: Res<Time<Real>>,
@@ -124,11 +113,7 @@ pub fn camera_follow_system(
 
     for (mut rig, mut transform) in &mut rigs {
         let target = rig.follow_target(player);
-        let t = if *snapped {
-            1.0 - (-rig.follow_rate * dt).exp()
-        } else {
-            1.0
-        };
+        let t = rig.follow_blend(*snapped, dt);
         rig.focus = rig.focus.lerp(target, t.clamp(0.0, 1.0));
         rig.clamp_focus();
         *transform = rig.transform();
@@ -155,7 +140,7 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
 
-    /// 相机 App：平移 + 跟随两个系统按 100ms/帧推进，场上有玩家（6, 0, 2）。
+    /// 相机 App：平移 + 缩放 + 跟随三个系统按 100ms/帧推进，场上有玩家（6, 0, 2）。
     fn camera_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
@@ -202,6 +187,7 @@ mod tests {
             (6.0, 2.0),
             "第一帧直接吸附到玩家脚下，而不是从初始机位慢慢飘过去"
         );
+        assert_eq!(rig.focus.y, 0.0, "注视点始终在地面平面");
     }
 
     /// 滚轮：正向拉远、负向拉近，并且都停在上下限上。
@@ -230,18 +216,21 @@ mod tests {
         );
     }
 
-    /// 吸附那条的其余断言（保留原意）。
+    /// 缩放之后 `Transform` 必须跟着机位重算（只改 `zoom` 而不刷新 `Transform`
+    /// 会让屏幕上看不出任何变化）。
     #[test]
-    fn the_camera_keeps_the_rig_offset_after_snapping() {
+    fn zooming_rewrites_the_camera_transform() {
         let mut app = camera_app();
         app.update();
 
+        app.world_mut().write_message(ZoomCamera { delta: 1.0 });
+        app.update();
+
         let rig = rig_of(&mut app);
-        assert_eq!(rig.focus.y, 0.0, "注视点始终在地面平面");
         assert_eq!(
             camera_transform(&mut app).translation,
-            rig.focus + rig.offset,
-            "相机位置 = 注视点 + 固定偏移"
+            rig.focus + rig.offset * rig.zoom,
+            "缩放后的相机位置应当等于「注视点 + 偏移 × 倍率」"
         );
     }
 
