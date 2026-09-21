@@ -107,11 +107,15 @@ cargo fmt --check                           # 格式校验
   给行动者写 `DecisionSlot::recovering(timing, now, effect_delay)`。没有集中式收尾函数；
   「效果延迟发生」的动作（移动 / 火球 / 箭矢）必须把 `effect_delay` 给到效果真的发生
   （走到格中心 / 飞到落点），否则玩家一空闲世界就冻住、效果停在半路。
-- **暂停是每帧断言**：各领域这一帧还想停表就写一条
-  `PauseRequest::Pause(reason)`（`"manual"` / `"slot_empty"` / `"threat"`）；
-  下一帧不再断言，原因自然消失，不需要谁去撤销。`PauseRequest::Resume` 不带原因，
-  只表示"清空此刻已收集的原因、让时间流动"。**按哪个键暂停 / 恢复是输入域的事**
-  （`input::keyboard::pause_input_system` 读 `PauseReasons` 决定），只有帧末
+- **暂停是两种时序**：各领域这一帧还想停表就写一条
+  `PauseRequest::Pause(reason)`（`"slot_empty"` / `"threat"`）；下一帧不再断言，
+  原因自然消失，不需要谁去撤销。玩家的手动暂停是**开关式**的
+  `PauseRequest::Toggle("manual")`——按一下翻一次，之后由 `timeline::LatchedReasons`
+  每帧自己续上。**两种时序别混**：断言每帧重来，按键是一次性事件；共用一条消息就得
+  从原因集合猜"上一帧谁断言过"，而集合里混着别人的原因，猜不准（踩过：威胁冻着时
+  按空格被误判成"暂停"而不是"恢复"）。
+  **按哪个键暂停 / 恢复是输入域的事**（`input::keyboard::pause_input_system` 只发一条
+  `Toggle`、**不读** `PauseReasons`），只有帧末
   `ClockSet` 的 `apply_clock` 能写 `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用
   `Time`，位移 / 投射物 / 后摇自动停表）；禁止在其它地方手写 `if paused` 阶段门控。
 - **坐标：决策按格、结算按真实距离**。格（`movement::Cell`，边长 `CELL_SIZE`）只用于

@@ -277,13 +277,27 @@ mod tests {
     /// 手改的值会在下一次 `PreUpdate` 被清掉。所以这里投递真实的
     /// [`KeyboardInput`](bevy::input::keyboard::KeyboardInput) 事件。
     fn press(app: &mut App, key: KeyCode) {
+        key_event(app, key, bevy::input::ButtonState::Pressed);
+    }
+
+    /// 松开一个键。
+    ///
+    /// **连按两次必须夹一次松手**：`just_pressed` 只在按键状态**由松变按**的那一帧为真，
+    /// 不松手就直接再按一次，第二次不会被识别成"刚按下"（踩过：探针里连按两次空格，
+    /// 第二次毫无反应，看起来像逻辑坏了，其实是测试没松手）。
+    fn release(app: &mut App, key: KeyCode) {
+        key_event(app, key, bevy::input::ButtonState::Released);
+    }
+
+    /// 投递一个真实的键盘事件。
+    fn key_event(app: &mut App, key: KeyCode, state: bevy::input::ButtonState) {
         app.world_mut()
             .write_message(bevy::input::keyboard::KeyboardInput {
                 key_code: key,
                 logical_key: bevy::input::keyboard::Key::Unidentified(
                     bevy::input::keyboard::NativeKey::Unidentified,
                 ),
-                state: bevy::input::ButtonState::Pressed,
+                state,
                 repeat: false,
                 window: Entity::PLACEHOLDER,
                 text: None,
@@ -1003,6 +1017,66 @@ mod tests {
             slot_of(&app, player),
             DecisionSlot::Empty,
             "玩家那一手应当已经声明出去"
+        );
+    }
+
+    /// **回归：威胁冻住世界时，空格只翻"玩家自己的闩"，不会吃掉逃生余地。**
+    ///
+    /// 旧实现从 `PauseReasons` 反推"手动暂停开着吗"：威胁冻着时集合里是 `["threat"]`，
+    /// 于是被读成"还没开"，空格跑去**又暂停一次**；而 `Resume` 那条路想清空原因，
+    /// 却清不掉 `threat`（它每帧被重新断言）。结果是玩家按空格越按越糊，
+    /// 且**回不到只含 `threat` 的状态**。
+    ///
+    /// 现在空格只发 `Toggle(MANUAL)`，时间线翻转的是玩家自己的闩，与别人的原因无关：
+    /// 状态在 `["threat"]` ↔ `["manual", "threat"]` 之间**可逆**，也永远不会误关威胁。
+    #[test]
+    fn space_toggles_only_the_manual_latch_during_a_threat() {
+        use crate::combat::Threatens;
+        use crate::timeline::MANUAL;
+
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
+
+        // 玩家在**后摇**里：没有可撤的行动，因此"换一手"这条表态路径此刻走不通
+        app.world_mut()
+            .entity_mut(player)
+            .insert(DecisionSlot::Recovery { until: 999.0 });
+        // 敌人瞄着玩家脚下的格，执行时刻很远（冻结时永远 pending）
+        app.world_mut().spawn((
+            ActionOf(enemy),
+            MOVE_TIMING,
+            ScheduledAction::declared_at(MOVE_TIMING, 900.0),
+            Threatens {
+                cells: vec![Cell::new(0, 0)],
+            },
+        ));
+
+        app.update();
+        let reasons = |app: &App| app.world().resource::<PauseReasons>().labels();
+        assert_eq!(reasons(&app), vec![THREAT], "威胁单独冻着世界");
+
+        // 按一次空格：翻手动开关（开），威胁**不受影响**
+        press(&mut app, KeyCode::Space);
+        app.update();
+        assert_eq!(
+            reasons(&app),
+            vec![MANUAL, THREAT],
+            "空格翻的是玩家自己的闩，不该碰威胁"
+        );
+
+        // 松手再按一次：手动开关关掉，威胁还在——状态可逆，不会卡死
+        release(&mut app, KeyCode::Space);
+        press(&mut app, KeyCode::Space);
+        app.update();
+        assert_eq!(
+            reasons(&app),
+            vec![THREAT],
+            "手动开关能关回去；威胁由它自己每帧断言，不靠空格续命"
+        );
+        assert!(
+            app.world().resource::<Time<Virtual>>().is_paused(),
+            "威胁还在等表态，世界仍然冻着"
         );
     }
 

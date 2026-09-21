@@ -32,15 +32,12 @@
 //! frozen ⟺ 本帧的 PauseReasons 非空
 //! ```
 //!
-//! 原因是**断言式**的：谁这一帧还想让世界停着就写一条 [`PauseRequest::Pause`]，
-//! 下一帧不再断言，原因自然消失——不需要谁去"撤销"。集合每帧重建，因此既不会
-//! 留下没人摘的幽灵原因，多个原因（`"manual"` 手动暂停 / `"slot_empty"` 等玩家决策 /
-//! `"threat"` 威胁逼近）又能叠加、互不覆盖。
-//!
-//! 按哪个键暂停、按一下是暂停还是恢复，是 [`crate::input`] 的事：它每帧断言
-//! （或停止断言）`"manual"`，并可以在需要时写一条 [`PauseRequest::Resume`]
-//! 清空此刻已收集的原因。**唯一**写 `Time<Virtual>` 的地方是帧末 [`ClockSet`]
-//! 里的 [`apply_clock`]。
+//! 请求有**两种时序**：各领域写 [`PauseRequest::Pause`]（**每帧断言**，下一帧不再
+//! 断言原因就自然消失）；玩家的手动暂停写 [`PauseRequest::Toggle`]（**翻转开关**，
+//! 翻一次之后由闩住的原因每帧自己续上）。按哪个键、按一下是暂停还是继续，是
+//! [`crate::input`] 的事——它只发一条 `Toggle`，**不读** [`PauseReasons`]
+//! （那里面混着别人的原因，反推会把"恢复"误判成"暂停"）。
+//! **唯一**写 `Time<Virtual>` 的地方是帧末 [`ClockSet`] 里的 [`apply_clock`]。
 //!
 //! Bevy 每帧把虚拟时间拷进通用 `Time`，因此位移、投射物、`Lifetime`、后摇计时
 //! 全部自动停表，各领域不需要任何 `if paused` 分支。
@@ -72,7 +69,7 @@ pub mod ownership;
 pub mod plugin;
 pub mod schedule;
 
-pub use clock::{MANUAL, PauseReasons, PauseRequest, SLOT_EMPTY, THREAT};
+pub use clock::{LatchedReasons, MANUAL, PauseReasons, PauseRequest, SLOT_EMPTY, THREAT};
 pub use clock::{apply_clock, compute_player_awaiting_system, process_pause_requests};
 pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven};
 pub use decision::{recovery_system, undo_system};
@@ -122,6 +119,7 @@ pub(crate) mod test_support {
                 100,
             )))
             .init_resource::<PauseReasons>()
+            .init_resource::<LatchedReasons>()
             .init_resource::<ManualLatch>()
             .init_resource::<Focus>()
             .init_resource::<PendingFocus>()

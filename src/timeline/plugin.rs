@@ -14,7 +14,8 @@ use bevy::prelude::*;
 use super::ClockSet;
 use super::TimelineSet;
 use super::clock::{
-    PauseReasons, PauseRequest, apply_clock, compute_player_awaiting_system, process_pause_requests,
+    LatchedReasons, PauseReasons, PauseRequest, apply_clock, compute_player_awaiting_system,
+    process_pause_requests,
 };
 use super::decision::{recovery_system, undo_system};
 use super::events::{ActionBlocked, PlayerTakeover, UndoCommand, UseFocus};
@@ -27,6 +28,8 @@ pub struct TimelinePlugin;
 impl Plugin for TimelinePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PauseReasons>()
+            // 手动暂停的闩：与「本帧谁在停表」分开，免得从原因集合反推玩家意图
+            .init_resource::<LatchedReasons>()
             .init_resource::<Focus>()
             .init_resource::<PendingFocus>()
             // 暂停断言：写方是 input（手动）、本域的等输入系统、combat 的威胁检测

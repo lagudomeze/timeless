@@ -8,7 +8,7 @@ use crate::combat::skills::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill
 use crate::movement::{JumpCommand, MoveCommand};
 use crate::presentation::{CameraRig, ToggleHelp};
 use crate::spawn::ResetBattle;
-use crate::timeline::{MANUAL, PauseReasons, PauseRequest, PlayerTakeover, UseFocus};
+use crate::timeline::{MANUAL, PauseRequest, PlayerTakeover, UseFocus};
 
 /// `Q/W/E/R` 的技能热键绑定（默认值；用户自定义留到配置外置那一步）。
 ///
@@ -161,30 +161,21 @@ pub fn player_skill_input_system(
     }
 }
 
-/// 空格 → 暂停 / 继续（**只写暂停断言，不碰时钟**）。
+/// 空格 → 翻转手动暂停（**只写一条消息，不碰时钟，也不看别人的原因**）。
 ///
-/// 「按一下是暂停还是恢复」这个判定归输入域：手动暂停的闩就藏在
-/// [`PauseReasons`] 里——上一帧断言过 [`MANUAL`] 就说明它开着。
+/// 「按一下是暂停还是恢复」这个判定归输入域，而**闩在 [`LatchedReasons`] 里**
+/// ——那是"玩家自己按下的开关"，翻转由时间线落地。
 ///
-/// - 开着再按 → [`PauseRequest::Resume`]：虚拟时间流动 + 清空已收集的原因；
-/// - 关着按 → 断言 [`MANUAL`]，此后**每帧重新断言**，直到玩家再按一次
-///   （断言式暂停因此不会"只前进一帧"）。
+/// 这里刻意**不去读 [`PauseReasons`]**：集合里同时躺着别人的原因
+/// （`slot_empty` / `threat`），从它反推"手动暂停开着吗"会把「威胁正冻着」
+/// 误判成「玩家已手动暂停」，于是空格变成又一次"暂停"而不是"继续"。
+/// 输入域只表达"玩家翻了这个开关"，剩下的是时间线的事。
 pub fn pause_input_system(
     keys: Res<ButtonInput<KeyCode>>,
-    reasons: Res<PauseReasons>,
     mut requests: MessageWriter<PauseRequest>,
 ) {
-    let manually_paused = reasons.contains(MANUAL);
     if keys.just_pressed(KeyCode::Space) {
-        if manually_paused {
-            requests.write(PauseRequest::Resume);
-        } else {
-            requests.write(PauseRequest::Pause(MANUAL));
-        }
-        return; // 这一帧的按键已经表过态，不必再重复断言
-    }
-    if manually_paused {
-        requests.write(PauseRequest::Pause(MANUAL));
+        requests.write(PauseRequest::Toggle(MANUAL));
     }
 }
 
@@ -299,6 +290,7 @@ pub fn skill_use_input_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::timeline::PauseReasons;
 
     #[test]
     fn world_basis_uses_x_and_z() {
@@ -353,6 +345,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<PauseReasons>()
+            .init_resource::<crate::timeline::LatchedReasons>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<Captured>()
             .add_message::<PauseRequest>()
@@ -381,12 +374,17 @@ mod tests {
         assert!(app.world().resource::<Captured>().0.is_empty());
         assert!(!app.world().resource::<PauseReasons>().is_frozen());
 
-        // ① 关着按空格 → 断言 manual，而且此后**每帧继续断言**
+        // ① 关着按空格 → 翻开关：此后**每帧继续断言**（不是只生效一帧）
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Space);
         app.update();
         release_space(&mut app);
+        assert_eq!(
+            app.world().resource::<Captured>().0,
+            vec![PauseRequest::Toggle(MANUAL)],
+            "空格只发一条翻转，不是每帧断言"
+        );
         for _ in 0..3 {
             app.update();
             assert!(
@@ -395,7 +393,7 @@ mod tests {
             );
         }
 
-        // ② 开着再按 → 解冻（只发一条 Resume，不附带原因）
+        // ② 开着再按 → 翻回去：世界恢复流动
         app.world_mut().resource_mut::<Captured>().0.clear();
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
@@ -403,9 +401,84 @@ mod tests {
         app.update();
         assert_eq!(
             app.world().resource::<Captured>().0,
-            vec![PauseRequest::Resume],
-            "开着的时候再按一下只发解冻，不再重复断言"
+            vec![PauseRequest::Toggle(MANUAL)],
+            "再按一下还是翻转（不是 Resume）"
         );
+        assert!(
+            !app.world().resource::<PauseReasons>().is_frozen(),
+            "关掉手动开关之后世界该恢复流动"
+        );
+        release_space(&mut app);
+        app.update();
         assert!(!app.world().resource::<PauseReasons>().is_frozen());
+    }
+
+    /// **回归：被别人冻住时，空格只能翻转手动开关，不能把原因全清掉。**
+    ///
+    /// 曾经的做法是"从 `PauseReasons` 反推手动暂停开着吗"：威胁冻住世界时集合里
+    /// 是 `["threat"]`（不含 `manual`），于是被读成"还没开"，空格跑去**又暂停一次**；
+    /// 而 `Resume` 那条路本意是"清空已收集的原因"，可 `threat` 的断言同一帧又会
+    /// 加回来——两种情况都表现为"空格按了没反应/越按越冻"。
+    ///
+    /// 现在空格只发 `Toggle(MANUAL)`，由时间线翻转闩：手动开关与别人的原因**互不干扰**。
+    #[test]
+    fn space_does_not_stomp_on_someone_elses_pause_reason() {
+        /// 冒充 `combat::reaction`：每帧断言一条威胁暂停。
+        fn assert_threat(mut pause: MessageWriter<PauseRequest>) {
+            pause.write(PauseRequest::Pause(crate::timeline::THREAT));
+        }
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<PauseReasons>()
+            .init_resource::<crate::timeline::LatchedReasons>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_message::<PauseRequest>()
+            .add_systems(
+                Update,
+                (
+                    pause_input_system,
+                    assert_threat,
+                    crate::timeline::process_pause_requests,
+                )
+                    .chain(),
+            );
+
+        // 威胁正冻着世界（手动开关是关的）
+        app.update();
+        assert_eq!(
+            app.world().resource::<PauseReasons>().labels(),
+            vec![crate::timeline::THREAT],
+            "只有威胁在停表"
+        );
+
+        // 玩家按空格：他想要的是"翻手动开关"，而不是第三次"暂停"
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        app.update();
+        let reasons = app.world().resource::<PauseReasons>().labels();
+        assert!(
+            reasons.contains(&crate::timeline::THREAT),
+            "手动开关不该把别人的原因清掉：{reasons:?}"
+        );
+        assert!(
+            reasons.contains(&MANUAL),
+            "空格确实翻开了手动开关：{reasons:?}"
+        );
+
+        // 再按一次：手动开关关掉，威胁还在（它在等玩家表态，不是等空格）
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset(KeyCode::Space);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        app.update();
+        assert_eq!(
+            app.world().resource::<PauseReasons>().labels(),
+            vec![crate::timeline::THREAT],
+            "关掉手动开关之后，只剩威胁还在停表"
+        );
     }
 }

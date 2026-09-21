@@ -25,26 +25,25 @@ use super::decision::{DecisionSlot, InputDriven};
 
 /// 停表 / 解冻请求。
 ///
-/// **断言式**：谁这一帧还想让世界停着，就写一条 [`PauseRequest::Pause`]。
-/// 不需要谁去"撤销"自己的原因——下一帧不再断言，原因自然消失
-/// （[`PauseReasons`] 每帧重建）。
-/// 「等玩家决策」与「威胁逼近」因此可以叠加、互不覆盖，也不会出现
-/// "原因留在集合里没人摘"的幽灵冻结。
+/// **两种时序，别混**：
 ///
-/// 写：[`crate::input`]（手动暂停，哪个键由输入域自己定）、时间线的
-/// [`compute_player_awaiting_system`]、
-/// `combat::reaction::detect_threat_system`；
-/// 消费：[`process_pause_requests`]，
-/// 再由 [`apply_clock`] 落到 `Time<Virtual>`。
+/// | 变体 | 时间语义 | 谁写 |
+/// | :--- | :--- | :--- |
+/// | [`Pause`](Self::Pause) | **每帧断言**：我还想让世界停着。不再写，原因下一帧自己消失 | 各领域（等玩家决策 / 威胁逼近） |
+/// | [`Toggle`](Self::Toggle) | **翻转开关**：把这个原因的开 / 关状态翻一下 | 输入域（玩家按的键） |
 ///
-/// 原因只是**给人看的**（HUD 直接显示 `labels()`），所以是 `&'static str` 常量：
-/// 加一个新原因不需要改任何枚举，只要一个常量加一个断言点，且每帧断言零分配。
+/// 分开的原因：断言式原因**每帧都要重新声明**，而玩家按键是**一次性事件**。
+/// 两者如果共用一条消息，就必须先猜"上一帧有没有人断言过这个原因"——而集合里
+/// 同时躺着别人的原因，猜不准（曾经因此把"恢复"误判成"暂停"）。
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PauseRequest {
     /// 这一帧仍然想停表，原因是 `reason`
     Pause(&'static str),
-    /// 解冻：虚拟时间立刻流动，并清空已经收集到的原因
-    Resume,
+    /// 翻转 `reason` 的手动开关：关着就打开，开着就关掉。
+    ///
+    /// **状态式**，与 [`Pause`](Self::Pause) 的每帧断言不是一回事：它是玩家的一次
+    /// 按键，翻转之后由这个原因**自己**每帧继续断言（见 [`process_pause_requests`]）。
+    Toggle(&'static str),
 }
 
 /// 暂停原因：手动暂停。
@@ -57,13 +56,34 @@ pub const THREAT: &str = "threat";
 /// **本帧**的暂停原因集合：整个游戏唯一的冻结判据（`frozen ⟺ 非空`）。
 ///
 /// 每帧由 [`process_pause_requests`] 重建：
-/// 先清空，再把这一帧收到的 [`Pause`](PauseRequest::Pause) 断言放进来
-/// （收到 [`Resume`](PauseRequest::Resume) 则当场清空）。
+/// 先清空，再把这一帧收到的 [`Pause`](PauseRequest::Pause) 断言放进来；
+/// [`Toggle`](PauseRequest::Toggle) 则先翻**闩住的**（[`LatchedReasons`]）状态，
+/// 翻开的那些每帧继续断言——所以手动暂停不会"只生效一帧"。
 ///
 /// 集合内容同时是给玩家看的答案——「现在是谁在停世界」（HUD 显示
 /// [`labels`](Self::labels)），原因因此是常量而不是临时字符串。
 #[derive(Resource, Debug, Default, Clone)]
 pub struct PauseReasons(HashSet<&'static str>);
+
+/// **闩住的手动原因**：开关式暂停（手动 / 将来的调试开关）的持久状态。
+///
+/// 只存"玩家翻开的开关"，不存断言式原因（`slot_empty` / `threat` 每帧自己说）。
+/// 它和 [`PauseReasons`] 分开是刻意的：后者是**这一帧谁在停表**（混着别人的原因），
+/// 前者是**玩家自己按下的开关**。混用会让"按一下是暂停还是恢复"猜错。
+#[derive(Resource, Debug, Default, Clone)]
+pub struct LatchedReasons(HashSet<&'static str>);
+
+impl LatchedReasons {
+    /// 翻转一个开关，返回翻转**之后**是开着还是关着。
+    pub fn toggle(&mut self, reason: &'static str) -> bool {
+        if self.0.remove(reason) {
+            false
+        } else {
+            self.0.insert(reason);
+            true
+        }
+    }
+}
 
 impl PauseReasons {
     /// 现在冻着吗。
@@ -81,7 +101,7 @@ impl PauseReasons {
         self.0.insert(reason);
     }
 
-    /// 全部撤掉（每帧重建与 `Resume` 都走它）。
+    /// 全部撤掉（每帧重建走它）。
     pub fn clear(&mut self) {
         self.0.clear();
     }
@@ -116,20 +136,37 @@ pub fn compute_player_awaiting_system(
 ///
 /// - [`PauseRequest::Pause`] 是**断言**："我还想让世界停着"——谁不停断言，
 ///   它的原因下一帧就不在了，不需要谁去撤销；
-/// - [`PauseRequest::Resume`] 是**解冻**："清空此刻已经收集到的原因，让时间流动"。
+/// - [`PauseRequest::Toggle`] 先翻 [`LatchedReasons`] 里那个开关的状态，**再按
+///   翻转后的状态断言一次**——于是"开着"的开关每帧自己续上（这正是手动暂停
+///   按一下能一直有效的原因），而**威胁暂停不会被它影响**：威胁的断言来自
+///   `combat::reaction`，与手动开关无关。
 ///
-/// 顺序因此有意义，而且是确定的：输入域（`Resume` 的来源）排在
+/// 顺序因此有意义，而且是确定的：输入域（`Toggle` 的来源）排在
 /// [`TimelineSet`](super::TimelineSet) 之前，各领域的断言排在它之后——
-/// 玩家手动解冻的那一帧，仍然成立的断言（比如"还等着你决策"）会照常加回来。
+/// 同一帧里仍然成立的断言（比如"还等着你决策"）会照常加回来。
 pub fn process_pause_requests(
     mut requests: MessageReader<PauseRequest>,
     mut reasons: ResMut<PauseReasons>,
+    mut latched: ResMut<LatchedReasons>,
 ) {
+    // 先收齐这一帧的请求：`MessageReader` 的游标只能前进，读两遍拿不到第二遍
+    let requests: Vec<PauseRequest> = requests.read().copied().collect();
+
+    // ① 开关式先落地：翻转之后"开着"的那些每帧继续断言
+    for request in &requests {
+        if let PauseRequest::Toggle(reason) = request {
+            latched.toggle(reason);
+        }
+    }
+
+    // ② 重建这一帧的原因 = 开着的手动开关 + 各领域的断言
     reasons.clear();
-    for request in requests.read() {
-        match request {
-            PauseRequest::Pause(reason) => reasons.insert(reason),
-            PauseRequest::Resume => reasons.clear(),
+    for reason in latched.0.iter() {
+        reasons.insert(reason);
+    }
+    for request in &requests {
+        if let PauseRequest::Pause(reason) = request {
+            reasons.insert(reason);
         }
     }
 }
@@ -266,27 +303,76 @@ mod tests {
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
     }
 
-    /// `Resume` 的语义：清空**此刻已经收集到**的原因。
+    /// `Toggle` 是**翻转状态**，不是每帧断言：翻开关一次就够，之后它自己续上。
     ///
-    /// 顺序因此是有意义的，而且是确定的——输入域（`Resume` 的来源）排在
-    /// [`TimelineSet`] 之前，各领域的断言排在它之后。
+    /// 这条守住「两种时序别混」——断言式（`Pause`）每帧都要重新声明，
+    /// 而玩家按键是一次性事件；混在一起就必须先猜"上一帧谁断言过这个原因"。
     #[test]
-    fn a_resume_only_clears_what_was_asserted_before_it() {
+    fn a_toggle_flips_a_latch_that_then_keeps_asserting_itself() {
         let mut app = timeline_app();
-        app.world_mut().resource_mut::<ManualLatch>().0 = true;
+        assert!(!app.world().resource::<PauseReasons>().is_frozen());
 
-        // 解冻请求先到，同一帧里仍然成立的断言随后加回来
-        app.world_mut().write_message(PauseRequest::Resume);
+        app.world_mut().write_message(PauseRequest::Toggle(MANUAL));
         app.update();
         assert!(
-            app.world().resource::<Time<Virtual>>().is_paused(),
-            "解冻只清掉此刻已收集的原因；同一帧里仍然成立的断言要照常加回来"
+            app.world().resource::<PauseReasons>().contains(MANUAL),
+            "翻一下就该冻住"
         );
 
-        // 断言停掉之后，解冻才真的生效
-        app.world_mut().resource_mut::<ManualLatch>().0 = false;
-        app.world_mut().write_message(PauseRequest::Resume);
+        // 不再发任何消息：开关自己每帧续上
+        for _ in 0..3 {
+            app.update();
+            assert!(
+                app.world().resource::<Time<Virtual>>().is_paused(),
+                "翻开的开关不需要每帧重发消息"
+            );
+        }
+
+        // 再翻一下：关掉
+        app.world_mut().write_message(PauseRequest::Toggle(MANUAL));
         app.update();
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    }
+
+    /// `Toggle` 只碰**自己的**那个原因，别人的断言照样成立。
+    ///
+    /// 这正是旧实现（从原因集合反推手动开关）栽的地方：集合里混着别人的原因，
+    /// 反推出来的"开着吗"是错的。
+    #[test]
+    fn toggling_the_manual_latch_leaves_other_reasons_alone() {
+        let mut app = timeline_app();
+
+        // 别人（比如威胁）**每帧**断言一条原因——断言式暂停就是这样活的
+        fn assert_threat_every_frame(mut pause: MessageWriter<PauseRequest>) {
+            pause.write(PauseRequest::Pause(THREAT));
+        }
+        app.add_systems(Update, assert_threat_every_frame);
+        app.update();
+        assert_eq!(
+            app.world().resource::<PauseReasons>().labels(),
+            vec![THREAT]
+        );
+
+        // 翻手动开关：开。开关是**闩住的**，不需要每帧重发
+        app.world_mut().write_message(PauseRequest::Toggle(MANUAL));
+        app.update();
+        assert_eq!(
+            app.world().resource::<PauseReasons>().labels(),
+            vec![MANUAL, THREAT],
+            "两个原因并存，谁也不覆盖谁"
+        );
+
+        // 再翻一次：手动关了，威胁还在（它每帧自己断言）
+        app.world_mut().write_message(PauseRequest::Toggle(MANUAL));
+        app.update();
+        assert_eq!(
+            app.world().resource::<PauseReasons>().labels(),
+            vec![THREAT],
+            "关掉手动开关不该动别人的原因"
+        );
+        assert!(
+            app.world().resource::<Time<Virtual>>().is_paused(),
+            "威胁还在，世界仍然冻着"
+        );
     }
 }
