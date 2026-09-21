@@ -110,7 +110,7 @@ pub enum Target {
 只有 ③ 那两条断言与玩家的手动暂停：
 
 ```text
-PC 的决策槽还空着（还没决定）  → 断言 Pause(SLOT_EMPTY)   // 语义 = "awaiting"
+PC 还没决定（`!slot.ready()`）  → 断言 Pause(AWAITING)
 PC 正被威胁、反应槽还空着      → 断言 Pause(THREAT)
 玩家按了暂停键                → 输入域发 Toggle(MANUAL)（翻转冻结状态）
 ```
@@ -143,9 +143,8 @@ frozen ⟺ 本帧的 PauseReasons 非空
 当前的原因：`"manual"`（玩家翻开的开关）/ **`"awaiting"`**（PC 还没决定）
 / `"threat"`（PC 被威胁且反应槽空着）。
 
-> 命名差异：`"awaiting"` 是**当前代码里的常量名**（`timeline::SLOT_EMPTY`），
-> 本文其余地方按语义写作 `"awaiting"` 🚧——改名是后续项，不是现状。
-> 引用常量一律用 `SLOT_EMPTY` / `MANUAL` / `THREAT`，**不要硬编码字符串**。
+> 引用常量一律用 `AWAITING` / `MANUAL` / `THREAT`，**不要硬编码字符串**。
+> （M23 之前它叫 `SLOT_EMPTY`；改名是因为判据从"槽空不空"变成了"决定了没有"。）
 
 **唯一**写 `Time<Virtual>` 的地方是帧末 `ClockSet` 里的 `apply_clock`。Bevy 每帧把虚拟
 时间拷进通用 `Time`，因此位移、投射物、`Lifetime`、后摇计时全部自动停表，
