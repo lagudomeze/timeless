@@ -977,16 +977,67 @@ mod tests {
         );
     }
 
-    /// 反应系统：敌对威胁瞄向玩家 → 世界冻结；玩家换一手 → 解冻继续打。
+    /// 威胁冻住世界，**等玩家表态**：不表态就一直冻着（战术暂停）。
+    ///
+    /// 与 `space_releases_the_world_from_a_threat_freeze` 是一对：
+    /// 一个证明"窗口不会自己消失"，一个证明"玩家有办法走出去"。
     #[test]
     fn a_threat_freezes_the_world_until_the_player_answers() {
         let mut app = test_app();
         let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
         let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
-        // 敌人正在前摇、且瞄着玩家脚下的格
+        // 执行时刻很远 → 冻结期间这一手一直"还没到点"
         app.world_mut().spawn((
             ActionOf(enemy),
-            ScheduledAction::declared_at(FIREBALL_TIMING, 0.0),
+            FIREBALL_TIMING,
+            ScheduledAction::declared_at(FIREBALL_TIMING, 900.0),
+            Threatens {
+                cells: vec![Cell::new(0, 0)],
+            },
+        ));
+
+        // 什么都不做：窗口开着、世界一直冻着——"我在想"必须能无限期地想下去
+        for frame in 0..6 {
+            app.update();
+            assert!(
+                app.world().resource::<PauseReasons>().contains(THREAT),
+                "第 {frame} 帧：玩家不表态，威胁窗口不该自己消失"
+            );
+            assert!(app.world().resource::<Time<Virtual>>().is_paused());
+        }
+
+        assert_ne!(
+            slot_of(&app, player),
+            DecisionSlot::Windup,
+            "玩家还没动手，槽不该被谁占上"
+        );
+    }
+
+    /// **回归：威胁冻住世界时，空格能把世界放开——"忍受伤害"也是一种决策。**
+    ///
+    /// 曾经的死结：表态的唯一路径是"换一手"（比较行动实体），而玩家在**后摇**里
+    /// 既声明不了（`first_ready` 要求槽空）也撤不了（行动实体已销毁），
+    /// 窗口永远等不到表态。
+    ///
+    /// 现在两件事一起保证有出路：
+    /// 1. 空格 `Toggle` 在"冻着"时**清空**原因集合，世界立刻恢复；
+    /// 2. 窗口关掉后 `dismissed` 记住这次已被玩家放开，**同一个来源不再重开**。
+    ///
+    /// 代价是那一击照常落地——这是玩家自己的选择，不是漏洞。
+    #[test]
+    fn space_releases_the_world_from_a_threat_freeze() {
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
+
+        // 玩家在**后摇**里：表态路径（换一手）此刻走不通
+        app.world_mut()
+            .entity_mut(player)
+            .insert(DecisionSlot::Recovery { until: 999.0 });
+        app.world_mut().spawn((
+            ActionOf(enemy),
+            FIREBALL_TIMING,
+            ScheduledAction::declared_at(FIREBALL_TIMING, 900.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
             },
@@ -995,89 +1046,28 @@ mod tests {
         app.update();
         assert!(
             app.world().resource::<PauseReasons>().contains(THREAT),
-            "威胁出现 → 世界冻住等玩家反应"
+            "威胁出现 → 世界冻住等反应"
         );
-        assert!(app.world().resource::<Time<Virtual>>().is_paused());
 
-        // 玩家换一手：一次 PlayerTakeover（撤销系统会先撤掉旧的未执行行动）
-        press(&mut app, KeyCode::ArrowUp);
-        for _ in 0..4 {
-            app.update();
-        }
-
-        assert!(
-            !app.world().resource::<PauseReasons>().contains(THREAT),
-            "玩家表态之后威胁暂停应当撤销"
-        );
-        assert!(
-            !app.world().resource::<Time<Virtual>>().is_paused(),
-            "世界该继续跑：那一击该来就来"
-        );
-        assert_ne!(
-            slot_of(&app, player),
-            DecisionSlot::Empty,
-            "玩家那一手应当已经声明出去"
-        );
-    }
-
-    /// **回归：威胁冻住世界时，空格只翻"玩家自己的闩"，不会吃掉逃生余地。**
-    ///
-    /// 旧实现从 `PauseReasons` 反推"手动暂停开着吗"：威胁冻着时集合里是 `["threat"]`，
-    /// 于是被读成"还没开"，空格跑去**又暂停一次**；而 `Resume` 那条路想清空原因，
-    /// 却清不掉 `threat`（它每帧被重新断言）。结果是玩家按空格越按越糊，
-    /// 且**回不到只含 `threat` 的状态**。
-    ///
-    /// 现在空格只发 `Toggle(MANUAL)`，时间线翻转的是玩家自己的闩，与别人的原因无关：
-    /// 状态在 `["threat"]` ↔ `["manual", "threat"]` 之间**可逆**，也永远不会误关威胁。
-    #[test]
-    fn space_toggles_only_the_manual_latch_during_a_threat() {
-        use crate::combat::Threatens;
-        use crate::timeline::MANUAL;
-
-        let mut app = test_app();
-        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
-        let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
-
-        // 玩家在**后摇**里：没有可撤的行动，因此"换一手"这条表态路径此刻走不通
-        app.world_mut()
-            .entity_mut(player)
-            .insert(DecisionSlot::Recovery { until: 999.0 });
-        // 敌人瞄着玩家脚下的格，执行时刻很远（冻结时永远 pending）
-        app.world_mut().spawn((
-            ActionOf(enemy),
-            MOVE_TIMING,
-            ScheduledAction::declared_at(MOVE_TIMING, 900.0),
-            Threatens {
-                cells: vec![Cell::new(0, 0)],
-            },
-        ));
-
-        app.update();
-        let reasons = |app: &App| app.world().resource::<PauseReasons>().labels();
-        assert_eq!(reasons(&app), vec![THREAT], "威胁单独冻着世界");
-
-        // 按一次空格：翻手动开关（开），威胁**不受影响**
+        // 按空格：放开世界。那一击照常落地（玩家选择忍受）
         press(&mut app, KeyCode::Space);
         app.update();
-        assert_eq!(
-            reasons(&app),
-            vec![MANUAL, THREAT],
-            "空格翻的是玩家自己的闩，不该碰威胁"
-        );
-
-        // 松手再按一次：手动开关关掉，威胁还在——状态可逆，不会卡死
         release(&mut app, KeyCode::Space);
-        press(&mut app, KeyCode::Space);
-        app.update();
-        assert_eq!(
-            reasons(&app),
-            vec![THREAT],
-            "手动开关能关回去；威胁由它自己每帧断言，不靠空格续命"
-        );
+
+        let reasons = app.world().resource::<PauseReasons>().labels();
         assert!(
-            app.world().resource::<Time<Virtual>>().is_paused(),
-            "威胁还在等表态，世界仍然冻着"
+            !reasons.contains(&THREAT),
+            "空格应当清掉威胁冻结，实际 {reasons:?}"
         );
+
+        // 而且**不会被立刻冻回来**：这次威胁已经被玩家放开过了
+        for frame in 0..5 {
+            app.update();
+            assert!(
+                !app.world().resource::<PauseReasons>().contains(THREAT),
+                "第 {frame} 帧：同一次威胁不该反复冻世界，否则玩家按空格也走不掉"
+            );
+        }
     }
 
     /// 打断：命中打向一个**正在前摇**的单位 → 那一手被打掉，决策槽立刻清空。

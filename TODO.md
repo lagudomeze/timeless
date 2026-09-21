@@ -107,7 +107,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       改认输入层唯一的一条 `PlayerTakeover`（写：键盘 / 左键，消费：`interrupt_system`）；
       `recovery_system` 不再直接改 `Stamina`，改为 trigger `DecisionReady`
       （`combat::defense::recover_stamina_observer` 订阅回 1 点）；暂停改成**每帧断言**
-      （`PauseRequest::{Pause, Toggle}`：`Pause` 每帧断言、`Toggle` 翻手动开关，`process_pause_requests`
+      （`PauseRequest::{Pause, Toggle}`：`Pause` 每帧断言、`Toggle` 清空/停住，`process_pause_requests`
       每帧先 `clear()`，删掉 `TogglePause` / `ManualPause` / `compute_manual_pause` /
       `request_on_edge`），手动暂停的闩搬进 `input::keyboard::pause_input_system`。
       ③ 撤销退款：`Cancellable` 枚举删除 → `timeline::Uncancellable` 标记组件

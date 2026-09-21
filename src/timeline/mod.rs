@@ -70,7 +70,9 @@ pub mod plugin;
 pub mod schedule;
 
 pub use clock::{LatchedReasons, MANUAL, PauseReasons, PauseRequest, SLOT_EMPTY, THREAT};
-pub use clock::{apply_clock, compute_player_awaiting_system, process_pause_requests};
+pub use clock::{
+    apply_clock, apply_pause_toggles_system, compute_player_awaiting_system, process_pause_requests,
+};
 pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven};
 pub use decision::{recovery_system, undo_system};
 pub use events::{
@@ -133,6 +135,7 @@ pub(crate) mod test_support {
                 Update,
                 (
                     (
+                        apply_pause_toggles_system,
                         assert_manual,
                         compute_player_awaiting_system,
                         track_pending_focus_system,

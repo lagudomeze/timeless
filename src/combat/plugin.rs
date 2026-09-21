@@ -14,7 +14,7 @@ use super::defense::{
 use super::formula::{apply_physical_hits_system, interrupt_observer};
 use super::health::{DamageEvent, DeathEvent, apply_damage_system, despawn_dead_system};
 use super::lifecycle::{cleanup_finished_attacks_system, expire_attack_entities_system};
-use super::reaction::{ThreatWindow, detect_threat_system};
+use super::reaction::{ThreatWindow, detect_threat_system, mark_threatened_system};
 use super::skills::{
     CycleSkill, FireCommand, MeleeCommand, MenuSelection, ProjectileArrived, SelectSkill,
     UseSelectedSkill, cycle_skill_system, declare_fireball_system, declare_melee_system,
@@ -40,7 +40,7 @@ impl Plugin for CombatPlugin {
         app.init_resource::<MenuSelection>()
             // 技能目录的静态数据在启动时交上去（数值仍归本域，见 `docs/skills.md`）
             .add_systems(Startup, register_combat_abilities_system)
-            // 反应窗口状态：威胁何时出现、玩家表态了没有
+            // 反应窗口的状态机：本域自己维护，不去读别人的资源判断窗口开不开
             .init_resource::<ThreatWindow>()
             .add_message::<DeathEvent>()
             .add_message::<ProjectileArrived>()
@@ -65,6 +65,8 @@ impl Plugin for CombatPlugin {
                 (
                     // 威胁先看：有东西打向玩家就请求冻结（本帧末生效）
                     detect_threat_system,
+                    // 打标记必须晚于检测：同帧写入会让检测自己漏检
+                    mark_threatened_system,
                     // 防御标记先过期，本帧到期的无敌帧不该再生效
                     expire_defense_markers_system,
                     // 菜单先更新选择，再按选择派发成各领域的指令

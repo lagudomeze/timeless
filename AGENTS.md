@@ -109,15 +109,22 @@ cargo fmt --check                           # 格式校验
   （走到格中心 / 飞到落点），否则玩家一空闲世界就冻住、效果停在半路。
 - **暂停是两种时序**：各领域这一帧还想停表就写一条
   `PauseRequest::Pause(reason)`（`"slot_empty"` / `"threat"`）；下一帧不再断言，
-  原因自然消失，不需要谁去撤销。玩家的手动暂停是**开关式**的
-  `PauseRequest::Toggle("manual")`——按一下翻一次，之后由 `timeline::LatchedReasons`
-  每帧自己续上。**两种时序别混**：断言每帧重来，按键是一次性事件；共用一条消息就得
-  从原因集合猜"上一帧谁断言过"，而集合里混着别人的原因，猜不准（踩过：威胁冻着时
-  按空格被误判成"暂停"而不是"恢复"）。
-  **按哪个键暂停 / 恢复是输入域的事**（`input::keyboard::pause_input_system` 只发一条
-  `Toggle`、**不读** `PauseReasons`），只有帧末
-  `ClockSet` 的 `apply_clock` 能写 `Time<Virtual>`（Bevy 每帧把虚拟时间拷进通用
-  `Time`，位移 / 投射物 / 后摇自动停表）；禁止在其它地方手写 `if paused` 阶段门控。
+  原因自然消失，不需要谁去撤销。玩家的空格是**翻转**：`PauseRequest::Toggle("manual")`
+  冻着就清空原因（世界立刻动）、没冻就停住并闩进 `timeline::LatchedReasons`。
+  **两种时序别混**：断言每帧重来，按键是一次性事件；共用一条消息就得从原因集合猜
+  "上一帧谁断言过"，而集合里混着别人的原因，猜不准（踩过：威胁冻着时按空格被误判成
+  "暂停"而不是"继续"）。
+  **翻转必须先于各领域的断言落地**（`apply_pause_toggles_system` 排在 `TimelineSet`
+  最前），否则同一帧里"威胁还在断言 `Pause(THREAT)`"会把玩家刚清掉的原因加回来；
+  各领域的断言统一在帧末 `process_pause_requests` 收进集合，唯一的 `Time<Virtual>`
+  写入点是 `ClockSet` 的 `apply_clock`（Bevy 每帧把虚拟时间拷进通用 `Time`，
+  位移 / 投射物 / 后摇自动停表）；禁止在其它地方手写 `if paused` 阶段门控。
+- **威胁窗口是边沿开的、持续按住的**（`combat::reaction`）：窗口状态住在
+  `ThreatWindow`（`open` / `dismissed`），威胁检测**每帧**在窗口开着时继续断言
+  `Pause(THREAT)`（世界冻着时来源与移动都停在半路，窗口该一直开着）；
+  玩家按空格 → 原因集合被清空 → 检测系统读到"没有 `THREAT`"，关窗并记 `dismissed`，
+  **同一次威胁不再重开**：那一击照常落地（**忍受伤害也是一种决策**）。
+  `Threatened` 只是打在威胁源上的可读标记（BRP 锚点），不参与判定。
 - **坐标：决策按格、结算按真实距离**。格（`movement::Cell`，边长 `CELL_SIZE`）只用于
   决策与同格判定；命中 / 射程 / 爆炸半径一律用世界距离。位置只有一份真相
   （Bevy `Transform`），`Cell` 只在单位停下时更新。

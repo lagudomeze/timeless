@@ -5,10 +5,11 @@
 //!
 //! ```text
 //! 每个 action 自己声明威胁覆盖的格（Threatens / TargetCell）
-//!   ─▶ detect_threat_system：有威胁瞄准玩家且玩家还没表态
+//!   ─▶ detect_threat_system：有**还没惊动过玩家**的威胁瞄着玩家
 //!                             → 每帧断言 PauseRequest::Pause(THREAT)
-//!   ─▶ 世界冻结（Time<Virtual> 停表）：玩家可以撤销 / 换手 / 用 Focus 抢先手
-//!   ─▶ 回应过这次威胁（或威胁消失）→ 不再断言，原因下一帧自然消失
+//!   ─▶ mark_threatened_system：给这些来源打上 Threatened（**边沿触发**）
+//!   ─▶ 世界冻结（Time<Virtual> 停表）：玩家可以撤销 / 换手 / 按空格走
+//!   ─▶ 打上标记之后不再断言：要么玩家自己放行，要么那一手被打断 / 落地
 //! ```
 //!
 //! **威胁声明在行动自己身上**，而不是由反应系统去猜：
@@ -17,17 +18,22 @@
 //!
 //! 飞行中的投射物同理：它们不再是"某条行动"，因此单独挂 [`TargetCell`]。
 //!
-//! ## 为什么需要「回应」这一步
+//! ## 为什么是「边沿触发」
 //!
-//! 冻结是**互相**的：敌人也在冻结里，它那条威胁行动不会自己走到点。若一直冻着，
-//! 玩家就会卡在"什么都做不了、威胁也永远不消失"的死锁里。因此窗口的语义是
-//! 「威胁刚出现，等玩家表个态」：**玩家换了一手**（撤销或重新声明）就算回应过，
-//! 世界照常流动，那一击该来就来。玩家不做任何事的话，世界就一直等他。
+//! 一次威胁只惊动玩家一次（[`Threatened`] 打在那个来源上）。于是玩家有两条出路：
+//!
+//! 1. **改主意**：撤销 / 换手 / 花 1 点 Focus 抢先手——正常反应；
+//! 2. **按空格放行**（`PauseRequest::Toggle`）：清掉冻结，那一击照常落地。
+//!
+//! 第二条是刻意的：**忍受伤害也是一种决策**。旧实现靠"玩家那一手变了没有"推断
+//! 表态，那个判据在**后摇 / 不可撤行动**期间永远为假（没槽可声明、也没行动可撤），
+//! 玩家会被锁死在冻结里；边沿触发把"惊动过没有"记在威胁源自己身上，与玩家处于
+//! 哪个阶段无关。
 
 pub mod cells;
 pub mod components;
 pub mod systems;
 
 pub use cells::{melee_arc_cells, trajectory_cells};
-pub use components::{TargetCell, ThreatWindow, Threatens};
-pub use systems::detect_threat_system;
+pub use components::{TargetCell, ThreatWindow, Threatened, Threatens};
+pub use systems::{detect_threat_system, mark_threatened_system};

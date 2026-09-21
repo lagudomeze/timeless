@@ -14,8 +14,8 @@ use bevy::prelude::*;
 use super::ClockSet;
 use super::TimelineSet;
 use super::clock::{
-    LatchedReasons, PauseReasons, PauseRequest, apply_clock, compute_player_awaiting_system,
-    process_pause_requests,
+    LatchedReasons, PauseReasons, PauseRequest, apply_clock, apply_pause_toggles_system,
+    compute_player_awaiting_system, process_pause_requests,
 };
 use super::decision::{recovery_system, undo_system};
 use super::events::{ActionBlocked, PlayerTakeover, UndoCommand, UseFocus};
@@ -46,6 +46,10 @@ impl Plugin for TimelinePlugin {
             .add_systems(
                 Update,
                 (
+                    // 暂停翻转**先落地**：`Toggle`（玩家按空格）必须早于各领域的断言，
+                    // 否则同一帧里"威胁还在断言 Pause(THREAT)"会把刚清掉的原因加回来，
+                    // 玩家按空格等于没按。威胁检测也因此能读到"玩家已放开"。
+                    apply_pause_toggles_system,
                     // 暂停原因先算：后面的声明系统不需要知道冻结与否
                     compute_player_awaiting_system,
                     // Focus 请求只在本帧有效，慢一拍就会扣错账
@@ -61,7 +65,7 @@ impl Plugin for TimelinePlugin {
             )
             .add_systems(
                 Update,
-                // 帧末结算钟表：这一帧所有系统看到的是同一个冻结状态
+                // 帧末结算钟表：先把这一帧的断言收齐成原因集合，再落到时钟上
                 (process_pause_requests, apply_clock)
                     .chain()
                     .in_set(ClockSet),
