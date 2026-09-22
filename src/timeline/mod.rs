@@ -37,7 +37,7 @@
 //! 翻一次之后由闩住的原因每帧自己续上）。按哪个键、按一下是暂停还是继续，是
 //! [`crate::input`] 的事——它只发一条 `Toggle`，**不读** [`PauseReasons`]
 //! （那里面混着别人的原因，反推会把"恢复"误判成"暂停"）。
-//! **唯一**写 `Time<Virtual>` 的地方是帧末 [`ClockSet`] 里的 [`apply_clock`]。
+//! **唯一**写 `Time<Virtual>` 的地方是帧末 [`ClockSet`] 里的 [`process_pause_requests`]。
 //!
 //! Bevy 每帧把虚拟时间拷进通用 `Time`，因此位移、投射物、`Lifetime`、后摇计时
 //! 全部自动停表，各领域不需要任何 `if paused` 分支。
@@ -69,10 +69,8 @@ pub mod ownership;
 pub mod plugin;
 pub mod schedule;
 
-pub use clock::{AWAITING, LatchedReasons, MANUAL, PauseReasons, PauseRequest, THREAT};
-pub use clock::{
-    apply_clock, apply_pause_toggles_system, compute_player_awaiting_system, process_pause_requests,
-};
+pub use clock::{AWAITING, MANUAL, PauseReasons, PauseRequest, THREAT};
+pub use clock::{ManualPause, compute_player_awaiting_system, process_pause_requests};
 pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven, Intent, Target};
 pub use decision::{recovery_system, undo_system};
 pub use events::{
@@ -121,7 +119,7 @@ pub(crate) mod test_support {
                 100,
             )))
             .init_resource::<PauseReasons>()
-            .init_resource::<LatchedReasons>()
+            .init_resource::<ManualPause>()
             .init_resource::<ManualLatch>()
             .init_resource::<Focus>()
             .init_resource::<PendingFocus>()
@@ -135,7 +133,6 @@ pub(crate) mod test_support {
                 Update,
                 (
                     (
-                        apply_pause_toggles_system,
                         assert_manual,
                         compute_player_awaiting_system,
                         track_pending_focus_system,
@@ -145,7 +142,7 @@ pub(crate) mod test_support {
                     )
                         .chain(),
                     // 钟表在最后：顺序与生产流水线（TimelineSet → ClockSet）一致
-                    (process_pause_requests, apply_clock).chain(),
+                    process_pause_requests,
                 )
                     .chain(),
             );

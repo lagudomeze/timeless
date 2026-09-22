@@ -160,6 +160,7 @@ mod tests {
             )))
             .init_resource::<ThreatWindow>()
             .init_resource::<PauseReasons>()
+            .init_resource::<crate::timeline::ManualPause>()
             .init_resource::<Captured>()
             .add_message::<PauseRequest>()
             .add_systems(
@@ -368,7 +369,8 @@ mod tests {
     fn probe_why_not_persistent() {
         use crate::timeline::PauseReasons;
         let mut app = threat_app();
-        app.init_resource::<PauseReasons>();
+        app.init_resource::<PauseReasons>()
+            .init_resource::<crate::timeline::ManualPause>();
         // 冒充时间线：把 Pause 断言收进集合（真实现里是 process_pause_requests）
         fn collect(mut r: MessageReader<PauseRequest>, mut reasons: ResMut<PauseReasons>) {
             reasons.clear();
