@@ -18,7 +18,7 @@
 //! 只收到"暂停一下"或"重置一下"这种意图，不认识 `KeyCode`。
 //!
 //! 唯一的例外是暂停：`pause_input_system` 要读
-//! [`PauseReasons`](crate::timeline::PauseReasons) 才知道"按一下是暂停还是恢复"
+//! [`PauseReasons`](crate::clock::PauseReasons) 才知道"按一下是暂停还是恢复"
 //! （手动暂停的闩就在那里），而"按一下切换"这个判定本来就属于输入域。
 //!
 //! 依赖方向：`input ──▶ movement / combat / timeline / presentation / interaction / spawn`

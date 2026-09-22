@@ -3,20 +3,19 @@
 //! ```text
 //! TimelineSet（帧中）：断言暂停原因（PC 没决定）→ 记 Focus 请求
 //!                     → 撤销（右键与「玩家动手了」在此汇合）→ 后摇恢复 → Focus 回复
-//! ClockSet  （帧末）：暂停请求 → 原因集合 + 手动暂停 → 时钟（唯一写入点在 process_pause_requests）
 //! ```
 //!
-//! 本域**不认识按键**：手动暂停的"按哪个键、按一下是暂停还是恢复"由
-//! [`crate::input`] 决定，它每帧断言（或不再断言）一条原因，这里只负责收。
+//! 本域**不认识按键**：手动暂停的"按哪个键、按一下是暂停还是继续"由
+//! [`crate::input`] 决定，它只发一条 [`PauseRequest`](crate::clock::PauseRequest)。
+//!
+//! **冻结设施不在本域**：原因集合 / 时钟写入住在 [`crate::clock`]（通用，
+//! 不认识决策槽）。本域只贡献一条断言——[`compute_player_awaiting_system`]，
+//! 因为只有本域认识决策槽。
 
 use bevy::prelude::*;
 
-use super::ClockSet;
 use super::TimelineSet;
-use super::clock::{
-    ManualPause, PauseReasons, PauseRequest, compute_player_awaiting_system, process_pause_requests,
-};
-use super::decision::{recovery_system, undo_system};
+use super::decision::{compute_player_awaiting_system, recovery_system, undo_system};
 use super::events::{ActionBlocked, PlayerTakeover, UndoCommand, UseFocus};
 use super::focus::{Focus, PendingFocus, recover_focus_system, track_pending_focus_system};
 
@@ -26,13 +25,8 @@ pub struct TimelinePlugin;
 
 impl Plugin for TimelinePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PauseReasons>()
-            // 玩家的手动暂停：一个布尔（原因集合只装「别人为什么在停表」）
-            .init_resource::<ManualPause>()
-            .init_resource::<Focus>()
+        app.init_resource::<Focus>()
             .init_resource::<PendingFocus>()
-            // 暂停断言：写方是 input（手动）、本域的等输入系统、combat 的威胁检测
-            .add_message::<PauseRequest>()
             // 玩家自己动手：写方是 input / interaction，消费方是本域的撤销系统
             .add_message::<PlayerTakeover>()
             // Focus 换前摇：写方是 input（Shift + 决策键），消费方是本域
@@ -57,12 +51,6 @@ impl Plugin for TimelinePlugin {
                 )
                     .chain()
                     .in_set(TimelineSet),
-            )
-            .add_systems(
-                Update,
-                // 帧末：暂停请求 → 原因集合 / 手动暂停 → 时钟。
-                // **唯一的时钟写入点**就在 process_pause_requests 里（apply_clock 已并入）
-                process_pause_requests.in_set(ClockSet),
             );
     }
 }

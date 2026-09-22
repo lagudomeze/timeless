@@ -54,14 +54,14 @@
 //! | [`decision`] | 谁能决策（槽 + 入口）；这一手怎么被撤掉 / 收尾（undo / recovery） |
 //! | [`ownership`] | 这一手是谁的（`ActionOf` / `Actions`）；「行动者没了，行动也跟着没」 |
 //! | [`schedule`] | 行动实体身上与时间有关的数据：这一手何时落地、这类动作的节奏、能不能撤 |
-//! | [`clock`] | 世界什么时候冻结：原因集合 + 请求 + 三个系统 |
 //! | [`focus`] | Focus 一族（⚠️ 不是时间线的概念，见该文件顶部的警告） |
+//!
+//! 冻结世界的设施**不在本域**了：它是通用的（不认识决策槽），住在 [`crate::clock`]。
 //! | [`events`] | 时间线**对外**的跨领域契约：别人怎么跟它说话、它怎么通知别人 |
 //! | [`plugin`] | 接线：注册资源 / 消息 / 观察者，声明两段系统链 |
 
 use bevy::prelude::*;
 
-pub mod clock;
 pub mod decision;
 pub mod events;
 pub mod focus;
@@ -69,9 +69,10 @@ pub mod ownership;
 pub mod plugin;
 pub mod schedule;
 
-pub use clock::{AWAITING, MANUAL, PauseReasons, PauseRequest, THREAT};
-pub use clock::{ManualPause, compute_player_awaiting_system, process_pause_requests};
-pub use decision::{DecisionSlot, FirstReady, HasDecisionSlot, InputDriven, Intent, Target};
+pub use decision::{
+    DecisionSlot, FirstReady, HasDecisionSlot, InputDriven, Intent, Target,
+    compute_player_awaiting_system,
+};
 pub use decision::{recovery_system, undo_system};
 pub use events::{
     ActionBlocked, ActionCancelled, BlockReason, DecisionReady, PlayerTakeover, UndoCommand,
@@ -87,17 +88,13 @@ pub use schedule::{ActionTiming, ScheduledAction, Uncancellable};
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TimelineSet;
 
-/// 钟表系统集：每帧**最后**一段，唯一的 `Time<Virtual>` 写入点。
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClockSet;
-
 #[cfg(test)]
 pub(crate) mod test_support {
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
 
-    use super::clock::{ManualLatch, assert_manual};
     use super::*;
+    use crate::clock::{ManualLatch, assert_manual};
 
     /// 记下本帧收到过哪些撤销广播（真实的消费者住在花钱的领域里）。
     #[derive(Resource, Default)]
@@ -118,12 +115,12 @@ pub(crate) mod test_support {
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 100,
             )))
-            .init_resource::<PauseReasons>()
-            .init_resource::<ManualPause>()
+            .init_resource::<crate::clock::PauseReasons>()
+            .init_resource::<crate::clock::ManualPause>()
             .init_resource::<ManualLatch>()
             .init_resource::<Focus>()
             .init_resource::<PendingFocus>()
-            .add_message::<PauseRequest>()
+            .add_message::<crate::clock::PauseRequest>()
             .add_message::<PlayerTakeover>()
             .add_message::<UseFocus>()
             .add_message::<UndoCommand>()
@@ -142,7 +139,7 @@ pub(crate) mod test_support {
                     )
                         .chain(),
                     // 钟表在最后：顺序与生产流水线（TimelineSet → ClockSet）一致
-                    process_pause_requests,
+                    crate::clock::process_pause_requests,
                 )
                     .chain(),
             );

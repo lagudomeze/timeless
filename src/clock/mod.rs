@@ -1,27 +1,45 @@
-//! 这个文件回答：**世界什么时候冻结**——原因集合（[`PauseReasons`]）+ 请求
-//! （[`PauseRequest`]）+ 三个系统（断言空槽 / 每帧重建原因集合 / 唯一写时钟）。
+//! # clock — 世界的冻结设施（通用，不认识任何领域）
 //!
-//! 冻结的判据只有一条：**本帧的暂停原因集合非空**。谁这一帧还想让世界停着，
-//! 就断言一条原因；不再断言，原因下一帧自然消失——因此既不存在"原因留在集合里
-//! 没人摘"的幽灵冻结，多种原因（等输入 / 手动 / 威胁）又能叠加、互不覆盖。
+//! 回答一件事：**世界现在停不停**。判据只有一条——**本帧的暂停原因集合非空**，
+//! 或者**玩家自己要停**（[`ManualPause`]）。
 //!
-//! 两条纪律里的第一条——**暂停只经 `PauseRequest`**：这一域里除了 [`apply_clock`]
-//! 谁也不碰 `Time<Virtual>`，各领域因此不需要任何 `if paused` 分支。
+//! **这一层不属于任何领域**：它不认识决策槽、不认识行动、不认识威胁，
+//! 只认识"请求 → 集合 → 时钟"。谁有理由停表，谁就按自己的事实写一条
+//! [`PauseRequest`]：
+//!
+//! | 谁 | 凭什么断言 | 原因常量 |
+//! | :--- | :--- | :--- |
+//! | [`crate::timeline`] | 认识决策槽（玩家还没决定） | [`AWAITING`] |
+//! | [`crate::combat::reaction`] | 认识威胁 | [`THREAT`] |
+//! | [`crate::input`] | 玩家的按键（**只发消息，不查状态**） | [`PauseRequest::Toggle`] |
+//!
+//! 因果是单向的：各领域依赖本层，本层**不依赖它们**。所以
+//! `compute_player_awaiting_system`（认识决策槽的那 10 行）住在 `timeline` 里，
+//! 不在这里。
 //!
 //! ```text
-//! compute_player_awaiting_system（断言 "awaiting"）
-//!        └─▶ process_pause_requests（每帧重建原因集合）
-//!                └─▶ apply_clock（唯一的 Time<Virtual> 写入点）
+//! 各领域的断言（每帧）─┐
+//! 玩家按键（一次）   ─┴─▶ process_pause_requests ─▶ Time<Virtual>
+//!                          （唯一的时钟写入点）
 //! ```
 //!
-//! 后两个系统都排在帧末的 [`ClockSet`](super::ClockSet)：这一帧里所有系统看到的
-//! 都是同一个时钟状态，不会出现"半帧冻、半帧不冻"。
+//! 冻结的判据是**每帧重建**的：谁这一帧还想让世界停着就断言一条；不再断言，
+//! 原因下一帧自然消失。因此既不存在"原因留在集合里没人摘"的幽灵冻结，
+//! 多种原因（等输入 / 威胁）又能叠加、互不覆盖。
+//!
+//! 唯一的例外是玩家的手动暂停——它是**状态**不是**断言**（见 [`ManualPause`]）。
 
 use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-use super::decision::{DecisionSlot, InputDriven};
+pub mod plugin;
+
+pub use plugin::ClockPlugin;
+
+/// 钟表系统集：每帧**最后**一段，唯一的 `Time<Virtual>` 写入点就在这里。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClockSet;
 
 /// 停表 / 解冻请求。
 ///
@@ -51,8 +69,6 @@ pub enum PauseRequest {
     Toggle,
 }
 
-/// 暂停原因：手动暂停。
-pub const MANUAL: &str = "manual";
 /// 暂停原因：有一名 `InputDriven` 的行动者**还没决定**（`!slot.ready()`），正等他。
 pub const AWAITING: &str = "awaiting";
 /// 暂停原因：combat 检测到有威胁瞄准玩家（见 `combat::reaction`）。
@@ -108,25 +124,6 @@ impl PauseReasons {
         let mut labels: Vec<&'static str> = self.0.iter().copied().collect();
         labels.sort_unstable();
         labels
-    }
-}
-
-/// 有 `InputDriven`（玩家）**还没决定**吗 → 世界该停下来等他。
-///
-/// 判据是 [`DecisionSlot::ready`]（"决定了没有"），不是"槽空不空"：
-/// 声明之后槽进 `Executing`，那时他已经决定了，世界不该再等他。
-///
-/// 这是「无回合」里唯一的时间门控需求：敌人不等玩家，玩家一空闲，世界就停。
-/// 没有 `InputDriven` 单位时（单测、组装之前）一律当作「不等输入」，避免把世界冻住。
-///
-/// **每帧断言**：还等着就再说一次。不需要谁去"撤销"——下一帧玩家动了，
-/// 这里不再断言，原因自然从集合里消失（见 [`PauseRequest`]）。
-pub fn compute_player_awaiting_system(
-    actors: Query<&DecisionSlot, With<InputDriven>>,
-    mut pause: MessageWriter<PauseRequest>,
-) {
-    if actors.iter().any(|slot| slot.is_idle()) {
-        pause.write(PauseRequest::Pause(AWAITING));
     }
 }
 
@@ -198,38 +195,69 @@ pub fn process_pause_requests(
     }
 }
 
-/// 测试用的「手动暂停开关」：真实实现里这个闩住在 `input` 域
-/// （空格切换它，然后每帧断言 [`MANUAL`]）。
+/// 测试用的「玩家按了一下空格」：真实实现里是 `input::keyboard::pause_input_system`。
+///
+/// 它**只发一条 `Toggle`**，不查任何状态——与真实输入域同形。
 #[cfg(test)]
 #[derive(Resource, Default)]
 pub(crate) struct ManualLatch(pub(crate) bool);
 
-/// 把 [`ManualLatch`] 每帧翻译成一条暂停断言——真实实现里是
-/// `input::keyboard::pause_input_system` 那一段。
+/// 把 [`ManualLatch`] 这一次的翻转翻成一条 `Toggle`（真实实现里由按键触发）。
 #[cfg(test)]
 pub(crate) fn assert_manual(latch: Res<ManualLatch>, mut pause: MessageWriter<PauseRequest>) {
     if latch.0 {
-        pause.write(PauseRequest::Pause(MANUAL));
+        pause.write(PauseRequest::Toggle);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::decision::BUSY_SENTINEL;
-    use crate::timeline::test_support::timeline_app;
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
+
+    /// 本域自己的小夹具：只装时钟设施。
+    ///
+    /// **刻意不依赖 timeline**——时钟层是通用的，它的测试不该为了造"某个领域
+    /// 在断言"而拖上决策槽。用一个玩具领域原因（[`AWAITING`]）代表"有人要停表"。
+    fn clock_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                100,
+            )))
+            .init_resource::<PauseReasons>()
+            .init_resource::<ManualPause>()
+            .init_resource::<ManualLatch>()
+            .add_message::<PauseRequest>()
+            .add_systems(
+                Update,
+                (
+                    assert_manual,
+                    // 每帧映一次时钟：真实流水线里这一步在 ClockSet
+                    process_pause_requests,
+                )
+                    .chain(),
+            );
+        app
+    }
+
+    /// 冒充"某个领域每帧断言"：还想要就一直说。
+    fn assert_awaiting(mut pause: MessageWriter<PauseRequest>) {
+        pause.write(PauseRequest::Pause(AWAITING));
+    }
 
     #[test]
     fn frozen_is_exactly_the_reason_set_being_non_empty() {
         let mut reasons = PauseReasons::default();
         assert!(!reasons.is_frozen(), "没有原因就不冻结");
 
-        reasons.insert(MANUAL);
         reasons.insert(AWAITING);
+        reasons.insert(THREAT);
         assert!(reasons.is_frozen());
         assert_eq!(
             reasons.labels(),
-            vec![AWAITING, MANUAL],
+            vec![AWAITING, THREAT],
             "多个原因可以叠加，互不覆盖"
         );
 
@@ -245,78 +273,82 @@ mod tests {
     /// 决策"的状态下悄悄跑起来。
     #[test]
     fn a_reason_lasts_exactly_as_long_as_it_keeps_being_asserted() {
-        let mut app = timeline_app();
-        let player = app
-            .world_mut()
-            .spawn((InputDriven, DecisionSlot::Idle { intent: None }))
-            .id();
+        let mut app = clock_app();
+        // 冒充一个领域：它这时**还想要**停表
+        app.add_systems(Update, assert_awaiting);
 
-        app.update(); // 空槽 → 世界本来就冻着
-        app.world_mut()
-            .entity_mut(player)
-            .insert(DecisionSlot::Executing {
-                until: BUSY_SENTINEL,
-            });
-        app.update();
-        assert!(
-            !app.world().resource::<Time<Virtual>>().is_paused(),
-            "没有原因时世界应当流动"
-        );
-
-        app.world_mut().resource_mut::<ManualLatch>().0 = true;
-        for _ in 0..6 {
+        for _ in 0..3 {
             app.update();
             assert!(
-                app.world().resource::<Time<Virtual>>().is_paused(),
-                "只要还在断言，手动暂停就一直有效"
+                app.world().resource::<PauseReasons>().contains(AWAITING),
+                "还在断言 → 原因一直在"
             );
+            assert!(app.world().resource::<Time<Virtual>>().is_paused());
         }
 
-        app.world_mut().resource_mut::<ManualLatch>().0 = false;
-        app.update();
+        // 领域不再断言（真实情形：玩家决定了，`awaiting` 就不写了）
+        let mut app2 = clock_app();
+        app2.update();
         assert!(
-            !app.world().resource::<Time<Virtual>>().is_paused(),
-            "不再断言，原因下一帧就该消失"
+            !app2.world().resource::<Time<Virtual>>().is_paused(),
+            "没有原因时世界应当流动"
         );
     }
 
-    /// 空决策槽是另一个独立原因：它消失时手动暂停仍然有效。
+    /// 手动暂停（`ManualPause`）和领域的原因**互不覆盖**：原因消失时玩家要的暂停仍在。
+    ///
+    /// 这正是两类东西必须分开的实证：领域的原因是**临时请求**（不重发就没了），
+    /// 玩家的暂停是**状态**（保持到再按一次）。
     #[test]
-    fn pause_reasons_do_not_override_each_other() {
-        let mut app = timeline_app();
-        let player = app
-            .world_mut()
-            .spawn((InputDriven, DecisionSlot::Idle { intent: None }))
-            .id();
+    fn the_manual_pause_survives_a_domain_reason_disappearing() {
+        /// 冒充一个领域：`true` 表示"我这一帧还想停表"。
+        #[derive(Resource, Default)]
+        struct DomainWants(bool);
+        fn assert_when_wanted(wants: Res<DomainWants>, mut pause: MessageWriter<PauseRequest>) {
+            if wants.0 {
+                pause.write(PauseRequest::Pause(AWAITING));
+            }
+        }
 
-        app.update(); // slot_empty
-        app.world_mut().resource_mut::<ManualLatch>().0 = true;
-        app.update(); // manual + slot_empty
-        assert_eq!(
-            app.world().resource::<PauseReasons>().labels(),
-            vec![AWAITING, MANUAL],
-            "两个原因可以同时挂着"
-        );
+        let mut app = clock_app();
+        app.init_resource::<DomainWants>()
+            .add_systems(Update, assert_when_wanted);
 
-        app.world_mut()
-            .entity_mut(player)
-            .insert(DecisionSlot::Executing {
-                until: BUSY_SENTINEL,
-            });
-        app.update();
-        assert!(
-            app.world().resource::<Time<Virtual>>().is_paused(),
-            "槽不空了，但手动暂停还挂着"
-        );
-        assert_eq!(
-            app.world().resource::<PauseReasons>().labels(),
-            vec![MANUAL],
-            "不再成立的原因应当自己消失，而不是等人来摘"
-        );
-
-        app.world_mut().resource_mut::<ManualLatch>().0 = false;
+        // 世界在跑（没人要求停表）→ 玩家按空格停住
         app.update();
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+        app.world_mut().resource_mut::<ManualLatch>().0 = true;
+        app.update();
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+        assert!(
+            app.world().resource::<PauseReasons>().labels().is_empty(),
+            "手动暂停不写原因"
+        );
+
+        // 领域也开始要求停表：两个来源并存。
+        // （先关掉测试的 Toggle 闩——不然它每帧都翻一次，而"刚放开"的那一帧
+        // 按设计会吞掉同帧的断言。）
+        app.world_mut().resource_mut::<ManualLatch>().0 = false;
+        app.world_mut().resource_mut::<DomainWants>().0 = true;
+        app.update();
+        assert_eq!(
+            app.world().resource::<PauseReasons>().labels(),
+            vec![AWAITING],
+            "领域的原因照常进集合"
+        );
+        assert!(app.world().resource::<Time<Virtual>>().is_paused());
+
+        // 领域不再要求了——**玩家要的暂停还在**（不会被领域原因的消失带走）
+        app.world_mut().resource_mut::<DomainWants>().0 = false;
+        app.update();
+        assert!(
+            app.world().resource::<PauseReasons>().labels().is_empty(),
+            "领域的原因应当自己消失，而不是等人来摘"
+        );
+        assert!(
+            app.world().resource::<Time<Virtual>>().is_paused(),
+            "玩家按的那次暂停不该被领域原因的消失带走"
+        );
     }
 
     /// `Toggle` **不带原因**：手动暂停靠 `Time<Virtual>` 记着，集合里不出现它。
@@ -325,7 +357,7 @@ mod tests {
     /// 手动暂停"，而时钟自己就是那个状态。
     #[test]
     fn a_toggle_pauses_the_world_without_writing_a_reason() {
-        let mut app = timeline_app();
+        let mut app = clock_app();
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
 
         app.world_mut().write_message(PauseRequest::Toggle);
@@ -354,7 +386,7 @@ mod tests {
     /// 顺序（先 Toggle 后收断言）就是为了这一条：玩家按了继续，他要的是动起来。
     #[test]
     fn toggling_while_frozen_releases_the_world_and_swallows_that_frames_assertions() {
-        let mut app = timeline_app();
+        let mut app = clock_app();
         app.world_mut().write_message(PauseRequest::Toggle);
         app.update();
         assert!(app.world().resource::<Time<Virtual>>().is_paused());
@@ -387,23 +419,16 @@ mod tests {
     /// 没有 `Toggle` 时，集合与时钟**对齐**：`PauseReasons 非空 ⟺ 冻着`。
     #[test]
     fn without_a_toggle_the_reason_set_matches_the_clock() {
-        let mut app = timeline_app();
-        let player = app
-            .world_mut()
-            .spawn((InputDriven, DecisionSlot::Idle { intent: None }))
-            .id();
-
+        let mut app = clock_app();
+        app.add_systems(Update, assert_awaiting);
         app.update();
         assert!(app.world().resource::<PauseReasons>().is_frozen());
         assert!(app.world().resource::<Time<Virtual>>().is_paused());
 
-        app.world_mut()
-            .entity_mut(player)
-            .insert(DecisionSlot::Executing {
-                until: BUSY_SENTINEL,
-            });
-        app.update();
-        assert!(!app.world().resource::<PauseReasons>().is_frozen());
-        assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+        // 换一个没人断言的 App：两边同时"不冻"
+        let mut quiet = clock_app();
+        quiet.update();
+        assert!(!quiet.world().resource::<PauseReasons>().is_frozen());
+        assert!(!quiet.world().resource::<Time<Virtual>>().is_paused());
     }
 }

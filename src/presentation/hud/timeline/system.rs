@@ -6,8 +6,9 @@
 
 use bevy::prelude::*;
 
+use crate::clock::PauseReasons;
 use crate::combat::Faction;
-use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, PauseReasons, ScheduledAction};
+use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, ScheduledAction};
 
 use super::super::{HudCache, faction_color_alpha};
 use super::model::{ActionRow, build_model, faction_letter};
@@ -255,7 +256,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<PauseReasons>()
-            .init_resource::<crate::timeline::ManualPause>()
+            .init_resource::<crate::clock::ManualPause>()
             .init_resource::<HudCache>()
             .add_systems(Update, update_timeline_system);
         app

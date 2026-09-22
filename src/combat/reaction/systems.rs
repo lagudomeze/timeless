@@ -14,9 +14,10 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 
+use crate::clock::{PauseReasons, PauseRequest, THREAT};
 use crate::combat::Faction;
 use crate::movement::Cell;
-use crate::timeline::{ActionOf, InputDriven, PauseReasons, PauseRequest, ScheduledAction, THREAT};
+use crate::timeline::{ActionOf, InputDriven, ScheduledAction};
 
 use super::components::{TargetCell, ThreatWindow, Threatened, Threatens};
 
@@ -160,7 +161,7 @@ mod tests {
             )))
             .init_resource::<ThreatWindow>()
             .init_resource::<PauseReasons>()
-            .init_resource::<crate::timeline::ManualPause>()
+            .init_resource::<crate::clock::ManualPause>()
             .init_resource::<Captured>()
             .add_message::<PauseRequest>()
             .add_systems(
@@ -367,10 +368,10 @@ mod tests {
     /// 【临时探针】窗口维持：为什么不持续断言？
     #[test]
     fn probe_why_not_persistent() {
-        use crate::timeline::PauseReasons;
+        use crate::clock::PauseReasons;
         let mut app = threat_app();
         app.init_resource::<PauseReasons>()
-            .init_resource::<crate::timeline::ManualPause>();
+            .init_resource::<crate::clock::ManualPause>();
         // 冒充时间线：把 Pause 断言收进集合（真实现里是 process_pause_requests）
         fn collect(mut r: MessageReader<PauseRequest>, mut reasons: ResMut<PauseReasons>) {
             reasons.clear();

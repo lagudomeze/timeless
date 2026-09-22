@@ -3,12 +3,13 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
+use crate::clock::PauseRequest;
 use crate::combat::defense::ParryCommand;
 use crate::combat::skills::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill};
 use crate::movement::{JumpCommand, MoveCommand};
 use crate::presentation::{CameraRig, ToggleHelp};
 use crate::spawn::ResetBattle;
-use crate::timeline::{PauseRequest, PlayerTakeover, UseFocus};
+use crate::timeline::{PlayerTakeover, UseFocus};
 
 /// `Q/W/E/R` 的技能热键绑定（默认值；用户自定义留到配置外置那一步）。
 ///
@@ -164,9 +165,9 @@ pub fn player_skill_input_system(
 /// 空格 → 翻转世界的冻结状态（**只写一条消息，不碰时钟，也不看别人的原因**）。
 ///
 /// 「按一下是暂停还是继续」这个判定归输入域：冻着就放开，没冻就停住——翻转本身
-/// 由时间线在 [`process_pause_requests`](crate::timeline::process_pause_requests) 里落地。
+/// 由时间线在 [`process_pause_requests`](crate::clock::process_pause_requests) 里落地。
 ///
-/// 这里刻意**不读 [`PauseReasons`](crate::timeline::PauseReasons)**：集合里同时躺着
+/// 这里刻意**不读 [`PauseReasons`](crate::clock::PauseReasons)**：集合里同时躺着
 /// 别人的原因（`awaiting` / `threat`），从它反推"手动暂停开着吗"会把
 /// 「威胁正冻着」误判成「玩家已手动暂停」，于是空格变成又一次"暂停"而不是"继续"。
 /// 输入域只表达"玩家翻了一下"，剩下的（包括"恢复之后哪些原因马上会回来"）是时间线的事。
@@ -290,7 +291,7 @@ pub fn skill_use_input_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::PauseReasons;
+    use crate::clock::PauseReasons;
 
     #[test]
     fn world_basis_uses_x_and_z() {
@@ -345,7 +346,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<PauseReasons>()
-            .init_resource::<crate::timeline::ManualPause>()
+            .init_resource::<crate::clock::ManualPause>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<Captured>()
             .add_message::<PauseRequest>()
@@ -354,7 +355,7 @@ mod tests {
                 (
                     pause_input_system,
                     capture,
-                    crate::timeline::process_pause_requests,
+                    crate::clock::process_pause_requests,
                 )
                     .chain(),
             );
@@ -422,12 +423,12 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<PauseReasons>()
-            .init_resource::<crate::timeline::ManualPause>()
+            .init_resource::<crate::clock::ManualPause>()
             .init_resource::<ButtonInput<KeyCode>>()
             .add_message::<PauseRequest>()
             .add_systems(
                 Update,
-                (pause_input_system, crate::timeline::process_pause_requests).chain(),
+                (pause_input_system, crate::clock::process_pause_requests).chain(),
             );
 
         // 世界没冻 → 按空格把它停住（不写原因，时钟自己记着）

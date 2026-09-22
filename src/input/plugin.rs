@@ -23,7 +23,7 @@ use super::pointer::{
 /// （系统初始化即报错），要连同上面几个领域一起装。
 ///
 /// 暂停是唯一读回游戏状态的输入：`pause_input_system` 要读
-/// [`PauseReasons`](crate::timeline::PauseReasons) 才知道「按一下是暂停还是恢复」——
+/// [`PauseReasons`](crate::clock::PauseReasons) 才知道「按一下是暂停还是恢复」——
 /// 这个判定本来就属于输入域，调度域只管收断言。
 #[derive(Debug, Default)]
 pub struct InputPlugin;
