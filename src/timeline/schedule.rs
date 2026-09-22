@@ -5,7 +5,7 @@
 //! - [`Uncancellable`]：**能不能撤**这一条规则标记。
 //!
 //! 调度器只认识这里的东西；「这行动是什么」由载荷组件决定（[`crate::movement::MoveAction`]、
-//! [`crate::combat::skills::FireballAction`]、[`crate::combat::skills::MeleeAction`]…），
+//! [`crate::combat::attack::FireballAction`]、[`crate::combat::attack::MeleeAction`]…），
 //! 调度器永远不读它们。行动者的三阶段在 [`DecisionSlot`](super::DecisionSlot)（那是
 //! [`decision`](super::decision) 的事）；「这行动是谁的」由 [`ActionOf`](super::ActionOf)
 //! 回答，「谁能撤它」由 [`Uncancellable`] 回答——这里放的是几个方面都要读的**规则与数据**。
@@ -104,7 +104,7 @@ impl ScheduledAction {
 /// （见 [`InterruptEvent`](crate::timeline::InterruptEvent)）。
 ///
 /// **它描述的是载荷，不是调度器**：具体值归各领域（`movement` 的移动 / 跳跃 / 翻滚、
-/// `combat::skills` 的近战 / 火球 / 箭矢、`combat::defense` 的招架）。
+/// `combat::attack` 的近战 / 火球 / 箭矢、`combat::defense` 的招架）。
 ///
 /// 声明时它被挂在**行动实体**上（和载荷一起，由场景工厂负责），于是：
 /// 执行器算忙碌窗口、HUD 画时间轴色块都从这里读，不用在别处再抄一份；

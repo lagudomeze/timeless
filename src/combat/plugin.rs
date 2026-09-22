@@ -6,6 +6,13 @@
 use bevy::prelude::*;
 
 use super::CombatSet;
+use super::attack::{
+    CycleSkill, FireCommand, MeleeCommand, MenuSelection, ProjectileArrived, SelectSkill,
+    UseSelectedSkill, cycle_skill_system, declare_fireball_system, declare_melee_system,
+    explosion_system, fireball_action_executor_system, melee_action_executor_system,
+    projectile_arrival_system, refund_fireball_observer, refund_melee_observer,
+    register_combat_abilities_system, select_skill_system, use_selected_skill_system,
+};
 use super::defense::{
     ParryCommand, RollCommand, declare_parry_system, declare_roll_system,
     expire_defense_markers_system, parry_executor_system, recover_stamina_observer,
@@ -16,13 +23,6 @@ use super::health::{DamageEvent, DeathEvent, apply_damage_system, despawn_dead_s
 use super::lifecycle::{cleanup_finished_attacks_system, expire_attack_entities_system};
 use super::reaction::{
     ReactionAnswer, detect_threat_system, mark_threatened_system, resolve_reaction_system,
-};
-use super::skills::{
-    CycleSkill, FireCommand, MeleeCommand, MenuSelection, ProjectileArrived, SelectSkill,
-    UseSelectedSkill, cycle_skill_system, declare_fireball_system, declare_melee_system,
-    explosion_system, fireball_action_executor_system, melee_action_executor_system,
-    projectile_arrival_system, refund_fireball_observer, refund_melee_observer,
-    register_combat_abilities_system, select_skill_system, use_selected_skill_system,
 };
 use super::targeting::{detect_collisions_system, detect_melee_system};
 

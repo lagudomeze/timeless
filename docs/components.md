@@ -7,7 +7,7 @@
 > （`PlayerIntent` → `PlayerTakeover`、`ai::Intent` → `ai::Tactic`、
 > `FocusIntent` → `PendingFocus`）；技能定义要搬去顶层 `skills` 域。
 > 本篇里凡是"行动实体用 `ChildOf` / 取 `parent()`"、旧名字、
-> `combat::skills` 作为注册表的说法都已过时（`unit_sprite` 与 HUD 的
+> `combat::attack` 作为注册表的说法都已过时（`unit_sprite` 与 HUD 的
 > `ChildOf` 仍然有效——那是真的物理附着）。
 
 > **描述对象：代码 A（仓库根 `src/`，package `app`）。**
@@ -51,7 +51,7 @@ L0 引擎零件      Transform / Visibility / Children / Mesh3d / Node / Text / 
 | `GlobalTransform` | Bevy 的 transform propagation | `cursor_ray`、`billboard_system` |
 | `Visibility` | `interaction`（高亮 / 预演）、`voxel_render` | Bevy 渲染 |
 | `Children` / `ChildOf` | `unit_scene`（纸片 + 阴影）、`setup_hud`、**各行动场景工厂**（`ChildOf({actor})`） | `shadow_system` 用 `ChildOf` 找父单位；时间线系的执行器 / 撤销 / 打断 / HUD 用它取行动者 |
-| `Mesh3d` / `MeshMaterial3d` | `interaction`（高亮、预演）、`voxel_render`（区块网格）、`spawn`（纸片 / 阴影）、`combat::skills`（攻击视觉） | Bevy 渲染 |
+| `Mesh3d` / `MeshMaterial3d` | `interaction`（高亮、预演）、`voxel_render`（区块网格）、`spawn`（纸片 / 阴影）、`combat::attack`（攻击视觉） | Bevy 渲染 |
 | `Mesh` / `StandardMaterial` / `Image` / `Font` 资产 | `setup_voxel_materials`、`spawn_hover_highlight`、`spawn_preview_indicators`、`load_unit_sprites`、`setup_hud` | 渲染 / 文本 |
 | `Camera3d` / `MainCamera` / `IsDefaultUiCamera` | `presentation::camera::main_camera` | `cursor_ray`、`billboard_system` |
 | `Node` / `Text` / `TextFont` / `TextColor` / `BackgroundColor` / `ImageNode` / `UiScale` / `Name` | HUD 各系统 | Bevy UI |
@@ -209,8 +209,8 @@ recover_focus_system           每 10 虚拟秒回 1 点 Focus
 
 | Observer | 订阅 | 做什么 |
 | :--- | :--- | :--- |
-| `combat::skills::fireball::refund_fireball_observer` | `ActionCancelled` + `With<FireballAction>` | 退 `FIREBALL_COST`(2) 再收 2：净额不变，撤销本身要有分量 |
-| `combat::skills::actions::refund_melee_observer` | `ActionCancelled` + `With<MeleeAction>` | 收 `MELEE_CANCEL_PENALTY`(1)：抡出去再收招 |
+| `combat::attack::fireball::refund_fireball_observer` | `ActionCancelled` + `With<FireballAction>` | 退 `FIREBALL_COST`(2) 再收 2：净额不变，撤销本身要有分量 |
+| `combat::attack::actions::refund_melee_observer` | `ActionCancelled` + `With<MeleeAction>` | 收 `MELEE_CANCEL_PENALTY`(1)：抡出去再收招 |
 | `combat::defense::recover_stamina_observer` | `DecisionReady` | 后摇结束、重新可决策 → +1 精力 |
 
 翻滚 / 招架**不退款**：它们的精力在执行时才扣（`roll_executor_system` /
@@ -243,11 +243,11 @@ despawn_dead_system               帧末：Health <= 0 的实体销毁
 | `MoveAction { from_cell, to_cell }` | `movement/actions.rs` | `move_action_scene` | `MoveCommand`（方向键）、`MoveToCommand`（点地板）、`ai` 的 `Approach` / `Retreat` | `move_action_executor_system` | 朝向目标格中心设 `Velocity` + 挂 `MoveGoal`；忙到走到位 |
 | `JumpAction` | 同上 | `jump_action_scene` | `JumpCommand`（`C`） | `jump_action_executor_system` | 挂 `Jumping`（向上初速度） |
 | `RollAction { from_cell, to_cell }` | 同上 | `roll_action_scene` | `RollCommand`（`E`）、`ai::declare_roll` | `roll_executor_system` | 扣 1 精力 + 设速度 + 挂 `MoveGoal` + `DodgingOnArrival` |
-| `MeleeAction` | `combat/skills/actions.rs` | `melee_action_scene` | `MeleeCommand`（`W` / 菜单派发） | `melee_action_executor_system` | 朝最近敌人生成 `melee_scene` 攻击实体 |
+| `MeleeAction` | `combat/attack/actions.rs` | `melee_action_scene` | `MeleeCommand`（`W` / 菜单派发） | `melee_action_executor_system` | 朝最近敌人生成 `melee_scene` 攻击实体 |
 | `ShootAction` | 同上 | `shoot_action_scene` | **未注册**（`declare_skill_system` 不在插件里） | `shoot_action_executor_system` | 生成 `arrow_scene` 箭矢（保留为单体狙击的参考实现） |
-| `FireballAction { target_cell }` | `combat/skills/fireball.rs` | `fireball_action_scene` | `FireCommand`（`Q` / 菜单派发）、`ai::declare_fireball_at` | `fireball_action_executor_system` | 从当前站位生成 `fireball_scene` 投射物；忙到飞行结束 |
+| `FireballAction { target_cell }` | `combat/attack/fireball.rs` | `fireball_action_scene` | `FireCommand`（`Q` / 菜单派发）、`ai::declare_fireball_at` | `fireball_action_executor_system` | 从当前站位生成 `fireball_scene` 投射物；忙到飞行结束 |
 | `ParryAction { target_attack }` | `combat/defense/components.rs` | `parry_action_scene` | `ParryCommand`（`R`） | `parry_executor_system` | 扣 1 精力 + 挂 `Parrying` |
-| `Fireball { speed, amount, radius }` | `combat/skills/fireball.rs` | `fireball_scene` | 火球执行器 | （数据 + `projectile_arrival_system`） | 到格 → 广播 `ProjectileArrived`（目标格住在 `TargetCell` 上） |
+| `Fireball { speed, amount, radius }` | `combat/attack/fireball.rs` | `fireball_scene` | 火球执行器 | （数据 + `projectile_arrival_system`） | 到格 → 广播 `ProjectileArrived`（目标格住在 `TargetCell` 上） |
 
 **非载荷但同属这一层的状态**：`Jumping`（弹道，`jump_motion_system`）、
 `DodgingOnArrival`（到位兑现）、`Fireball`（投射物数据）。
@@ -338,7 +338,7 @@ enemy_scene(terrain, sprites)  = unit_scene(Enemy, 格 (3,3) 中心)
 它只消费 `ResetBattle`。清场查询只需要 `Faction` / `Projectile` / `Collidable`——
 没执行的行动是单位的子实体，人没了行动跟着没（`Children` 是 linked spawn）。
 
-**攻击实体不在组装层**：它们是技能的产物，工厂归 `combat::skills`
+**攻击实体不在组装层**：它们是技能的产物，工厂归 `combat::attack`
 （`melee_scene` / `arrow_scene` / `fireball_scene`）。
 
 ### 8.3 完整依赖链（从零件到场景）

@@ -9,8 +9,8 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
+use crate::combat::attack::{FireballAction, MeleeAction, ShootAction};
 use crate::combat::defense::ParryAction;
-use crate::combat::skills::{FireballAction, MeleeAction, ShootAction};
 use crate::movement::{JumpAction, MoveAction, RollAction};
 use crate::timeline::{ActionOf, ScheduledAction};
 

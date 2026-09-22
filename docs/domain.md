@@ -4,7 +4,7 @@
 >
 > 1. `combat` 还是**一个** `CombatPlugin` 装着 7 个子域（本文要求每个 mod 出自己的
 >    `plugin.rs`，父域只编排）——**7 个子域目前 0 个 `plugin.rs`**；
-> 2. 攻击子域目录仍叫 `combat/skills`（本文按语义写作 `combat::attack`）；
+> 2. 攻击子域目录仍叫 `combat/attack`（本文按语义写作 `combat::attack`）；
 > 3. `utils` 域**不建了**（形状改为"一个形状一个组件"，见第一节末）。
 >
 > 落地进度见 `TODO.md` M22+。

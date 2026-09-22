@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use app::combat::skills::SKILLS;
+use app::combat::attack::SKILLS;
 use app::presentation::hud::HUD_FONT;
 use app::presentation::hud::skills::icon_path;
 use app::presentation::unit_sprite::{ENEMY_SPRITE, PLAYER_SPRITE, SHADOW_SPRITE};

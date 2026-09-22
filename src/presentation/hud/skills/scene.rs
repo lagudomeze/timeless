@@ -6,7 +6,7 @@
 
 use bevy::prelude::*;
 
-use crate::combat::skills::SKILLS;
+use crate::combat::attack::SKILLS;
 
 use super::super::{PANEL_BG, hud_text_tinted, load_ui_image};
 use super::model::{SLOT_BG, SLOT_BORDER, icon_path};

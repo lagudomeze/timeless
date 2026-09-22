@@ -4,8 +4,8 @@ use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 
 use crate::clock::PauseRequest;
+use crate::combat::attack::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill};
 use crate::combat::defense::ParryCommand;
-use crate::combat::skills::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill};
 use crate::movement::{JumpCommand, MoveCommand};
 use crate::presentation::{CameraRig, ToggleHelp};
 use crate::spawn::ResetBattle;
@@ -148,7 +148,7 @@ pub fn player_skill_input_system(
         }
         match action {
             HotkeyAction::Skill(kind) => {
-                if let Some(index) = crate::combat::skills::index_of(*kind) {
+                if let Some(index) = crate::combat::attack::index_of(*kind) {
                     selects.write(SelectSkill(index));
                     uses.write(UseSelectedSkill::default());
                     takeovers.write(PlayerTakeover);

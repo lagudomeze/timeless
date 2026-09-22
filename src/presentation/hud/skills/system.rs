@@ -5,8 +5,8 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
+use crate::combat::attack::MenuSelection;
 use crate::combat::defense::Stamina;
-use crate::combat::skills::MenuSelection;
 
 use super::super::HudCache;
 use super::model::{
@@ -82,7 +82,7 @@ pub fn update_skill_bar_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::skills::SKILLS;
+    use crate::combat::attack::SKILLS;
     use crate::presentation::hud::skills::model::{SLOT_BG, SLOT_BG_LOCKED, SLOT_BORDER};
 
     fn skill_app() -> App {

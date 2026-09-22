@@ -7,7 +7,7 @@
 > （`PlayerIntent` → `PlayerTakeover`、`ai::Intent` → `ai::Tactic`、
 > `FocusIntent` → `PendingFocus`）；技能定义要搬去顶层 `skills` 域
 > （[skills.md](skills.md)）。本篇里凡是"行动是行动者的子实体"、旧名字、
-> `combat/skills` 作为注册表的说法都已过时。
+> `combat/attack` 作为注册表的说法都已过时。
 
 > **描述对象：代码 A（仓库根 `src/`，package `app`，Bevy 0.19）。**
 > 本文是模块结构、分层约束与执行顺序的权威说明，与代码同步维护。
@@ -160,15 +160,15 @@ WorldSet ───────────────────────�
 | 消息 | 写 | 消费 |
 | :--- | :--- | :--- |
 | `MoveCommand` / `MoveToCommand` / `JumpCommand` | `input` / `interaction` | `movement` 的声明系统 |
-| `FireCommand` / `MeleeCommand` | `input` / `menu` 派发 | `combat::skills` 的声明系统 |
+| `FireCommand` / `MeleeCommand` | `input` / `menu` 派发 | `combat::attack` 的声明系统 |
 | `RollCommand` / `ParryCommand` | `input` / `menu` 派发 | `combat::defense` 的声明系统 |
-| `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` / `interaction` | `combat::skills::menu` |
+| `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` / `interaction` | `combat::attack::menu` |
 | `PointerCommand` | `input` | `interaction::pointer_command_system` |
 | `PlayerIntent` | `input`（键盘）/ `interaction`（左键） | `timeline::undo_system`（撤掉玩家那条还没到点的行动，与右键同一条路） |
 | `UseFocus` / `UndoCommand` | `input` / `interaction` | `timeline` |
 | `PauseRequest` | `input`（手动）/ `timeline` 的等输入系统 / `combat::reaction` | `timeline::process_pause_requests` → `apply_clock` |
 | `InterruptEvent`（**EntityEvent**，住 `combat::formula`） | 命中系统 `apply_physical_hits_system` | `combat::formula::interrupt_observer`（判定与落地都在战斗域） |
-| `ActionCancelled`（**EntityEvent**） | `timeline::undo_system`（销毁行动之前 trigger） | 花钱的领域：`combat::skills`（火球退 2 收 2、近战收 1） |
+| `ActionCancelled`（**EntityEvent**） | `timeline::undo_system`（销毁行动之前 trigger） | 花钱的领域：`combat::attack`（火球退 2 收 2、近战收 1） |
 | `DecisionReady`（**EntityEvent**） | `timeline::recovery_system` | `combat::defense::recover_stamina_observer`（+1 精力） |
 | `ActionBlocked` | 各声明系统（经 `timeline::FirstReady::first_ready`） | HUD 提示条 |
 | `ProjectileArrived` | `skills::projectile_arrival_system` | `skills::explosion_system` |

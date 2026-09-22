@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::combat::skills::abilities::PARRY_ABILITY;
+use crate::combat::attack::abilities::PARRY_ABILITY;
 use crate::movement::abilities::ROLL_ABILITY;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
 use crate::skills::{AbilityId, can_cast};

@@ -33,7 +33,7 @@
 //! [`ResetBattle`]，本域只消费——和所有其它按键一样，输入层只翻译、不执行。
 //!
 //! 攻击实体（箭矢、近战横扫）不在这里，它是技能的产物，工厂归
-//! [`crate::combat::skills`]。
+//! [`crate::combat::attack`]。
 
 use bevy::prelude::*;
 

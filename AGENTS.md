@@ -73,7 +73,7 @@ cargo fmt --check                           # 格式校验
   Bevy `Message`，再由对应领域的单一职责系统消费落地。当前消息清单见
   [`docs/domain.md`](docs/domain.md) 第二节。
 - **消息定义与消费它的系统同属一个领域**：如 `MoveCommand` 与 `declare_move_system`
-  在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/skills/`、
+  在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/attack/`、
   `PauseRequest` / `PlayerTakeover` / `UndoCommand` 与
   `compute_player_awaiting_system` / `undo_system` /
   `process_pause_requests` 在 `timeline/`、

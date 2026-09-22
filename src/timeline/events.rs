@@ -39,7 +39,7 @@ pub struct UseFocus;
 /// 「这次输入没被接受」。
 ///
 /// 写：各声明系统（[`crate::movement::declare_move_system`] /
-/// [`crate::combat::skills::declare_fireball_system`] 等）在玩家**还不能决策**或
+/// [`crate::combat::attack::declare_fireball_system`] 等）在玩家**还不能决策**或
 /// **资源不够**时；消费：HUD（提示玩家为什么没动）。
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionBlocked {
@@ -77,11 +77,11 @@ pub struct UndoCommand;
 /// 一条行动被撤销了（发给**行动实体**）。
 ///
 /// 写：[`undo_system`](super::decision::undo_system)；
-/// 消费：花钱的那个领域——目前住在 `combat::skills`（🚧 要改名 `combat::attack`）：火球退 2 收 2、近战收 1。
+/// 消费：花钱的那个领域——目前住在 `combat::attack`（🚧 要改名 `combat::attack`）：火球退 2 收 2、近战收 1。
 ///
 /// 用 `EntityEvent` 而不是广播 Message：撤销**一定**落在某一条具体行动上，
 /// 而"退多少、收多少"只有看得到那条行动载荷的领域才知道——时间线不认识
-/// [`FireballAction`](crate::combat::skills::FireballAction)。
+/// [`FireballAction`](crate::combat::attack::FireballAction)。
 ///
 /// ⚠️ **触发必须排在 `despawn` 之前**：Observer 是在命令应用阶段**当场**跑的，
 /// 排在销毁之后就读不到行动实体身上的载荷了（表现为"退款静默丢失"）。

@@ -8,7 +8,7 @@
 //! 2. 清理短命标记（[`expire_defense_markers_system`]）。
 //!
 //! 本域出的钱（翻滚 / 招架）在执行时才扣，撤销无从退起；火球那种**声明时扣费**
-//! 的退款归花钱的领域（[`crate::combat::skills`]）。这里只留"重新可决策 → 回精力"。
+//! 的退款归花钱的领域（[`crate::combat::attack`]）。这里只留"重新可决策 → 回精力"。
 
 use bevy::prelude::*;
 
