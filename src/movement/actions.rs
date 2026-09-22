@@ -61,7 +61,10 @@ pub fn move_action_scene(
     schedule: ScheduledAction,
     actor: Entity,
 ) -> impl Scene {
+    // 对抗标签（能不能被打断 / 招架 / 格挡）跟着载荷一起挂在行动实体上
+    let tags = super::abilities::MOVE_ABILITY.combat;
     bsn! {
+        template_value(tags)
         ActionOf({actor})
         MoveAction { from_cell: {from_cell}, to_cell: {to_cell} }
         template_value(timing)
@@ -98,7 +101,10 @@ pub fn roll_action_scene(
     schedule: ScheduledAction,
     actor: Entity,
 ) -> impl Scene {
+    // 对抗标签（能不能被打断 / 招架 / 格挡）跟着载荷一起挂在行动实体上
+    let tags = super::abilities::ROLL_ABILITY.combat;
     bsn! {
+        template_value(tags)
         ActionOf({actor})
         RollAction { from_cell: {from_cell}, to_cell: {to_cell} }
         template_value(timing)
@@ -112,7 +118,10 @@ pub fn jump_action_scene(
     schedule: ScheduledAction,
     actor: Entity,
 ) -> impl Scene {
+    // 对抗标签（能不能被打断 / 招架 / 格挡）跟着载荷一起挂在行动实体上
+    let tags = super::abilities::JUMP_ABILITY.combat;
     bsn! {
+        template_value(tags)
         ActionOf({actor})
         JumpAction
         template_value(timing)

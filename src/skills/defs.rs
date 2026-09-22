@@ -109,7 +109,7 @@ pub enum TargetSelector {
 ///
 /// 标签做闸门、掷骰做对抗：`interruptible && !super_armor` 决定**能不能**打断，
 /// `interrupt_lands` 决定**这一次**断不断（见 `docs/combat.md` 第二节）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(bevy::prelude::Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CombatTags {
     /// 前摇中能不能被打断
     pub interruptible: bool,
@@ -119,6 +119,13 @@ pub struct CombatTags {
     pub parryable: bool,
     /// 能不能被格挡
     pub blockable: bool,
+}
+
+impl Default for CombatTags {
+    /// 默认就是普通攻击的标签（能被打断、也能被招架 / 格挡）。
+    fn default() -> Self {
+        Self::STRIKE
+    }
 }
 
 impl CombatTags {

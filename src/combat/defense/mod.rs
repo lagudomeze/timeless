@@ -15,6 +15,8 @@
 use crate::timeline::ActionOf;
 use bevy::prelude::*;
 
+use crate::combat::attack::abilities::PARRY_ABILITY;
+
 pub mod actions;
 pub mod components;
 pub mod events;
@@ -37,7 +39,10 @@ pub fn parry_action_scene(
     schedule: crate::timeline::ScheduledAction,
     actor: Entity,
 ) -> impl Scene {
+    // 对抗标签（能不能被打断 / 招架 / 格挡）跟着载荷一起挂在行动实体上
+    let tags = PARRY_ABILITY.combat;
     bsn! {
+        template_value(tags)
         ActionOf({actor})
         ParryAction {
             target_attack: {target_attack},

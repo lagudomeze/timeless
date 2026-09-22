@@ -52,7 +52,10 @@ pub fn shoot_action_scene(
     schedule: ScheduledAction,
     actor: Entity,
 ) -> impl Scene {
+    // 对抗标签（能不能被打断 / 招架 / 格挡）跟着载荷一起挂在行动实体上
+    let tags = super::abilities::SHOOT_ABILITY.combat;
     bsn! {
+        template_value(tags)
         ActionOf({actor})
         ShootAction
         template_value(timing)
