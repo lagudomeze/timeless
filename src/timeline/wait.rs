@@ -135,6 +135,7 @@ pub const WAIT_ABILITY: crate::skills::AbilityDef = crate::skills::AbilityDef {
     cost: 0,
     requirements: &[],
     combat: crate::skills::CombatTags::COMMITTED,
+    counter: None,
     power: 0,
 };
 

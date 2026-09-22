@@ -333,9 +333,15 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       验收：217 测试全绿（215 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过。
 - [ ] **M25 对抗标签 + 格挡**：`CombatTags` 闸门（含霸体）+ 防御链补格挡
       （格挡率来自装备 / 姿态 `BlockChance`）；**保留**掷骰对抗 `interrupt_lands`。
-- [ ] **M26 反应槽 + 反制（D4）**：`ReactionSlot` 取代 `ThreatWindow`（**顺带修掉
-      `opening_action` 那个死锁**）+ `CounterSuggestion`（= 所有 `counter != None` 的技能
-      + `CounterCost`）+ HUD 高亮"付得起"的技能 + `CounterCommand` / `AbandonReaction`。
+- [x] **M26 反应槽 + 反制（D4）**（本次）：`ReactionSlot`（挂在**被威胁的玩家**身上，
+      `threat` + `suggestions` + `resolved`）取代 `ThreatWindow`；`CounterSuggestion`
+      从目录算出来（遍历 `counter != None`，**无硬编码白名单**）；`CounterCost`
+      进了 `AbilityDef`（`Roll = Free`、`Parry = Resource(PARRY_COST)`）；
+      表态通道 = `ReactionAnswer::{Counter, Abandon}`（技能键 / 右键）。
+      **顺带修掉 `opening_action` 那个死锁**：表态是显式消息，不再依赖
+      "玩家那一手变了没有"（那个判据在**后摇 / 不可撤行动**期间永远为假）。
+      验收：225 测试全绿 / clippy 零警告 / fmt 通过。
+      **未做**：HUD 高亮"付得起"的技能（建议列表已就绪，HUD 侧未接）。
 - [ ] **M27 装备系统（D5）**：全新（槽位 / `EquippedTo` / 类型校验 Observer / 穿脱），
       并定下**属性的「基础值 + 加成」结构**。
 - [ ] **M28 每个 mod 出 `plugin.rs`**：`CombatPlugin` 只编排子域顺序、不注册系统；

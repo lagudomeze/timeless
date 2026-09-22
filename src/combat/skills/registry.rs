@@ -93,6 +93,7 @@ impl SkillDef {
             timing: self.timing,
             targeting: crate::skills::TargetSelector::SelfOnly,
             cost: self.cost,
+            counter: None, // 菜单项本身不当反制；反制建议直接读目录里的定义
             requirements: if self.cost == 0 {
                 &[]
             } else {

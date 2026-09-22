@@ -137,6 +137,8 @@ pub fn use_selected_skill_system(
     mut melee_commands: MessageWriter<MeleeCommand>,
     mut roll_commands: MessageWriter<RollCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
+    // 玩家用技能 = 对当前反应窗口的表态（没有窗口时自然被忽略）
+    mut answers: MessageWriter<crate::combat::reaction::ReactionAnswer>,
 ) {
     let Some(request) = requests.read().last().copied() else {
         return;
@@ -153,6 +155,13 @@ pub fn use_selected_skill_system(
         blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
         return;
     }
+
+    // 这一手按下去了，就算对反应窗口表了态（窗口存在与否由消费方判定）。
+    // 派发规则（「攻击」→ 近战或火球）由下面按距离决定，这里只报"我用了这一手"。
+    answers.write(crate::combat::reaction::ReactionAnswer::Counter(
+        def.catalogue_entry()
+            .unwrap_or(crate::skills::AbilityId::Melee),
+    ));
 
     match def.kind {
         // 「攻击」按**真实距离**派发：贴脸用近战，否则扔火球
