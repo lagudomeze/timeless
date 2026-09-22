@@ -26,11 +26,17 @@ pub enum AbilityId {
     Fireball,
     /// 招架：挡下绑定的那次攻击并反制
     Parry,
+    /// 原地等待：**占住决策槽一小段时间**，等价于"我要停一下"。
+    ///
+    /// 它是一条技能而不是特殊的暂停开关：无回合模型里"什么都不做"也是一种决定，
+    /// 用既有的动作机制表达它（占槽 → `awaiting` 不再断言 → 世界继续跑），
+    /// 因此不需要给暂停层加任何特例。玩家的空格直接绑定到它。
+    Wait,
 }
 
 impl AbilityId {
     /// 全部技能（注册完整性用它自检）。
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Move,
         Self::Jump,
         Self::Roll,
@@ -38,6 +44,7 @@ impl AbilityId {
         Self::Melee,
         Self::Fireball,
         Self::Parry,
+        Self::Wait,
     ];
 
     /// HUD / 日志用的英文短名。
@@ -50,6 +57,7 @@ impl AbilityId {
             Self::Melee => "melee",
             Self::Fireball => "fireball",
             Self::Parry => "parry",
+            Self::Wait => "wait",
         }
     }
 }
