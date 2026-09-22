@@ -298,6 +298,21 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       两处偏离原设计并写进了 `docs/skills.md`：`Requirement` 不预先堆十条、
       `can_cast` 收事实而不是 `&World`。
       验收：221 测试全绿（219 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过。
+- [ ] **执行器按"看到的那一帧"算后摇 → 忙碌窗口多 0~1 帧**：8 个执行器都写
+      `DecisionSlot::recovering(timing, now, ..)`，而 `now` 是**发现 due 的那一帧**，
+      不是行动的 `execute_at`。于是 `WAIT_SECONDS = 1.0` 的等待实测 **1.1s**
+      （帧间隔 0.1s 时），每个动作的忙碌窗口都偏长一个帧间隔。
+      修法：`recovering` 收「效果真正发生的时刻」（`schedule.execute_at`）而不是 `now`。
+      **8 处统一，不是某一个动作的问题**（探针在 `feat/wait-action` 里验过）。
+      它会轻微改变所有动作的手感（变快一点点），要单独一批 + 逐帧验证。
+- [ ] **等待时长要可配**：现在是 `timeline::WAIT_SECONDS = 1.0` 常量；
+      等动作数值外置（`.ron`）之后应进技能表。
+- [ ] **暂停：情形 A 已由「等待」动作解决**（`feat/wait-action`）：玩家空闲时按空格
+      生成一条占槽 1s 的等待行动 → `awaiting` 消失 → 世界继续跑。
+      **`ManualPause` 因此只服务"忙碌 + 运行"那一种情形**（他没有槽可占）。
+- [ ] **威胁：按 action 上报一次**：取代现在靠 `ThreatWindow.dismissed` 的全局记账，
+      语义变成"威胁是 action 的属性"，于是"放开之后第二帧又冻住"必然意味着**新威胁**。
+      落在 M26 一起做。
 - [ ] **M24c 菜单改读目录**：`SKILLS`（4 项，其中"攻击"是**派发规则**不是技能）与目录
       （7 项）不是一一对应，迁移要先定 `MenuSelection` 存什么（`SkillKind` 还是 `AbilityId`）。
       现状已由 `menu_matches_the_catalogue` 兜住，不急。
