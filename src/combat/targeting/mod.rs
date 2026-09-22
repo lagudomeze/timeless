@@ -3,6 +3,7 @@
 //! 结果统一以 [`CollisionTarget`] 临时标记挂在攻击实体上：
 //! 伤害计算只认这个标记，因此「对波」「友伤」「AOE」都是独立扩展点。
 
+use bevy::prelude::*;
 pub mod components;
 pub mod detection;
 pub mod melee;
@@ -10,3 +11,10 @@ pub mod melee;
 pub use components::{CollisionTarget, MeleeShape};
 pub use detection::detect_collisions_system;
 pub use melee::detect_melee_system;
+
+pub mod plugin;
+pub use plugin::TargetingPlugin;
+
+/// 目标获取在本域系统链里的位置（跨子域的先后由 [`CombatPlugin`](super::CombatPlugin) 编排）。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TargetingSet;

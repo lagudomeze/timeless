@@ -30,6 +30,7 @@
 //! 玩家会被锁死在冻结里；边沿触发把"惊动过没有"记在威胁源自己身上，与玩家处于
 //! 哪个阶段无关。
 
+use bevy::prelude::*;
 pub mod cells;
 pub mod components;
 pub mod systems;
@@ -40,3 +41,10 @@ pub use systems::{
     ReactionAnswer, counter_suggestions, detect_threat_system, mark_threatened_system,
     resolve_reaction_system,
 };
+
+pub mod plugin;
+pub use plugin::ReactionPlugin;
+
+/// 反应：威胁检测与表态在本域系统链里的位置（跨子域的先后由 [`CombatPlugin`](super::CombatPlugin) 编排）。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ReactionSet;

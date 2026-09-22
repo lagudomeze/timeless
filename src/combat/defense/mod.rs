@@ -46,3 +46,10 @@ pub fn parry_action_scene(
         template_value(schedule)
     }
 }
+
+pub mod plugin;
+pub use plugin::DefensePlugin;
+
+/// 防御：翻滚 / 招架在本域系统链里的位置（跨子域的先后由 [`CombatPlugin`](super::CombatPlugin) 编排）。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DefenseSet;

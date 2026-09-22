@@ -173,3 +173,10 @@ mod tests {
         );
     }
 }
+
+pub mod plugin;
+pub use plugin::HealthPlugin;
+
+/// 扣血与死亡在本域系统链里的位置（跨子域的先后由 [`CombatPlugin`](super::CombatPlugin) 编排）。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HealthSet;
