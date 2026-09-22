@@ -19,14 +19,15 @@
 
 use bevy::prelude::*;
 
-use crate::combat::defense::{ROLL_COST, Stamina, declare_roll, roll_step};
+use crate::combat::defense::{Stamina, declare_roll, roll_step};
 use crate::combat::reaction::Threatens;
 use crate::combat::skills::{FIREBALL_TIMING, MELEE_TIMING, declare_fireball_at, declare_melee_at};
 use crate::combat::{AttackRange, Faction, Health};
+use crate::movement::abilities::ROLL_ABILITY;
 use crate::movement::{
     CELL_SIZE, Cell, MOVE_TIMING, ROLL_TIMING, move_action_scene, step_from_axis,
 };
-use crate::skills::AbilityId;
+use crate::skills::{AbilityId, can_cast};
 use crate::timeline::{DecisionSlot, Intent, ScheduledAction, Target};
 
 use super::components::{EnemyBrain, Tactic};
@@ -154,8 +155,9 @@ pub fn enemy_declare_system(
         if !slot.is_idle() {
             continue;
         }
-        // 精力不够时不能真的闪：降级为普通决策结果
-        if *tactic == Tactic::Dodge && !stamina.can_afford(ROLL_COST) {
+        // 精力不够时不能真的闪：降级为普通决策结果。
+        // 判据与玩家侧同源（`can_cast`），免得 AI 与玩家对"闪不闪得动"有不同的答案
+        if *tactic == Tactic::Dodge && can_cast(&ROLL_ABILITY, stamina.current).is_err() {
             *tactic = Tactic::Approach;
         }
 

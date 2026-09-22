@@ -7,7 +7,8 @@
 use bevy::prelude::*;
 
 use crate::skills::{
-    AbilityCategory, AbilityDef, AbilityId, CombatTags, RegisterAbility, TargetSelector,
+    AbilityCategory, AbilityDef, AbilityId, CombatTags, RegisterAbility, Requirement,
+    TargetSelector,
 };
 
 use super::actions::{ARROW_TIMING, MELEE_TIMING};
@@ -21,6 +22,8 @@ pub const MELEE_ABILITY: AbilityDef = AbilityDef {
     timing: MELEE_TIMING,
     targeting: TargetSelector::MeleeArc,
     cost: 0,
+    // 免费技能：不需要精力，因此没有这一条
+    requirements: &[],
     combat: CombatTags::STRIKE,
     power: MELEE_DAMAGE,
 };
@@ -32,6 +35,8 @@ pub const SHOOT_ABILITY: AbilityDef = AbilityDef {
     timing: ARROW_TIMING,
     targeting: TargetSelector::Direction,
     cost: 0,
+    // 免费技能：不需要精力，因此没有这一条
+    requirements: &[],
     combat: CombatTags::STRIKE,
     power: MELEE_DAMAGE,
 };
@@ -43,6 +48,7 @@ pub const FIREBALL_ABILITY: AbilityDef = AbilityDef {
     timing: FIREBALL_TIMING,
     targeting: TargetSelector::TargetCell,
     cost: FIREBALL_COST,
+    requirements: &[Requirement::EnoughEnergy],
     combat: CombatTags::STRIKE,
     power: super::FIREBALL_DAMAGE,
 };
@@ -55,6 +61,7 @@ pub const PARRY_ABILITY: AbilityDef = AbilityDef {
     timing: crate::combat::defense::PARRY_TIMING,
     targeting: TargetSelector::TargetEntity,
     cost: crate::combat::defense::PARRY_COST,
+    requirements: &[Requirement::EnoughEnergy],
     combat: CombatTags::STRIKE,
     power: 0,
 };

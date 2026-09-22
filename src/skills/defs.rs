@@ -131,6 +131,32 @@ impl CombatTags {
     };
 }
 
+/// 释放条件：**技能自己的那几条**（类别共享的那条另算，见 [`AbilityCategory::shared_requirement`]）。
+///
+/// ⚠️ **只列真的会被检查的条件**：现在只有精力。沉默 / 眩晕 / 冷却这些等它们
+/// 真的存在了再加——预先堆一个用不上的枚举，只会让 `can_cast` 里长出一堆
+/// 永远为真的分支（`docs/skills.md` 第三节的"现在不预先抽象"）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Requirement {
+    /// 精力够 `cost`
+    EnoughEnergy,
+}
+
+/// 类别共享的条件：`can_cast` **先按类别判一次**，技能只写自己那几条。
+///
+/// 现在只有 Movement 一类有共享条件（有精力才能动），所以它是个返回
+/// `Option` 的小函数而不是一张表——等出现第二类共享条件时再变成表。
+impl AbilityCategory {
+    /// 这一类**所有**技能都要满足的条件。
+    pub fn shared_requirement(self) -> Option<Requirement> {
+        match self {
+            Self::Movement => Some(Requirement::EnoughEnergy),
+            // 攻击 / 法术 / 姿态的消耗由技能自己的 `requirements` 说
+            Self::Attack | Self::Spell | Self::Posture => None,
+        }
+    }
+}
+
 /// 一条技能定义：**静态、可序列化**。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AbilityDef {
@@ -141,6 +167,8 @@ pub struct AbilityDef {
     pub targeting: TargetSelector,
     /// 精力消耗
     pub cost: u32,
+    /// 释放条件（类别共享条件之外的）
+    pub requirements: &'static [Requirement],
     /// 能不能被反制，以及当反制要付什么（见 `docs/skills.md` 第四节）
     pub combat: CombatTags,
     /// 大致威力（**展示用**：实际伤害在各自的载荷里）

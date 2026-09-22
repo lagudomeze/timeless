@@ -12,7 +12,7 @@
 
 use bevy::prelude::*;
 
-use super::defs::{AbilityDef, AbilityId};
+use super::defs::{AbilityDef, AbilityId, Requirement};
 
 /// 各域把自己的静态定义交上来（写：机制域；消费：本域）。
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
@@ -68,11 +68,35 @@ pub fn apply_registrations_system(
     }
 }
 
+/// 这一手此刻**能不能出手**——条件校验的唯一入口。
+///
+/// 判据分两层，**类别共享条件先判**（[`AbilityCategory::shared_requirement`]），
+/// 再判技能自己的 `requirements`：这样每个技能不必把"沉默 / 眩晕 / 冷却"各写一遍。
+///
+/// 入参是**事实**（精力多少）而不是 `&World`：这一层因此零 Bevy、可脱离 App 单测，
+/// 而"读哪些组件凑出这些事实"留在调用方（各声明系统）。
+///
+/// 被拒的原因复用时间线的 [`BlockReason`](crate::timeline::BlockReason)：
+/// 失败要驱动的 UI（提示条）本来就是它，没必要再立一个平行枚举。
+pub fn can_cast(def: &AbilityDef, stamina: u32) -> Result<(), crate::timeline::BlockReason> {
+    let shared = def.category.shared_requirement().into_iter();
+    for requirement in shared.chain(def.requirements.iter().copied()) {
+        match requirement {
+            Requirement::EnoughEnergy if stamina < def.cost => {
+                return Err(crate::timeline::BlockReason::NotEnoughEnergy);
+            }
+            Requirement::EnoughEnergy => {}
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::skills::defs::{AbilityCategory, CombatTags, TargetSelector};
     use crate::timeline::ActionTiming;
+    use crate::timeline::{ActionBlocked, BlockReason};
 
     fn def(id: AbilityId, cost: u32) -> AbilityDef {
         AbilityDef {
@@ -81,6 +105,7 @@ mod tests {
             timing: ActionTiming::new(0.1, 0.2, 1),
             targeting: TargetSelector::SelfOnly,
             cost,
+            requirements: &[],
             combat: CombatTags::COMMITTED,
             power: 0,
         }
@@ -145,5 +170,39 @@ mod tests {
         assert_eq!(free, vec![AbilityId::Melee]);
         let all: Vec<AbilityId> = registry.affordable(9).map(|def| def.id).collect();
         assert_eq!(all.len(), 3);
+    }
+
+    /// `can_cast` 是**条件校验的唯一入口**：类别共享条件先判，再判技能自己那几条。
+    #[test]
+    fn can_cast_checks_the_category_then_the_skill_itself() {
+        // Movement 类：类别共享条件就是"有精力"
+        let move_ability = def(AbilityId::Move, 2);
+        assert_eq!(can_cast(&move_ability, 2), Ok(()), "刚好够");
+        assert_eq!(
+            can_cast(&move_ability, 1),
+            Err(BlockReason::NotEnoughEnergy),
+            "差一点都不行"
+        );
+    }
+
+    /// 免费技能永远放得出来：`requirements` 为空，类别也不要求精力。
+    #[test]
+    fn a_free_ability_is_always_castable() {
+        let free = def(AbilityId::Melee, 0);
+        assert_eq!(can_cast(&free, 0), Ok(()));
+    }
+
+    /// 被拒的原因**复用时间线的 `BlockReason`**：提示条本来就是按它驱动的，
+    /// 再立一个平行枚举只会让两边要同步维护。
+    #[test]
+    fn can_cast_rejects_with_the_same_reason_the_hud_reads() {
+        let paid = def(AbilityId::Move, 3);
+        let reason = can_cast(&paid, 0).unwrap_err();
+        assert_eq!(reason, BlockReason::NotEnoughEnergy);
+        assert_eq!(
+            ActionBlocked { reason }.reason,
+            ActionBlocked::NO_ENERGY.reason,
+            "与各声明系统原来写的那条提示是同一个"
+        );
     }
 }
