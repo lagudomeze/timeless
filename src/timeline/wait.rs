@@ -117,7 +117,7 @@ pub fn wait_executor_system(
         let actor = action_of.actor();
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
-            actor_commands.insert(DecisionSlot::recovering(timing, now, 0.0));
+            actor_commands.insert(DecisionSlot::recovering(timing, schedule, 0.0));
         }
     }
 }

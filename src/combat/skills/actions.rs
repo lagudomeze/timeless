@@ -237,7 +237,7 @@ pub fn shoot_action_executor_system(
                 commands.spawn_scene(arrow_scene(origin + direction * 1.2, direction, faction));
             }
         }
-        let recovery = DecisionSlot::recovering(timing, now, effect_delay);
+        let recovery = DecisionSlot::recovering(timing, schedule, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);
@@ -274,7 +274,7 @@ pub fn melee_action_executor_system(
                 commands.spawn_scene(melee_scene(origin + direction * 0.6, direction, faction));
             }
         }
-        let recovery = DecisionSlot::recovering(timing, now, 0.0);
+        let recovery = DecisionSlot::recovering(timing, schedule, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);

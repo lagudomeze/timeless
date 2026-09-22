@@ -159,11 +159,21 @@ impl DecisionSlot {
     /// 「效果还要多久才发生」传进来（移动走到格中心、火球飞到落点）；
     /// 瞬间完成的动作传 `0`，只忙一个后摇。
     ///
-    /// 传时长而不是「忙到哪个时刻」，是因为忙到的那一刻永远是
-    /// `now + 这段时长`——少一次加法，也少一个"现在几点"的重复概念。
-    pub fn recovering(timing: &ActionTiming, now: f32, effect_delay: f32) -> Self {
+    /// ⚠️ **基准是 `schedule.execute_at`（这一手本该落地的时刻），不是"现在几点"**。
+    /// 执行器是**轮询**的：它每帧问一次"到点了吗"，所以发现到点的那一帧总比
+    /// `execute_at` 晚 0~1 个帧间隔。拿那一帧的 `now` 当基准，每个动作的忙碌窗口
+    /// 都会偏长一个帧间隔（1s 的等待实测成 1.1s）。
+    ///
+    /// 传「到点时刻 + 时长」而不是让调用方算好「忙到哪个时刻」：
+    /// 忙到的那一刻永远是 `execute_at + 这段时长`，基准统一在方法内部，
+    /// 调用方不必各自记住该用哪个时间。
+    pub fn recovering(
+        timing: &ActionTiming,
+        schedule: &ScheduledAction,
+        effect_delay: f32,
+    ) -> Self {
         Self::Executing {
-            until: now + timing.recovery.max(effect_delay),
+            until: schedule.execute_at + timing.recovery.max(effect_delay),
         }
     }
 }
@@ -396,20 +406,43 @@ mod tests {
         assert!(decided.ready(), "已经决定了 → 别等他");
     }
 
-    /// 后摇取「一个后摇」与「效果还要多久」里更晚的那个。
+    /// 后摇取「一个后摇」与「效果还要多久」里更晚的那个，**基准是 `execute_at`**。
     #[test]
     fn the_recovery_window_ends_at_the_later_of_effect_and_recovery() {
+        let due_at = |t: f32| ScheduledAction::immediate(t);
+
         // 效果比后摇晚（移动 / 火球）：忙到效果真的发生
         assert_eq!(
-            DecisionSlot::recovering(&TEST_TIMING, 1.0, 0.4),
+            DecisionSlot::recovering(&TEST_TIMING, &due_at(1.0), 0.4),
             DecisionSlot::Executing { until: 1.4 }
         );
         // 效果瞬间完成（近战 / 招架）：只忙一个后摇
         assert_eq!(
-            DecisionSlot::recovering(&TEST_TIMING, 1.0, 0.0),
+            DecisionSlot::recovering(&TEST_TIMING, &due_at(1.0), 0.0),
             DecisionSlot::Executing {
                 until: 1.0 + TEST_TIMING.recovery
             }
+        );
+    }
+
+    /// **基准是到点时刻，不是"发现到点的那一帧"**——忙碌窗口因此不随帧率漂移。
+    ///
+    /// 执行器是**轮询**的：它在 `execute_at` 之后的第一帧才发现到点，所以那一帧的
+    /// `now` 总比 `execute_at` 晚一点。曾经拿它当基准，每个动作的忙碌窗口于是都偏长
+    /// 0~1 个帧间隔（1s 的等待实测成 1.1s）。
+    #[test]
+    fn the_recovery_window_does_not_depend_on_when_the_executor_notices() {
+        // 声明于 0.0，前摇 0.2 → 本该在 0.2 落地
+        let declared = ScheduledAction::declared_at(TEST_TIMING, 0.0);
+        let until = match DecisionSlot::recovering(&TEST_TIMING, &declared, 0.0) {
+            DecisionSlot::Executing { until } => until,
+            other => panic!("收尾之后应当在执行中，实际 {other:?}"),
+        };
+
+        assert_eq!(
+            until,
+            declared.execute_at + TEST_TIMING.recovery,
+            "窗口 = 到点时刻 + 后摇，与执行器第几帧才发现无关"
         );
     }
 

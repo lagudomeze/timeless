@@ -252,7 +252,7 @@ pub fn move_action_executor_system(
                 cell: action.to_cell,
             });
         }
-        let recovery = DecisionSlot::recovering(timing, now, effect_delay);
+        let recovery = DecisionSlot::recovering(timing, schedule, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);
@@ -316,7 +316,7 @@ pub fn jump_action_executor_system(
             });
         }
         // 后摇（0.60s）覆盖整条弹道：落地那一刻才重新可决策
-        let recovery = DecisionSlot::recovering(timing, now, 0.0);
+        let recovery = DecisionSlot::recovering(timing, schedule, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);
@@ -351,6 +351,8 @@ pub fn ground_direction(axis: Vec2) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
 
     #[test]
     fn step_from_axis_snaps_to_one_orthogonal_cell() {
@@ -406,6 +408,10 @@ mod tests {
     fn move_action_keeps_the_actor_busy_until_arrival() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
+            // 手动时钟：执行器要一个会走的 `now` 才能判「到点了吗」
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                100,
+            )))
             .add_systems(Update, move_action_executor_system);
         let actor = app
             .world_mut()
@@ -423,10 +429,13 @@ mod tests {
                 from_cell: Cell::new(0, 0),
                 to_cell: Cell::new(0, 1),
             },
-            // 声明于 -1s：这条行动在"现在"已经到点了，执行器这一帧就该处理它
-            ScheduledAction::declared_at(MOVE_TIMING, -1.0),
+            // 前摇刚好走完：`due` 是严格大于，所以取 0.0 而让它在本帧（0.1）到点。
+            // 后摇从 `execute_at` 起算，因此忙碌窗口应当是 0.0 + 0.4。
+            ScheduledAction::immediate(0.0),
         ));
 
+        app.update();
+        // 执行器用 `Commands` 写槽，落地下一个 apply 才生效
         app.update();
 
         let DecisionSlot::Executing { until } = *app

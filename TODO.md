@@ -298,13 +298,11 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       两处偏离原设计并写进了 `docs/skills.md`：`Requirement` 不预先堆十条、
       `can_cast` 收事实而不是 `&World`。
       验收：221 测试全绿（219 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过。
-- [ ] **执行器按"看到的那一帧"算后摇 → 忙碌窗口多 0~1 帧**：8 个执行器都写
-      `DecisionSlot::recovering(timing, now, ..)`，而 `now` 是**发现 due 的那一帧**，
-      不是行动的 `execute_at`。于是 `WAIT_SECONDS = 1.0` 的等待实测 **1.1s**
-      （帧间隔 0.1s 时），每个动作的忙碌窗口都偏长一个帧间隔。
-      修法：`recovering` 收「效果真正发生的时刻」（`schedule.execute_at`）而不是 `now`。
-      **8 处统一，不是某一个动作的问题**（探针在 `feat/wait-action` 里验过）。
-      它会轻微改变所有动作的手感（变快一点点），要单独一批 + 逐帧验证。
+- [x] **执行器按"看到的那一帧"算后摇 → 忙碌窗口多 0~1 帧**（已修）：`recovering` 现在收
+      `&ScheduledAction`，以 `execute_at` 为基准（不再用"发现到点的那一帧的 `now`"）。
+      8 个执行器全部改过。验收：1s 的等待实测 `until = 1.0`（之前 1.1），
+      第 11 帧（0.1s×11）回到 `Idle`；
+      `the_recovery_window_does_not_depend_on_when_the_executor_notices` 钉住基准。
 - [ ] **等待时长要可配**：现在是 `timeline::WAIT_SECONDS = 1.0` 常量；
       等动作数值外置（`.ron`）之后应进技能表。
 - [ ] **暂停：情形 A 已由「等待」动作解决**（`feat/wait-action`）：玩家空闲时按空格
