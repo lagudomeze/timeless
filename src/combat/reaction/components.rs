@@ -47,7 +47,7 @@ pub struct Threatened;
 ///
 /// 它存在的理由是**别去读别人的资源来判断窗口开不开**：读"世界现在冻着吗"会让
 /// 判据随帧序漂移（原因集合每帧重建，而同帧里谁先谁后是脆的）。窗口自己记状态，
-/// 只把"玩家有没有放开世界"这一个外部信号（[`PauseReasons`](crate::timeline::PauseReasons)
+/// 只把"玩家有没有放开世界"这一个外部信号（[`PauseReasons`](crate::clock::PauseReasons)
 /// 里还有没有 `THREAT`）当作关窗的依据。
 ///
 /// ```text

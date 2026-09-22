@@ -42,6 +42,7 @@
 use bevy::prelude::*;
 
 pub mod ai;
+pub mod clock;
 pub mod combat;
 pub mod input;
 pub mod interaction;
@@ -54,6 +55,7 @@ pub mod voxel_render;
 pub mod world;
 
 pub use ai::{AiPlugin, AiSet};
+pub use clock::{ClockPlugin, ClockSet};
 pub use combat::{CombatPlugin, CombatSet};
 pub use input::{InputPlugin, InputSet};
 pub use interaction::{InteractionPlugin, InteractionSet};
@@ -61,7 +63,7 @@ pub use movement::{MovementPlugin, MovementSet};
 pub use presentation::{PreloadSet, PresentationPlugin, PresentationSet};
 pub use skills::SkillPlugin;
 pub use spawn::{AssemblySet, SpawnPlugin, SpawnSet};
-pub use timeline::{ClockSet, TimelinePlugin, TimelineSet};
+pub use timeline::{TimelinePlugin, TimelineSet};
 pub use voxel_render::{VoxelRenderPlugin, VoxelRenderSet};
 pub use world::{WorldPlugin, WorldSet};
 
@@ -102,6 +104,8 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         configure_pipeline(app);
         app.add_plugins((
+            // 时钟是通用设施，各领域都依赖它，先装
+            ClockPlugin,
             WorldPlugin,
             VoxelRenderPlugin,
             PresentationPlugin,
@@ -144,6 +148,7 @@ pub(crate) mod test_support {
             .insert_resource(ButtonInput::<bevy::input::mouse::MouseButton>::default())
             .insert_resource(bevy::input::mouse::AccumulatedMouseMotion::default())
             .add_plugins((
+                ClockPlugin,
                 WorldPlugin,
                 PresentationPlugin,
                 SpawnPlugin,
@@ -170,6 +175,7 @@ mod tests {
     use bevy::world_serialization::WorldSerializationPlugin;
     use std::time::Duration;
 
+    use crate::clock::{PauseReasons, THREAT};
     use crate::combat::defense::{Dodging, Parrying, ROLL_COST, RollCommand, Stamina};
     use crate::combat::skills::{FIREBALL_TIMING, FireballAction, fireball_action_scene};
     use crate::combat::{
@@ -179,8 +185,7 @@ mod tests {
     };
     use crate::movement::{Cell, Jumping, MOVE_TIMING, MoveAction, MoveSpeed, Velocity};
     use crate::timeline::{
-        ActionOf, DecisionSlot, FOCUS_MAX, Focus, InputDriven, PauseReasons, ScheduledAction,
-        THREAT, UndoCommand,
+        ActionOf, DecisionSlot, FOCUS_MAX, Focus, InputDriven, ScheduledAction, UndoCommand,
     };
     use crate::world::{TerrainConfig, ground_position};
 
@@ -241,6 +246,7 @@ mod tests {
             // F5 重置由 spawn 消费（本测试 App 没有 SpawnPlugin）
             .add_message::<crate::spawn::ResetBattle>()
             .add_plugins((
+                ClockPlugin,
                 InputPlugin,
                 // 输入域要写的 `PointerCommand` 由交互域注册
                 InteractionPlugin,

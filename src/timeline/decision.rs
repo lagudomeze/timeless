@@ -254,6 +254,28 @@ impl<I: Iterator> FirstReady for I {}
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct InputDriven;
 
+/// 有 `InputDriven`（玩家）**还没决定**吗 → 让世界停下来等他。
+///
+/// 判据是 [`DecisionSlot::ready`]（"决定了没有"），不是"槽空不空"：
+/// 声明之后槽进 `Executing`，那时他已经决定了，世界不该再等他。
+///
+/// 这是「无回合」里唯一的时间门控需求：敌人不等玩家，玩家一空闲，世界就停。
+/// 没有 `InputDriven` 单位时（单测、组装之前）一律当作「不等输入」，避免把世界冻住。
+///
+/// **每帧断言**：还等着就再说一次。不需要谁去"撤销"——下一帧玩家动了，
+/// 这里不再断言，原因自然从集合里消失（见 [`PauseRequest`](crate::clock::PauseRequest)）。
+///
+/// 它住在**本域**而不是 [`crate::clock`]：只有时间线认识决策槽。
+/// 时钟层是通用设施，谁有理由停表谁按自己的事实写一条断言。
+pub fn compute_player_awaiting_system(
+    actors: Query<&DecisionSlot, With<InputDriven>>,
+    mut pause: MessageWriter<crate::clock::PauseRequest>,
+) {
+    if actors.iter().any(|slot| slot.is_idle()) {
+        pause.write(crate::clock::PauseRequest::Pause(crate::clock::AWAITING));
+    }
+}
+
 /// 撤销：把玩家那条**还没到点**的行动撤掉——触发 [`ActionCancelled`]、销毁
 /// 行动实体、清空决策槽。
 ///
