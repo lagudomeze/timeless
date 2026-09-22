@@ -341,7 +341,7 @@ pub fn fireball_action_executor_system(
             effect_delay = flight_time(origin, action.target_cell);
             commands.spawn_scene(fireball_scene(origin, action.target_cell, *faction));
         }
-        let recovery = DecisionSlot::recovering(timing, now, effect_delay);
+        let recovery = DecisionSlot::recovering(timing, schedule, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);

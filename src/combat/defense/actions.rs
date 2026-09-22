@@ -171,7 +171,7 @@ pub fn roll_executor_system(
                 },
             ));
         }
-        let recovery = DecisionSlot::recovering(timing, now, effect_delay);
+        let recovery = DecisionSlot::recovering(timing, schedule, effect_delay);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);
@@ -260,7 +260,7 @@ pub fn parry_executor_system(
                 expires_at: now + PARRY_SECS,
             });
         }
-        let recovery = DecisionSlot::recovering(timing, now, 0.0);
+        let recovery = DecisionSlot::recovering(timing, schedule, 0.0);
         commands.entity(entity).despawn();
         if let Ok(mut actor_commands) = commands.get_entity(actor) {
             actor_commands.insert(recovery);

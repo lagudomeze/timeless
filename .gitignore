@@ -12,3 +12,6 @@
 *.log
 
 rust/target
+
+# 本地调度 / 会话状态（不属于仓库）
+.claude/
