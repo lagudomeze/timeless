@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 178 通过（176 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 224 通过（222 单元 + 2 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -25,18 +25,24 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - `movement` `Cell` + `MoveGoal` 格子决策、`Transform` + `Velocity` 连续位移、
   移动 / 跳跃 / 翻滚载荷与执行器
 - `combat` 生命 / 护甲公式 / 碰撞与近战扇形 / 攻击实体生命周期 / 箭矢与横扫 /
-  火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 / 招架反制 / 威胁检测（反应系统）/
-  `SKILLS` 注册表与技能菜单
-- `timeline` **无回合**调度：`DecisionSlot` 三态（`Empty` / `Windup` /
-  `Recovery { until }`）直接写在行动者身上，`ScheduledAction` 的时间戳回答"到点了没有"；
-  暂停是**每帧断言**——谁这一帧还想停表就写一条 `PauseRequest::Pause(原因)`，
-  `process_pause_requests` 每帧重建 `PauseReasons`，唯一的时钟写入点是帧末的 `apply_clock`；
-  行动归行动者所有（`ActionOf` / `Actions`，人没了行动跟着没），`Focus` 让玩家把一次前摇买掉
-- `ai` 六种意图（含威胁预判）+ 声明行动
-- `input` 只翻译（含 `F5` → `ResetBattle`、空格 → `PauseRequest`、`PlayerTakeover`）·
+  火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 / 招架反制 / 威胁检测
+  （7 个子域，仍由一个 `CombatPlugin` 直接接线；M28 是待办的收尾）
+- `timeline` **无回合**调度：`DecisionSlot` 两态（`Idle { intent }` / `Executing { until }`，
+  见 M23）写在行动者身上；`is_idle()` 问"能不能占槽"、`ready()` 问"要不要等他"；
+  行动归行动者所有（`ActionOf` / `Actions`，人没了行动跟着没），`Focus` 让玩家把一次前摇买掉；
+  另有「等待」动作（`wait.rs`，玩家空格绑定的"让我想想"）
+- `clock` **通用冻结设施**（不属于任何领域）：`PauseRequest` 每帧断言 +
+  `ManualPause` 布尔，`process_pause_requests` 是**唯一的 `Time<Virtual>` 写入点**。
+  谁拥有事实谁断言——`timeline` 说 `awaiting`、`combat::reaction` 说 `threat`、
+  `input` 只发消息
+- `ai` 六种战术（含威胁预判）+ 声明行动
+- `input` 只翻译（`F5` → `ResetBattle`、**空格 → 等待**、`P` → 手动暂停、`PlayerTakeover`）·
   `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
 - `presentation` 相机 / 单位纸片与贴地阴影 / 装饰 / 中文日志 / 英文 HUD
 - `spawn` 组装车间（消费 `ResetBattle`，不认识按键）
+
+领域：`world` · `voxel_render` · `movement` · `combat`（7 子域）· `skills`（静态定义）·
+`timeline` · `clock` · `ai` · `input` · `interaction` · `presentation` · `spawn`。
 
 域地图与跨域契约见 [`docs/domain.md`](docs/domain.md)，文档入口是
 [`docs/index.md`](docs/index.md)（`architecture.md` / `components.md` 正在被取代，只作历史参考）。
