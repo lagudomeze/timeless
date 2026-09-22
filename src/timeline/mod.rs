@@ -54,6 +54,7 @@
 //! | [`decision`] | 谁能决策（槽 + 入口）；这一手怎么被撤掉 / 收尾（undo / recovery） |
 //! | [`ownership`] | 这一手是谁的（`ActionOf` / `Actions`）；「行动者没了，行动也跟着没」 |
 //! | [`schedule`] | 行动实体身上与时间有关的数据：这一手何时落地、这类动作的节奏、能不能撤 |
+//! | [`wait`] | 「等待」动作：占住槽一小段时间 = 我要停一下（玩家空格的绑定） |
 //! | [`focus`] | Focus 一族（⚠️ 不是时间线的概念，见该文件顶部的警告） |
 //!
 //! 冻结世界的设施**不在本域**了：它是通用的（不认识决策槽），住在 [`crate::clock`]。
@@ -68,6 +69,7 @@ pub mod focus;
 pub mod ownership;
 pub mod plugin;
 pub mod schedule;
+pub mod wait;
 
 pub use decision::{
     DecisionSlot, FirstReady, HasDecisionSlot, InputDriven, Intent, Target,
@@ -83,6 +85,10 @@ pub use focus::{recover_focus_system, track_pending_focus_system};
 pub use ownership::{ActionOf, Actions};
 pub use plugin::TimelinePlugin;
 pub use schedule::{ActionTiming, ScheduledAction, Uncancellable};
+pub use wait::{
+    WAIT_ABILITY, WAIT_SECONDS, WAIT_TIMING, WaitAction, WaitCommand, declare_wait_system,
+    register_wait_ability_system, wait_action_scene, wait_executor_system,
+};
 
 /// 时间线在 `Update` 中的系统集（排在输入之后、AI 与执行器之前）。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -111,7 +117,10 @@ pub(crate) mod test_support {
     /// 各文件的单测复用它，保证跑的是真实的域内顺序。
     pub fn timeline_app() -> App {
         let mut app = App::new();
+        // 行动实体用 `spawn_scene` 建，所以需要 `AssetServer` + `ScenePlugin`
         app.add_plugins(MinimalPlugins)
+            .add_plugins(bevy::asset::AssetPlugin::default())
+            .add_plugins(bevy::scene::ScenePlugin)
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 100,
             )))

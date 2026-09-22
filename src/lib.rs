@@ -175,7 +175,7 @@ mod tests {
     use bevy::world_serialization::WorldSerializationPlugin;
     use std::time::Duration;
 
-    use crate::clock::{PauseReasons, THREAT};
+    use crate::clock::{AWAITING, PauseReasons, THREAT};
     use crate::combat::defense::{Dodging, Parrying, ROLL_COST, RollCommand, Stamina};
     use crate::combat::skills::{FIREBALL_TIMING, FireballAction, fireball_action_scene};
     use crate::combat::{
@@ -292,6 +292,7 @@ mod tests {
     /// **连按两次必须夹一次松手**：`just_pressed` 只在按键状态**由松变按**的那一帧为真，
     /// 不松手就直接再按一次，第二次不会被识别成"刚按下"（踩过：探针里连按两次空格，
     /// 第二次毫无反应，看起来像逻辑坏了，其实是测试没松手）。
+    #[allow(dead_code)] // 暂时没有调用者；下一个"连按两次"的测试会需要它
     fn release(app: &mut App, key: KeyCode) {
         key_event(app, key, bevy::input::ButtonState::Released);
     }
@@ -1032,27 +1033,20 @@ mod tests {
         );
     }
 
-    /// **回归：威胁冻住世界时，空格能把世界放开——"忍受伤害"也是一种决策。**
+    /// **回归：威胁冻住世界时，玩家声明一条「等待」就能让世界继续跑。**
     ///
-    /// 曾经的死结：表态的唯一路径是"换一手"（比较行动实体），而玩家在**后摇**里
-    /// 既声明不了（`first_ready` 要求槽空）也撤不了（行动实体已销毁），
-    /// 窗口永远等不到表态。
-    ///
-    /// 现在两件事一起保证有出路：
-    /// 1. 空格 `Toggle` 在"冻着"时**清空**原因集合，世界立刻恢复；
-    /// 2. 窗口关掉后 `dismissed` 记住这次已被玩家放开，**同一个来源不再重开**。
-    ///
-    /// 代价是那一击照常落地——这是玩家自己的选择，不是漏洞。
+    /// 空格现在绑定到等待动作（占槽 1s），所以路径是：
+    /// 声明 → 槽被占 → `awaiting` 不再断言；威胁窗口靠"原因集合被清空"前向关窗
+    /// （见 `combat::reaction`）。代价是那一击照常落地——**忍受伤害也是一种决策**。
     #[test]
-    fn space_releases_the_world_from_a_threat_freeze() {
+    fn a_declared_wait_lets_a_threat_frozen_world_continue() {
+        use crate::combat::Threatens;
+
         let mut app = test_app();
         let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
         let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
 
-        // 玩家在**后摇**里：表态路径（换一手）此刻走不通
-        app.world_mut()
-            .entity_mut(player)
-            .insert(DecisionSlot::Executing { until: 999.0 });
+        // 玩家空闲（世界本来就冻着等他）＋ 敌人瞄着他脚下的格
         app.world_mut().spawn((
             ActionOf(enemy),
             FIREBALL_TIMING,
@@ -1061,32 +1055,26 @@ mod tests {
                 cells: vec![Cell::new(0, 0)],
             },
         ));
-
         app.update();
         assert!(
             app.world().resource::<PauseReasons>().contains(THREAT),
             "威胁出现 → 世界冻住等反应"
         );
 
-        // 按空格：放开世界。那一击照常落地（玩家选择忍受）
+        // 按空格 = 声明一条「等待」：槽被占住 → awaiting 不再断言 → 世界继续跑
         press(&mut app, KeyCode::Space);
-        app.update();
-        release(&mut app, KeyCode::Space);
-
-        let reasons = app.world().resource::<PauseReasons>().labels();
-        assert!(
-            !reasons.contains(&THREAT),
-            "空格应当清掉威胁冻结，实际 {reasons:?}"
-        );
-
-        // 而且**不会被立刻冻回来**：这次威胁已经被玩家放开过了
-        for frame in 0..5 {
+        for _ in 0..3 {
             app.update();
-            assert!(
-                !app.world().resource::<PauseReasons>().contains(THREAT),
-                "第 {frame} 帧：同一次威胁不该反复冻世界，否则玩家按空格也走不掉"
-            );
         }
+        assert!(
+            slot_of(&app, player).ready(),
+            "等待也要占槽：声明之后他就算「已经决定了」"
+        );
+        let labels = app.world().resource::<PauseReasons>().labels();
+        assert!(
+            !labels.contains(&AWAITING),
+            "awaiting 应当消失（槽不空闲了），实际 {labels:?}"
+        );
     }
 
     /// 打断：命中打向一个**正在前摇**的单位 → 那一手被打掉，决策槽立刻清空。
