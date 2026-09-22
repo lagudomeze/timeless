@@ -255,6 +255,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<PauseReasons>()
+            .init_resource::<crate::timeline::ManualPause>()
             .init_resource::<HudCache>()
             .add_systems(Update, update_timeline_system);
         app

@@ -8,7 +8,7 @@ use crate::combat::skills::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill
 use crate::movement::{JumpCommand, MoveCommand};
 use crate::presentation::{CameraRig, ToggleHelp};
 use crate::spawn::ResetBattle;
-use crate::timeline::{MANUAL, PauseRequest, PlayerTakeover, UseFocus};
+use crate::timeline::{PauseRequest, PlayerTakeover, UseFocus};
 
 /// `Q/W/E/R` 的技能热键绑定（默认值；用户自定义留到配置外置那一步）。
 ///
@@ -175,7 +175,7 @@ pub fn pause_input_system(
     mut requests: MessageWriter<PauseRequest>,
 ) {
     if keys.just_pressed(KeyCode::Space) {
-        requests.write(PauseRequest::Toggle(MANUAL));
+        requests.write(PauseRequest::Toggle);
     }
 }
 
@@ -345,7 +345,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<PauseReasons>()
-            .init_resource::<crate::timeline::LatchedReasons>()
+            .init_resource::<crate::timeline::ManualPause>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<Captured>()
             .add_message::<PauseRequest>()
@@ -354,7 +354,6 @@ mod tests {
                 (
                     pause_input_system,
                     capture,
-                    crate::timeline::apply_pause_toggles_system,
                     crate::timeline::process_pause_requests,
                 )
                     .chain(),
@@ -383,14 +382,15 @@ mod tests {
         release_space(&mut app);
         assert_eq!(
             app.world().resource::<Captured>().0,
-            vec![PauseRequest::Toggle(MANUAL)],
+            vec![PauseRequest::Toggle],
             "空格只发一条翻转，不是每帧断言"
         );
+        // 手动暂停**不写原因**：世界停不停由 `Time<Virtual>` 回答（见 clock.rs）
         for _ in 0..3 {
             app.update();
             assert!(
-                app.world().resource::<PauseReasons>().contains(MANUAL),
-                "松手之后也要一直断言，手动暂停才会一直有效"
+                app.world().resource::<Time<Virtual>>().is_paused(),
+                "松手之后世界要一直冻着，手动暂停才有效"
             );
         }
 
@@ -402,57 +402,49 @@ mod tests {
         app.update();
         assert_eq!(
             app.world().resource::<Captured>().0,
-            vec![PauseRequest::Toggle(MANUAL)],
+            vec![PauseRequest::Toggle],
             "再按一下还是翻转（不是 Resume）"
-        );
-        assert!(
-            !app.world().resource::<PauseReasons>().is_frozen(),
-            "翻回去之后世界该恢复流动"
         );
         release_space(&mut app);
         app.update();
-        assert!(!app.world().resource::<PauseReasons>().is_frozen());
+        assert!(
+            !app.world().resource::<Time<Virtual>>().is_paused(),
+            "翻回去之后世界该恢复流动"
+        );
     }
 
-    /// **回归：空格是"翻转冻结状态"，不是从原因集合反推手动开关。**
+    /// 空格的语义：**翻转世界的冻结状态**，而且手动暂停**不留原因**。
     ///
-    /// 曾经的做法是"从 `PauseReasons` 反推手动暂停开着吗"：被别人冻住时集合里
-    /// 只有别人的原因（不含 `manual`），于是被读成"还没开"，空格跑去**又暂停一次**；
-    /// 而 `Resume` 那条路想清空原因，却清不掉每帧重新断言的那种。
-    ///
-    /// 现在空格无条件发 `Toggle(MANUAL)`，翻转由时间线按"**此刻冻着吗**"落地：
-    /// 冻着就放开。这条钉住"没冻的时候按 = 停住"这一半（另一半在
-    /// `space_releases_the_world_from_a_threat_freeze`）。
+    /// 这条守着新设计的两半：停住时靠 `Time<Virtual>` 记状态（不写集合），
+    /// 放开时清空集合。判据来自"入帧时冻着吗"，不是从原因集合反推。
     #[test]
     fn space_toggles_the_world_frozen_state() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<PauseReasons>()
-            .init_resource::<crate::timeline::LatchedReasons>()
+            .init_resource::<crate::timeline::ManualPause>()
             .init_resource::<ButtonInput<KeyCode>>()
             .add_message::<PauseRequest>()
             .add_systems(
                 Update,
-                (
-                    pause_input_system,
-                    crate::timeline::apply_pause_toggles_system,
-                    crate::timeline::process_pause_requests,
-                )
-                    .chain(),
+                (pause_input_system, crate::timeline::process_pause_requests).chain(),
             );
 
-        // 世界没冻 → 按空格把它停住
+        // 世界没冻 → 按空格把它停住（不写原因，时钟自己记着）
         app.update();
-        assert!(!app.world().resource::<PauseReasons>().is_frozen());
+        assert!(!app.world().resource::<Time<Virtual>>().is_paused());
 
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Space);
         app.update();
-        assert_eq!(
-            app.world().resource::<PauseReasons>().labels(),
-            vec![MANUAL],
+        assert!(
+            app.world().resource::<Time<Virtual>>().is_paused(),
             "没冻的时候按空格 → 停住"
+        );
+        assert!(
+            app.world().resource::<PauseReasons>().labels().is_empty(),
+            "手动暂停不往集合里写原因（集合是给「谁在停表」看的）"
         );
 
         // 松手再按一次：冻着 → 放开
@@ -464,8 +456,8 @@ mod tests {
             .press(KeyCode::Space);
         app.update();
         assert!(
-            !app.world().resource::<PauseReasons>().is_frozen(),
-            "冻着的时候按空格 → 放开，而且不留下手动开关"
+            !app.world().resource::<Time<Virtual>>().is_paused(),
+            "冻着的时候按空格 → 放开"
         );
     }
 }

@@ -3,7 +3,7 @@
 //! ```text
 //! TimelineSet（帧中）：断言暂停原因（PC 没决定）→ 记 Focus 请求
 //!                     → 撤销（右键与「玩家动手了」在此汇合）→ 后摇恢复 → Focus 回复
-//! ClockSet  （帧末）：暂停请求 → 原因集合（每帧重建）→ apply_clock（唯一的时钟写入）
+//! ClockSet  （帧末）：暂停请求 → 原因集合 + 手动暂停 → 时钟（唯一写入点在 process_pause_requests）
 //! ```
 //!
 //! 本域**不认识按键**：手动暂停的"按哪个键、按一下是暂停还是恢复"由
@@ -14,8 +14,7 @@ use bevy::prelude::*;
 use super::ClockSet;
 use super::TimelineSet;
 use super::clock::{
-    LatchedReasons, PauseReasons, PauseRequest, apply_clock, apply_pause_toggles_system,
-    compute_player_awaiting_system, process_pause_requests,
+    ManualPause, PauseReasons, PauseRequest, compute_player_awaiting_system, process_pause_requests,
 };
 use super::decision::{recovery_system, undo_system};
 use super::events::{ActionBlocked, PlayerTakeover, UndoCommand, UseFocus};
@@ -28,8 +27,8 @@ pub struct TimelinePlugin;
 impl Plugin for TimelinePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PauseReasons>()
-            // 手动暂停的闩：与「本帧谁在停表」分开，免得从原因集合反推玩家意图
-            .init_resource::<LatchedReasons>()
+            // 玩家的手动暂停：一个布尔（原因集合只装「别人为什么在停表」）
+            .init_resource::<ManualPause>()
             .init_resource::<Focus>()
             .init_resource::<PendingFocus>()
             // 暂停断言：写方是 input（手动）、本域的等输入系统、combat 的威胁检测
@@ -46,10 +45,6 @@ impl Plugin for TimelinePlugin {
             .add_systems(
                 Update,
                 (
-                    // 暂停翻转**先落地**：`Toggle`（玩家按空格）必须早于各领域的断言，
-                    // 否则同一帧里"威胁还在断言 Pause(THREAT)"会把刚清掉的原因加回来，
-                    // 玩家按空格等于没按。威胁检测也因此能读到"玩家已放开"。
-                    apply_pause_toggles_system,
                     // 暂停原因先算：后面的声明系统不需要知道冻结与否
                     compute_player_awaiting_system,
                     // Focus 请求只在本帧有效，慢一拍就会扣错账
@@ -65,10 +60,9 @@ impl Plugin for TimelinePlugin {
             )
             .add_systems(
                 Update,
-                // 帧末结算钟表：先把这一帧的断言收齐成原因集合，再落到时钟上
-                (process_pause_requests, apply_clock)
-                    .chain()
-                    .in_set(ClockSet),
+                // 帧末：暂停请求 → 原因集合 / 手动暂停 → 时钟。
+                // **唯一的时钟写入点**就在 process_pause_requests 里（apply_clock 已并入）
+                process_pause_requests.in_set(ClockSet),
             );
     }
 }
