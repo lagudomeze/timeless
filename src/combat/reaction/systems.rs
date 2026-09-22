@@ -14,14 +14,14 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-use crate::clock::{PauseReasons, PauseRequest, THREAT};
+use crate::clock::{PauseRequest, THREAT};
 use crate::combat::Faction;
 use crate::movement::Cell;
 use crate::timeline::{ActionOf, InputDriven, ScheduledAction};
 
-use super::components::{TargetCell, ThreatWindow, Threatened, Threatens};
+use super::components::{CounterSuggestion, ReactionSlot, TargetCell, Threatened, Threatens};
 
-/// 每帧检测：**有没有敌对威胁瞄着玩家**，有就把世界按住、等玩家表态。
+/// 每帧检测：**有没有敌对威胁瞄着玩家**，有就开一个反应窗口并按住世界。
 ///
 /// 判据（两条取或）：
 ///
@@ -32,75 +32,111 @@ use super::components::{TargetCell, ThreatWindow, Threatened, Threatens};
 /// 「敌对」这一条不能省：玩家自己的火球砸在自己脚下时，那是**自己**说了算的事，
 /// 把世界冻住只会让那发火球永远飞不出去。
 ///
-/// ## 窗口怎么开、怎么关
+/// ## 窗口的生死
 ///
-/// 窗口状态由本域自己维护（[`ThreatWindow`]），只把"玩家有没有放开世界"
-/// 当作外部信号：`PauseRequest::Toggle` 会在 [`apply_pause_toggles_system`] 里
-/// **清空**原因集合（那一步排在各领域断言之前），于是本系统读到"集合里没有 `THREAT`"
-/// 就知道玩家放行了。
+/// - **开**：玩家身上还没有窗口、且有来源瞄着他 → 取**最先落地**的那一个当
+///   `threat`（多威胁一次只处理一个），算 `suggestions`，挂 [`ReactionSlot`]；
+/// - **断言**：窗口在且 `!resolved` → 每帧写 `Pause(THREAT)`。
+///   世界冻结时来源与移动都停在半路，窗口既然开着就该一直开着；
+/// - **关**：`resolved`（玩家表过态）或 `threat` 没了（被打断 / 落地 / 销毁）→ 移除窗口。
+///   两者都是"没人再要求停表"了，不需要谁去撤销暂停。
 ///
-/// 三条规则：
-///
-/// - **开**：命中判据、且窗口没开 → 断言 `Pause(THREAT)`；
-/// - **维持**：窗口开着期间，只要还有来源瞄着玩家就继续断言——世界冻结时移动与
-///   火球都停在半路，窗口既然开着就该一直开着（否则玩家来不及反应）；
-/// - **关**：集合里没有 `THREAT` 了（玩家放行）→ 关窗并记 `dismissed`，
-///   **同一次威胁不再重开**。那一击照常落地——**忍受伤害也是一种决策**。
-///
-/// [`apply_pause_toggles_system`]: crate::timeline::apply_pause_toggles_system
+/// **表态通道**见 [`crate::combat::reaction::resolve_reaction_system`]。
 #[allow(clippy::too_many_arguments)]
 pub fn detect_threat_system(
+    mut commands: Commands,
     threats: Query<(Entity, &ScheduledAction, &Threatens, &ActionOf)>,
     projectiles: Query<(Entity, &TargetCell, &Faction)>,
-    players: Query<(&Cell, &Faction), With<InputDriven>>,
+    mut players: Query<(Entity, &Cell, Option<&mut ReactionSlot>), With<InputDriven>>,
     actors: Query<&Faction>,
+    catalogue: Res<crate::skills::SkillRegistry>,
+    focus: Res<crate::timeline::Focus>,
     time: Res<Time<Virtual>>,
-    open: Res<PauseReasons>,
-    mut window: ResMut<ThreatWindow>,
     mut pause: MessageWriter<PauseRequest>,
 ) {
     let now = time.elapsed_secs();
-    let player_cells: HashSet<Cell> = players.iter().map(|(cell, _)| *cell).collect();
-    let player_factions: Vec<Faction> = players.iter().map(|(_, faction)| *faction).collect();
-    let hostile = |faction: &Faction| !player_factions.contains(faction);
-    let threatens_player = |cells: &[Cell]| cells.iter().any(|cell| player_cells.contains(cell));
+    for (player, cell, slot) in &mut players {
+        // 被我方阵营"光顾"的格不算威胁（自己人打自己人另有规则）
+        let hostile_to = |faction: &Faction| *faction != Faction::Player;
+        let threatens_me = |cells: &[Cell]| cells.contains(cell);
 
-    // 本帧仍瞄着玩家的来源（不管有没有惊动过）
-    let mut aiming: Vec<Entity> = Vec::new();
-    for (entity, schedule, threat, action_of) in &threats {
-        if schedule.pending(now)
-            && actors.get(action_of.actor()).is_ok_and(hostile)
-            && threatens_player(&threat.cells)
-        {
-            aiming.push(entity);
+        // 本帧瞄着这个玩家的全部来源，连带它的落地时刻
+        let mut aiming: Vec<(Entity, f32)> = Vec::new();
+        for (entity, schedule, threat, action_of) in &threats {
+            if schedule.pending(now)
+                && actors.get(action_of.actor()).is_ok_and(hostile_to)
+                && threatens_me(&threat.cells)
+            {
+                aiming.push((entity, schedule.execute_at));
+            }
+        }
+        for (entity, target, faction) in &projectiles {
+            if hostile_to(faction) && threatens_me(&[target.0]) {
+                // 投射物没有 `execute_at`：它"落地"就是现在，优先级最低
+                aiming.push((entity, f32::MAX));
+            }
+        }
+
+        match slot {
+            // 已经有窗口：表态过就关，来源没了也关
+            Some(slot) => {
+                let threat_gone = !aiming.iter().any(|(entity, _)| *entity == slot.threat);
+                if threat_gone {
+                    // 威胁自己消失了（打断 / 落地 / 销毁）→ 关窗
+                    commands.entity(player).remove::<ReactionSlot>();
+                    continue;
+                }
+                // 表过态的窗口**留着但不再断言**：留着是为了记住"这个来源已经问过了"，
+                // 否则下一帧又会当新威胁重新开窗、把世界冻回来。
+                if !slot.resolved {
+                    pause.write(PauseRequest::Pause(THREAT));
+                }
+            }
+            // 没窗口：有威胁就开一个（取最先落地的那一个）
+            None => {
+                let Some((threat, _)) = aiming.iter().min_by(|a, b| a.1.total_cmp(&b.1)).copied()
+                else {
+                    continue;
+                };
+                let suggestions = counter_suggestions(&catalogue, focus.current);
+                debug!("⚔ 敌对威胁逼近玩家：冻结世界等反应");
+                commands.entity(player).insert(ReactionSlot {
+                    threat,
+                    suggestions,
+                    resolved: false,
+                });
+                pause.write(PauseRequest::Pause(THREAT));
+            }
         }
     }
-    for (entity, target, faction) in &projectiles {
-        if hostile(faction) && threatens_player(&[target.0]) {
-            aiming.push(entity);
-        }
-    }
+}
 
-    // 玩家放开了世界（原因集合里没有 THREAT 了）→ 关窗，并记住"这次别重开"
-    if window.open && !open.contains(THREAT) {
-        window.open = false;
-        window.dismissed = true;
-    }
-
-    if !window.open && !window.dismissed && !aiming.is_empty() {
-        window.open = true;
-        debug!("⚔ 敌对威胁逼近玩家：冻结世界等反应");
-    }
-
-    if window.open {
-        // 窗口开着期间维持冻结；来源全没了就自然关掉
-        if aiming.is_empty() {
-            window.open = false;
-            window.dismissed = false;
-        } else {
-            pause.write(PauseRequest::Pause(THREAT));
-        }
-    }
+/// 能拿哪几手反制：**遍历目录里所有 `counter != None` 的技能**。
+///
+/// 没有任何硬编码的白名单——"翻滚能躲火球"是翻滚自己的 `counter` 字段说的。
+/// 付不起的那条**仍然列出来**（`affordable: false`），HUD 画成不可选：
+/// 玩家看得见"我本来能用招架，但精力不够"，这比看不见更有信息量。
+pub fn counter_suggestions(
+    catalogue: &crate::skills::SkillRegistry,
+    focus: u32,
+) -> Vec<CounterSuggestion> {
+    catalogue
+        .all()
+        .iter()
+        .filter_map(|def| {
+            let cost = def.counter?;
+            let affordable = match cost {
+                crate::skills::CounterCost::Free => true,
+                crate::skills::CounterCost::Resource(needed) => focus >= needed,
+                crate::skills::CounterCost::CancelDecision => true,
+            };
+            Some(CounterSuggestion {
+                ability: def.id,
+                cost,
+                affordable,
+            })
+        })
+        .collect()
 }
 
 /// 把本帧仍瞄着玩家的来源落成 [`Threatened`] 标记（可读的诊断锚点）——排在检测之后。
@@ -136,10 +172,53 @@ pub fn mark_threatened_system(
     }
 }
 
+/// 玩家表态：**技能键反制 / 右键放弃** → 标记窗口 `resolved`。
+///
+/// 它只做一件事——把"我表态了"写下来。真正的反制行动由**各技能自己的声明
+/// 系统**物化（谁声明谁物化，没有全局派发器），所以本系统不生成任何行动实体。
+///
+/// 窗口一 `resolved`，[`detect_threat_system`] 下一帧就不再断言
+/// `Pause(THREAT)`：**理由消失 = 世界动**（断言式暂停的红利）。
+///
+/// **右键放弃不减损任何东西**：那一击照常落地——**忍受伤害也是一种决策**。
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReactionAnswer {
+    /// 用这一手反制（技能键）
+    Counter(crate::skills::AbilityId),
+    /// 放弃这一轮反制（右键）
+    Abandon,
+}
+
+pub fn resolve_reaction_system(
+    mut answers: MessageReader<ReactionAnswer>,
+    mut players: Query<&mut ReactionSlot, With<InputDriven>>,
+) {
+    let answers: Vec<ReactionAnswer> = answers.read().copied().collect();
+    if answers.is_empty() {
+        return;
+    }
+    for mut slot in &mut players {
+        if slot.resolved {
+            continue;
+        }
+        // 任意一条表态都算数：窗口只问"表态了没有"，不问"选了哪一手"
+        if answers.iter().any(|answer| match answer {
+            ReactionAnswer::Counter(ability) => {
+                slot.suggestions.iter().any(|s| s.ability == *ability)
+            }
+            ReactionAnswer::Abandon => true,
+        }) {
+            slot.resolved = true;
+            debug!("🛡 玩家已就这次威胁表态：解冻");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timeline::ActionTiming;
+    use crate::skills::{AbilityCategory, AbilityDef, AbilityId, CombatTags, SkillRegistry};
+    use crate::timeline::{ActionTiming, Focus};
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
 
@@ -153,20 +232,51 @@ mod tests {
         captured.0.extend(requests.read().cloned());
     }
 
+    /// 目录里放两条能当反制的技能（一条白送、一条花 1 点 Focus），外加一条不能的。
+    fn catalogue() -> SkillRegistry {
+        let mut registry = SkillRegistry::default();
+        let def = |id, counter| AbilityDef {
+            id,
+            category: AbilityCategory::Movement,
+            timing: TEST_TIMING,
+            targeting: crate::skills::TargetSelector::SelfOnly,
+            cost: 0,
+            requirements: &[],
+            combat: CombatTags::COMMITTED,
+            counter,
+            power: 0,
+        };
+        registry.register(def(AbilityId::Roll, Some(crate::skills::CounterCost::Free)));
+        registry.register(def(
+            AbilityId::Parry,
+            Some(crate::skills::CounterCost::Resource(2)),
+        ));
+        registry.register(def(AbilityId::Move, None)); // 不能当反制
+        registry
+    }
+
     fn threat_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 100,
             )))
-            .init_resource::<ThreatWindow>()
-            .init_resource::<PauseReasons>()
-            .init_resource::<crate::clock::ManualPause>()
+            .insert_resource(catalogue())
+            .init_resource::<Focus>()
             .init_resource::<Captured>()
             .add_message::<PauseRequest>()
+            .add_message::<ReactionAnswer>()
             .add_systems(
                 Update,
-                (detect_threat_system, mark_threatened_system, capture).chain(),
+                (
+                    // 表态先落地：这样"按下技能键"那一帧就已经不算"还没表态"，
+                    // 世界当帧就能动（与生产流水线里 `resolve` 排在 `detect` 之前一致）
+                    resolve_reaction_system,
+                    detect_threat_system,
+                    mark_threatened_system,
+                    capture,
+                )
+                    .chain(),
             );
         app
     }
@@ -185,9 +295,13 @@ mod tests {
         app.world().resource::<Captured>().0.clone()
     }
 
-    /// 敌对威胁瞄准玩家 → 请求冻结；威胁消失 → 请求解冻。
+    fn slot_of(app: &App, player: Entity) -> Option<ReactionSlot> {
+        app.world().get::<ReactionSlot>(player).cloned()
+    }
+
+    /// 敌对威胁瞄准玩家 → 开窗口 + 请求冻结；来源消失 → 关窗、不再断言。
     #[test]
-    fn a_threat_on_the_players_cell_asks_for_a_freeze() {
+    fn a_threat_on_the_players_cell_opens_a_window_and_asks_for_a_freeze() {
         let mut app = threat_app();
         let player = spawn_player(&mut app, Cell::new(2, 2));
         let enemy = spawn_enemy(&mut app);
@@ -195,7 +309,7 @@ mod tests {
             .world_mut()
             .spawn((
                 ActionOf(enemy),
-                ScheduledAction::declared_at(TEST_TIMING, 0.0),
+                ScheduledAction::declared_at(TEST_TIMING, 99.0),
                 Threatens {
                     cells: vec![Cell::new(2, 2)],
                 },
@@ -208,16 +322,106 @@ mod tests {
             Some(&PauseRequest::Pause(THREAT)),
             "有人瞄着玩家脚下的格 → 冻住世界"
         );
+        let slot = slot_of(&app, player).expect("应当开了反应窗口");
+        assert_eq!(slot.threat, action, "窗口记着是哪条威胁");
+        assert!(!slot.resolved, "还没表态");
 
-        // 那条行动被撤销 / 打断 / 落地：威胁消失 → 不再断言，世界因此解冻
+        // 那条行动被撤销 / 打断 / 落地：威胁消失 → 关窗
         app.world_mut().entity_mut(action).despawn();
         app.world_mut().resource_mut::<Captured>().0.clear();
         app.update();
+        assert!(slot_of(&app, player).is_none(), "威胁没了就该关窗");
         assert!(
             capture_of(&app).is_empty(),
-            "威胁没了就不该再断言暂停，原因下一帧自然消失"
+            "关窗之后不该再断言暂停，原因下一帧自然消失"
         );
-        assert!(app.world().get_entity(player).is_ok());
+    }
+
+    /// **建议列表来自目录**：所有 `counter != None` 的技能都在，付不起的也列出来。
+    #[test]
+    fn suggestions_come_from_the_catalogue_not_a_hardcoded_list() {
+        let registry = catalogue();
+
+        let rich = counter_suggestions(&registry, 5);
+        let abilities: Vec<AbilityId> = rich.iter().map(|s| s.ability).collect();
+        assert!(abilities.contains(&AbilityId::Roll), "翻滚能当反制");
+        assert!(abilities.contains(&AbilityId::Parry), "招架能当反制");
+        assert!(
+            !abilities.contains(&AbilityId::Move),
+            "`counter: None` 的技能不进建议列表"
+        );
+        assert!(rich.iter().all(|s| s.affordable), "Focus 充足时都付得起");
+
+        // 付不起的那条**仍然列出来**，只是 affordable = false
+        let poor = counter_suggestions(&registry, 0);
+        let parry = poor
+            .iter()
+            .find(|s| s.ability == AbilityId::Parry)
+            .expect("付不起也要列出来（玩家该看得见这个选项）");
+        assert!(!parry.affordable, "Focus 不够 → 标成不可选");
+        let roll = poor
+            .iter()
+            .find(|s| s.ability == AbilityId::Roll)
+            .expect("白送的反制永远可选");
+        assert!(roll.affordable);
+    }
+
+    /// **表态就解冻**：`resolved` 之后不再断言（理由消失 = 世界动）。
+    #[test]
+    fn answering_the_window_releases_the_freeze() {
+        let mut app = threat_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0));
+        let enemy = spawn_enemy(&mut app);
+        app.world_mut().spawn((
+            ActionOf(enemy),
+            ScheduledAction::declared_at(TEST_TIMING, 99.0),
+            Threatens {
+                cells: vec![Cell::new(0, 0)],
+            },
+        ));
+
+        app.update();
+        assert!(slot_of(&app, player).is_some_and(|s| !s.resolved));
+
+        // 玩家按技能键反制
+        app.world_mut()
+            .write_message(ReactionAnswer::Counter(AbilityId::Roll));
+        app.world_mut().resource_mut::<Captured>().0.clear();
+        // 一帧就够：`resolve` 排在 `detect` 之前，表态当帧生效
+        app.update();
+
+        assert!(
+            slot_of(&app, player).is_some_and(|s| s.resolved),
+            "表态应当写进窗口"
+        );
+        assert!(
+            capture_of(&app).is_empty(),
+            "表态之后不该再断言暂停，实际 {:?}",
+            capture_of(&app)
+        );
+    }
+
+    /// 右键放弃：**同样算表态**——那一击照常落地（忍受伤害也是一种决策）。
+    #[test]
+    fn abandoning_also_counts_as_an_answer() {
+        let mut app = threat_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0));
+        let enemy = spawn_enemy(&mut app);
+        app.world_mut().spawn((
+            ActionOf(enemy),
+            ScheduledAction::declared_at(TEST_TIMING, 99.0),
+            Threatens {
+                cells: vec![Cell::new(0, 0)],
+            },
+        ));
+        app.update();
+
+        app.world_mut().write_message(ReactionAnswer::Abandon);
+        app.update();
+        assert!(
+            slot_of(&app, player).is_some_and(|s| s.resolved),
+            "放弃也是表态（世界该动，那一击该来就来）"
+        );
     }
 
     /// 玩家自己的攻击不是威胁：否则「往自己脚下扔火球」会把世界冻死。
@@ -227,182 +431,81 @@ mod tests {
         let player = spawn_player(&mut app, Cell::new(0, 0));
         app.world_mut().spawn((
             ActionOf(player),
-            ScheduledAction::declared_at(TEST_TIMING, 0.0),
+            ScheduledAction::declared_at(TEST_TIMING, 99.0),
             Threatens {
                 cells: vec![Cell::new(0, 0)],
             },
         ));
 
         app.update();
-
         assert!(
             capture_of(&app).is_empty(),
             "自己瞄自己：不冻世界（否则那发火球永远飞不出去）"
         );
+        assert!(slot_of(&app, player).is_none());
     }
 
     /// 飞行中的敌对投射物也算威胁（它已经出了手）。
     #[test]
     fn a_projectile_aimed_at_the_player_counts_as_a_threat() {
         let mut app = threat_app();
-        spawn_player(&mut app, Cell::new(1, 1));
+        let player = spawn_player(&mut app, Cell::new(1, 1));
         app.world_mut()
             .spawn((TargetCell(Cell::new(1, 1)), Faction::Enemy));
 
         app.update();
-
         assert_eq!(capture_of(&app).last(), Some(&PauseRequest::Pause(THREAT)));
+        assert!(slot_of(&app, player).is_some());
     }
 
-    /// **窗口开着时持续断言**：世界冻结时威胁源与玩家的位移都停在半路，
-    /// 所以只要窗口还开着、来源还在，就该一直按住。
-    ///
-    /// 这也正是"回合制等玩家决策"能成立的原因——只冻一帧的话，玩家根本来不及反应。
+    /// 多威胁一次只处理一个：取**最先落地**的那条当 `threat`。
     #[test]
-    fn an_open_window_keeps_asserting_while_the_threat_remains() {
+    fn the_window_takes_the_soonest_landing_threat() {
         let mut app = threat_app();
-        spawn_player(&mut app, Cell::new(0, 0));
+        let player = spawn_player(&mut app, Cell::new(0, 0));
         let enemy = spawn_enemy(&mut app);
-        // 执行时刻排到很远：这条威胁在整个测试期间都"还没到点"
-        // （用 `TEST_TIMING` 声明的话，0.2s 的前摇会被 0.1s/帧的手动时钟走到点）
-        let action = app
-            .world_mut()
-            .spawn((
-                ActionOf(enemy),
-                ScheduledAction::declared_at(TEST_TIMING, 99.0),
-                Threatens {
-                    cells: vec![Cell::new(0, 0)],
-                },
-            ))
-            .id();
-
-        for frame in 0..5 {
-            app.world_mut().resource_mut::<Captured>().0.clear();
-            // 冒充时间线：窗口开着 → 原因集合里就有 THREAT（真实现里是
-            // `process_pause_requests` 收下断言）
+        let threat = |app: &mut App, at: f32| {
             app.world_mut()
-                .resource_mut::<PauseReasons>()
-                .insert(THREAT);
-            app.update();
-            assert_eq!(
-                capture_of(&app).last(),
-                Some(&PauseRequest::Pause(THREAT)),
-                "第 {frame} 帧：窗口还开着就该继续按住世界"
-            );
-        }
-        assert!(app.world().get::<Threatened>(action).is_some());
+                .spawn((
+                    ActionOf(enemy),
+                    ScheduledAction::declared_at(TEST_TIMING, at),
+                    Threatens {
+                        cells: vec![Cell::new(0, 0)],
+                    },
+                ))
+                .id()
+        };
+        let _late = threat(&mut app, 50.0);
+        let soon = threat(&mut app, 5.0);
 
-        // 来源消失（打断 / 落地）→ 窗口关掉，不再断言
-        app.world_mut().entity_mut(action).despawn();
-        app.world_mut().resource_mut::<Captured>().0.clear();
         app.update();
-        assert!(capture_of(&app).is_empty(), "来源没了就不该再断言暂停");
-        assert!(!app.world().resource::<ThreatWindow>().open, "窗口该关上了");
-    }
-
-    /// **玩家放开世界（原因集合里不再有 THREAT）→ 窗口关闭，同一次威胁不再重开。**
-    ///
-    /// 这条是「玩家总能走出去」的根据：世界一放开，同一个来源不会立刻冻回来，
-    /// 那一击照常落地——代价自负（忍受伤害也是一种决策）。
-    #[test]
-    fn a_dismissed_window_does_not_reopen_for_the_same_threat() {
-        let mut app = threat_app();
-        spawn_player(&mut app, Cell::new(0, 0));
-        let enemy = spawn_enemy(&mut app);
-        app.world_mut().spawn((
-            ActionOf(enemy),
-            ScheduledAction::declared_at(TEST_TIMING, 0.0),
-            Threatens {
-                cells: vec![Cell::new(0, 0)],
-            },
-        ));
-
-        // 窗口开着
-        app.world_mut()
-            .resource_mut::<PauseReasons>()
-            .insert(THREAT);
-        app.update();
-        assert!(app.world().resource::<ThreatWindow>().open);
-
-        // 玩家按空格：时间线清空原因集合，下一帧检测系统读到"没有 THREAT"
-        app.world_mut().resource_mut::<PauseReasons>().clear();
-        app.world_mut().resource_mut::<Captured>().0.clear();
-        app.update();
-        let window = *app.world().resource::<ThreatWindow>();
-        assert!(!window.open && window.dismissed, "放开之后窗口该关上并记住");
-
-        // 威胁**还在**瞄着玩家，但不该再冻回来
-        for frame in 0..5 {
-            app.world_mut().resource_mut::<Captured>().0.clear();
-            app.update();
-            assert!(
-                capture_of(&app).is_empty(),
-                "第 {frame} 帧：同一次威胁被玩家放开过，不该重开"
-            );
-        }
+        assert_eq!(
+            slot_of(&app, player).map(|s| s.threat),
+            Some(soon),
+            "窗口该取最先落地的那一个"
+        );
     }
 
     /// 没瞄到玩家脚下的格就不算威胁（同一发火球打向别处）。
     #[test]
     fn a_threat_elsewhere_does_not_freeze_the_world() {
         let mut app = threat_app();
-        spawn_player(&mut app, Cell::new(0, 0));
+        let player = spawn_player(&mut app, Cell::new(0, 0));
         let enemy = spawn_enemy(&mut app);
         app.world_mut().spawn((
             ActionOf(enemy),
-            ScheduledAction::declared_at(TEST_TIMING, 0.0),
+            ScheduledAction::declared_at(TEST_TIMING, 99.0),
             Threatens {
                 cells: vec![Cell::new(5, 5)],
             },
         ));
 
         app.update();
-
         assert!(
             capture_of(&app).is_empty(),
             "打别处不该惊动玩家：{:?}",
             capture_of(&app)
         );
-    }
-
-    /// 【临时探针】窗口维持：为什么不持续断言？
-    #[test]
-    fn probe_why_not_persistent() {
-        use crate::clock::PauseReasons;
-        let mut app = threat_app();
-        app.init_resource::<PauseReasons>()
-            .init_resource::<crate::clock::ManualPause>();
-        // 冒充时间线：把 Pause 断言收进集合（真实现里是 process_pause_requests）
-        fn collect(mut r: MessageReader<PauseRequest>, mut reasons: ResMut<PauseReasons>) {
-            reasons.clear();
-            for req in r.read() {
-                if let PauseRequest::Pause(x) = req {
-                    reasons.insert(x);
-                }
-            }
-        }
-        app.add_systems(Update, collect.after(mark_threatened_system));
-
-        let player = spawn_player(&mut app, Cell::new(0, 0));
-        let enemy = spawn_enemy(&mut app);
-        let action = app
-            .world_mut()
-            .spawn((
-                ActionOf(enemy),
-                ScheduledAction::declared_at(TEST_TIMING, 0.0),
-                Threatens {
-                    cells: vec![Cell::new(0, 0)],
-                },
-            ))
-            .id();
-        let _ = player;
-        for frame in 0..4 {
-            app.update();
-            println!(
-                "探针 第{frame}帧：原因={:?} 有标记={}",
-                app.world().resource::<PauseReasons>().labels(),
-                app.world().get::<Threatened>(action).is_some()
-            );
-        }
+        assert!(slot_of(&app, player).is_none());
     }
 }

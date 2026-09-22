@@ -139,6 +139,20 @@ impl CombatTags {
     };
 }
 
+/// 拿这一手当**反制**要付什么代价（`None` = 这一手不能当反制）。
+///
+/// **它是技能的静态属性**，所以写在定义里：反制建议列表就是"遍历所有
+/// `counter != None` 的技能"，没有硬编码的白名单（见 `docs/skills.md` 第四节）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CounterCost {
+    /// 白送：反制插入，原决策保留
+    Free,
+    /// 花反制资源（当前是 [`crate::timeline::Focus`]），原决策保留
+    Resource(u32),
+    /// 拿原决策换：从时间轴移除原决策，插入反制
+    CancelDecision,
+}
+
 /// 释放条件：**技能自己的那几条**（类别共享的那条另算，见 [`AbilityCategory::shared_requirement`]）。
 ///
 /// ⚠️ **只列真的会被检查的条件**：现在只有精力。沉默 / 眩晕 / 冷却这些等它们
@@ -179,6 +193,8 @@ pub struct AbilityDef {
     pub requirements: &'static [Requirement],
     /// 能不能被反制，以及当反制要付什么（见 `docs/skills.md` 第四节）
     pub combat: CombatTags,
+    /// 能不能**当反制**用、当反制要付什么（`None` = 不能）
+    pub counter: Option<CounterCost>,
     /// 大致威力（**展示用**：实际伤害在各自的载荷里）
     pub power: i32,
 }

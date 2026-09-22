@@ -43,27 +43,36 @@ pub struct TargetCell(pub Cell);
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Threatened;
 
-/// **反应窗口的状态机**——只有 `detect_threat_system` 读写它。
+/// 一次威胁开的**反应窗口**——挂在**被威胁的玩家**身上。
 ///
-/// 它存在的理由是**别去读别人的资源来判断窗口开不开**：读"世界现在冻着吗"会让
-/// 判据随帧序漂移（原因集合每帧重建，而同帧里谁先谁后是脆的）。窗口自己记状态，
-/// 只把"玩家有没有放开世界"这一个外部信号（[`PauseReasons`](crate::clock::PauseReasons)
-/// 里还有没有 `THREAT`）当作关窗的依据。
+/// 它是「玩家欠一个表态」这件事的唯一真相。与决策槽**共存、互不改结构**：
+/// 反制是独立资源，不覆盖决策槽。
 ///
 /// ```text
-/// 没威胁          → 什么都不做
-/// 威胁出现        → open = true，断言 Pause(THREAT)
-/// 窗口开着、来源还在 → 继续断言（世界冻结时来源与移动都停在半路，窗口该一直开着）
-/// 玩家按空格放开   → 集合里没有 THREAT 了 → open = false, dismissed = true
-/// 来源消失（打断 / 落地）→ open = false, dismissed = false（下次威胁重新开窗）
+/// 威胁出现（取最先落地的那一个）→ 挂上 ReactionSlot + suggestions
+///                                          ↓ 每帧断言 Pause(THREAT)
+/// 玩家表态（技能键 / 右键放弃 / 空格）→ resolved = true → 不再断言
+/// 威胁自己消失（被打断 / 落地 / 投射物没了）→ 槽移除
 /// ```
 ///
-/// `dismissed` 是「**这次别重开**」：玩家已经用空格表过态（选择忍受），
-/// 同一个来源不该立刻把世界冻回来——否则空格按了等于没按。
-#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ThreatWindow {
-    /// 窗口开着吗（开着 = 本域每帧在断言 `Pause(THREAT)`）
-    pub open: bool,
-    /// 玩家已经放开过这个世界，同一次威胁不再重开
-    pub dismissed: bool,
+/// **退出只有两条**（设计如此）：表态，或者威胁消失。玩家什么都不做时世界
+/// 一直冻着——战术暂停里"我在想"必须能无限期地想下去。
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct ReactionSlot {
+    /// 是哪条行动 / 哪颗投射物
+    pub threat: Entity,
+    /// 能拿哪几手反制（见 [`CounterSuggestion`]）
+    pub suggestions: Vec<CounterSuggestion>,
+    /// 玩家表态了没有
+    pub resolved: bool,
+}
+
+/// 一条反制建议 = **一个技能 + 它作为反制要付的代价**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CounterSuggestion {
+    pub ability: crate::skills::AbilityId,
+    /// 技能的静态属性（见 `docs/skills.md` 第四节）
+    pub cost: crate::skills::CounterCost,
+    /// 现在付得起吗（HUD 决定亮不亮）
+    pub affordable: bool,
 }

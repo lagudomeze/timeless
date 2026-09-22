@@ -107,6 +107,7 @@ mod tests {
             cost,
             requirements: &[],
             combat: CombatTags::COMMITTED,
+            counter: None,
             power: 0,
         }
     }

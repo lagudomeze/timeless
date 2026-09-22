@@ -35,5 +35,8 @@ pub mod components;
 pub mod systems;
 
 pub use cells::{melee_arc_cells, trajectory_cells};
-pub use components::{TargetCell, ThreatWindow, Threatened, Threatens};
-pub use systems::{detect_threat_system, mark_threatened_system};
+pub use components::{CounterSuggestion, ReactionSlot, TargetCell, Threatened, Threatens};
+pub use systems::{
+    ReactionAnswer, counter_suggestions, detect_threat_system, mark_threatened_system,
+    resolve_reaction_system,
+};

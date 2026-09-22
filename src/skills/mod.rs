@@ -31,6 +31,8 @@ pub mod defs;
 pub mod plugin;
 pub mod registry;
 
-pub use defs::{AbilityCategory, AbilityDef, AbilityId, CombatTags, Requirement, TargetSelector};
+pub use defs::{
+    AbilityCategory, AbilityDef, AbilityId, CombatTags, CounterCost, Requirement, TargetSelector,
+};
 pub use plugin::SkillPlugin;
 pub use registry::{RegisterAbility, SkillRegistry, can_cast};

@@ -7,7 +7,8 @@
 use bevy::prelude::*;
 
 use crate::skills::{
-    AbilityCategory, AbilityDef, AbilityId, CombatTags, RegisterAbility, TargetSelector,
+    AbilityCategory, AbilityDef, AbilityId, CombatTags, CounterCost, RegisterAbility,
+    TargetSelector,
 };
 
 use super::actions::{JUMP_TIMING, MOVE_TIMING, ROLL_TIMING};
@@ -22,6 +23,7 @@ pub const MOVE_ABILITY: AbilityDef = AbilityDef {
     // 免费：不需要精力
     requirements: &[],
     combat: CombatTags::STRIKE,
+    counter: None,
     power: 0,
 };
 
@@ -35,6 +37,7 @@ pub const JUMP_ABILITY: AbilityDef = AbilityDef {
     // 免费：不需要精力
     requirements: &[],
     combat: CombatTags::COMMITTED,
+    counter: None,
     power: 0,
 };
 
@@ -48,6 +51,7 @@ pub const ROLL_ABILITY: AbilityDef = AbilityDef {
     // Movement 类的共享条件已是 EnoughEnergy（见 `AbilityCategory::shared_requirement`）
     requirements: &[],
     combat: CombatTags::COMMITTED,
+    counter: Some(CounterCost::Free),
     power: 0,
 };
 

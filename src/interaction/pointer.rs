@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::combat::Faction;
+use crate::combat::reaction::ReactionAnswer;
 use crate::combat::skills::{MELEE_REACH, MenuSelection, SKILLS, SkillKind, UseSelectedSkill};
 use crate::movement::Cell;
 use crate::movement::MoveToCommand;
@@ -122,12 +123,17 @@ pub fn pointer_command_system(
     mut moves: MessageWriter<MoveToCommand>,
     mut skills: MessageWriter<UseSelectedSkill>,
     mut undos: MessageWriter<UndoCommand>,
+    mut answers: MessageWriter<ReactionAnswer>,
     mut takeovers: MessageWriter<PlayerTakeover>,
 ) {
     for click in clicks.read() {
         match click {
             PointerCommand::Secondary => {
                 undos.write(UndoCommand);
+                // 右键同时是"放弃这一轮反制"：有反应窗口时它就是表态通道，
+                // 没有窗口时这条消息自然被忽略（消费方按窗口存在与否判定）。
+                // 这样输入域不必去读游戏状态。
+                answers.write(ReactionAnswer::Abandon);
             }
             PointerCommand::Primary => {
                 let Some(cell) = hovered.0 else {
@@ -183,6 +189,7 @@ mod tests {
             .add_message::<UseSelectedSkill>()
             .add_message::<UndoCommand>()
             .add_message::<PlayerTakeover>()
+            .add_message::<ReactionAnswer>()
             .add_systems(Update, (pointer_command_system, probe_system).chain());
         app
     }
