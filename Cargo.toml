@@ -9,4 +9,6 @@ bevy_brp_extras = "0.22"
 
 [dependencies.bevy]
 version = "0.19"
+# 想开开发期热重载就加 `"file_watcher"`——**但本机开不了**：它要
+# `notify-debouncer-full 0.7.0`，而清华镜像只到 0.6.0（见 TODO.md「开发热重载」）。
 features = ["default", "bevy_remote"]

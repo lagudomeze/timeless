@@ -35,7 +35,7 @@ L5 行动载荷      MoveAction / JumpAction / RollAction / MeleeAction / ShootA
 L4 战斗零件      Health / Faction / Collidable / 属性 / 防御标记 / 攻击实体生命周期
 L3 时间线调度    DecisionSlot / ActionTiming / ScheduledAction / Uncancellable / InputDriven
 L2 决策与位移    Cell / MoveGoal / Velocity / MoveSpeed / Jumping / DodgingOnArrival
-L1 体素数据域    Chunk / ChunkPos / ChunkLoader / ChunkPinned / Voxel + 区块消息
+L1 体素数据域    Chunk / ChunkPos / ChunkLoader / ChunkPinned + 区块消息
 L0 引擎零件      Transform / Visibility / Children / Mesh3d / Node / Text / Camera3d
 ```
 
@@ -435,7 +435,7 @@ UnitSprites   --> unit_scene  --^
 | :--- | :--- | :--- |
 | `declare_skill_system` / `shoot_action_*` / `arrow_scene` | `skills/actions.rs`、`skills/arrow.rs` | 未注册，只被测试使用（「单体狙击」的预留实现）。箭矢的收尾已经和火球对齐（忙到落地），接输入即可用 |
 | `AttackFrame` | `combat/attributes` | 有生产者（攻击实体都挂）、没有消费者：它是**信息层**读数（"谁先动"），等「洞察力」面板来接 |
-| `Voxel` / `VoxelPos` / `ChunkPinned` | `world` | 有类型、有文档、没有生产者 |
+| `ChunkPinned` | `world` | 有类型、有读方（`chunk_streaming_system`）、没有生产者 |
 
 处理建议：要么接上（箭矢接输入、`AttackFrame` 给洞察力面板），要么删掉，
 不要让「看起来在用」的代码留在树里。

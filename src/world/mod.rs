@@ -35,7 +35,7 @@ pub use chunk::{
 pub use plugin::WorldPlugin;
 pub use storage::{ChunkMap, get_voxel, set_voxel};
 pub use terrain::{TerrainConfig, ground_position, surface_height, surface_height_at};
-pub use voxel::{Voxel, VoxelPos, VoxelType};
+pub use voxel::VoxelType;
 
 /// 世界数据域在 `Update` 中的系统集。
 ///
