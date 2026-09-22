@@ -376,7 +376,10 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **`AttackFrame` 没有消费者**：攻击实体都挂着它，但没有系统读——
       它是「洞察力」面板的读数（"谁先动"），接上或删掉。
 - [ ] **没有生产者的预留类型**：`Voxel` / `VoxelPos` / `ChunkPinned`——接上或删掉。
-- [ ] **开发热重载**：启用 `file_watcher`（dev profile）。
+- [ ] **开发热重载** ⛔ **环境阻塞**：`bevy/file_watcher` 要 `notify-debouncer-full = 0.7.0`，
+      而本机用的清华镜像只到 **0.6.0**，`cargo build` 直接解析失败（实测）。
+      解法只有两条：换一个能拿到 0.7.0 的源，或等镜像同步。
+      `Cargo.toml` 里留了注释说明加哪个 feature。
 
 ### 玩法与表现
 
