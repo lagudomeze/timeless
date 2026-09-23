@@ -335,8 +335,15 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       并规定生产代码里不许出现 `until: 0.0`（改用 `declared(..)`）。
       `Intent` 暂时**没有读者**（声明即物化），已在代码注释里写明原因与将来的用途。
       验收：217 测试全绿（215 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过。
-- [ ] **M25 对抗标签 + 格挡**：`CombatTags` 闸门（含霸体）+ 防御链补格挡
-      （格挡率来自装备 / 姿态 `BlockChance`）；**保留**掷骰对抗 `interrupt_lands`。
+- [x] **M25 前半：对抗标签闸门**（本次）：`CombatTags` 现在**跟着载荷挂到行动实体上**
+      （8 个场景工厂），`interrupt_observer` 先判闸门再掷骰——
+      `!interruptible || super_armor` 直接拦下，**连掷骰都不做**
+      （霸体是"打断不了"，不是"比较难打断"；给玩家掷一把没用的骰子只会误导）。
+      顺带修一处**文档与实现矛盾**：`COMMITTED` 的注释写着"跳跃 / 翻滚 / **招架**"，
+      而招架实际标的却是 `STRIKE`——已按注释改成 `COMMITTED`。
+      缺 `CombatTags` 的行动（老载荷 / 测试夹具）按普通攻击处理。
+      验收：228 测试全绿（新增 2 条，且**去掉闸门后确实转红**）/ clippy 零警告 / fmt 通过。
+- [ ] **M25 后半：格挡**：防御链补第 ③ 关（格挡率来自装备 / 姿态 `BlockChance`）。
 - [x] **M26 反应槽 + 反制（D4）**（本次）：`ReactionSlot`（挂在**被威胁的玩家**身上，
       `threat` + `suggestions` + `resolved`）取代 `ThreatWindow`；`CounterSuggestion`
       从目录算出来（遍历 `counter != None`，**无硬编码白名单**）；`CounterCost`

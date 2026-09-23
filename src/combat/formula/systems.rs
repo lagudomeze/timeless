@@ -151,7 +151,14 @@ fn roll_3d5() -> i32 {
 pub fn interrupt_observer(
     trigger: On<InterruptEvent>,
     time: Res<Time<Virtual>>,
-    actions: Query<(Entity, &ScheduledAction, &ActionTiming, &ActionOf)>,
+    // `CombatTags` 是**闸门**：`interruptible && !super_armor` 才轮到掷骰对抗
+    actions: Query<(
+        Entity,
+        &ScheduledAction,
+        &ActionTiming,
+        &ActionOf,
+        Option<&crate::skills::CombatTags>,
+    )>,
     mut commands: Commands,
 ) {
     let power = trigger.power;
@@ -161,12 +168,22 @@ pub fn interrupt_observer(
     let target = trigger.entity;
     let source = trigger.source;
     let now = time.elapsed_secs();
-    let Some((action, _, timing, _)) = actions
-        .iter()
-        .find(|(_, schedule, _, action_of)| action_of.actor() == target && schedule.pending(now))
+    let Some((action, _, timing, _, tags)) =
+        actions.iter().find(|(_, schedule, _, action_of, _)| {
+            action_of.actor() == target && schedule.pending(now)
+        })
     else {
         return; // 来不及：这一手已经落地，或者本来就没事可打断
     };
+
+    // **闸门先判，闸门不过连掷骰都不做**：`super_armor` 是设计上的"打断不了"（霸体），
+    // 不是"比较难打断"——给玩家掷一把没用的骰子只会让人误以为还有机会。
+    // 缺 `CombatTags` 的行动（老载荷 / 测试夹具）按普通攻击处理。
+    let tags = tags.copied().unwrap_or_default();
+    if !tags.interruptible || tags.super_armor {
+        debug!("🛡 打断被标签拦下：{target:?} 的这一手不可打断");
+        return;
+    }
 
     let attack_roll = roll_3d5();
     let defense_roll = roll_3d5();
@@ -283,6 +300,107 @@ mod tests {
         assert!(
             app.world().get_entity(action).is_ok(),
             "已经到点的行动打不断（它已经出去了）"
+        );
+    }
+
+    /// **标签是闸门**：不可打断 / 霸体的行动，连掷骰都不做。
+    ///
+    /// 力度给到 100（3d5 差值最大 12，必赢）——如果闸门没生效，这两条里的行动
+    /// 一定会被打掉。所以这条测试真正验的是"闸门有没有先判"。
+    #[test]
+    fn combat_tags_gate_the_interrupt_before_any_dice_are_rolled() {
+        use crate::skills::CombatTags;
+
+        for (label, tags) in [
+            (
+                "不可打断",
+                CombatTags {
+                    interruptible: false,
+                    ..CombatTags::STRIKE
+                },
+            ),
+            (
+                "霸体",
+                CombatTags {
+                    super_armor: true,
+                    ..CombatTags::STRIKE
+                },
+            ),
+        ] {
+            let mut app = interrupt_app();
+            let target = app
+                .world_mut()
+                .spawn(DecisionSlot::Executing {
+                    until: BUSY_SENTINEL,
+                })
+                .id();
+            let action = app
+                .world_mut()
+                .spawn((
+                    ActionOf(target),
+                    TEST_TIMING,
+                    ScheduledAction::declared_at(TEST_TIMING, 0.0),
+                    tags,
+                ))
+                .id();
+            let source = app.world_mut().spawn_empty().id();
+
+            app.world_mut().trigger(InterruptEvent {
+                entity: target,
+                source,
+                power: 100,
+            });
+            app.world_mut().flush();
+
+            assert!(
+                app.world().get_entity(action).is_ok(),
+                "{}的行动不该被打断（闸门该在掷骰之前拦住）",
+                label
+            );
+            assert_eq!(
+                app.world().get::<DecisionSlot>(target).copied(),
+                Some(DecisionSlot::Executing {
+                    until: BUSY_SENTINEL
+                }),
+                "{}的行动者应当仍然忙着他的那一手",
+                label
+            );
+        }
+    }
+
+    /// 普通攻击（`STRIKE`）照旧打得断：闸门不能把正常路径一起关掉。
+    #[test]
+    fn an_ordinary_strike_is_still_interruptible() {
+        use crate::skills::CombatTags;
+
+        let mut app = interrupt_app();
+        let target = app
+            .world_mut()
+            .spawn(DecisionSlot::Executing {
+                until: BUSY_SENTINEL,
+            })
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((
+                ActionOf(target),
+                TEST_TIMING,
+                ScheduledAction::declared_at(TEST_TIMING, 0.0),
+                CombatTags::STRIKE,
+            ))
+            .id();
+        let source = app.world_mut().spawn_empty().id();
+
+        app.world_mut().trigger(InterruptEvent {
+            entity: target,
+            source,
+            power: 100,
+        });
+        app.world_mut().flush();
+
+        assert!(
+            app.world().get_entity(action).is_err(),
+            "普通攻击照旧打得断"
         );
     }
 }

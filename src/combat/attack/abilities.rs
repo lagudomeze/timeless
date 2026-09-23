@@ -67,7 +67,7 @@ pub const PARRY_ABILITY: AbilityDef = AbilityDef {
     targeting: TargetSelector::TargetEntity,
     cost: crate::combat::defense::PARRY_COST,
     requirements: &[Requirement::EnoughEnergy],
-    combat: CombatTags::STRIKE,
+    combat: CombatTags::COMMITTED,
     counter: Some(CounterCost::Resource(PARRY_COST)),
     power: 0,
 };

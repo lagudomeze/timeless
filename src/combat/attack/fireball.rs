@@ -82,10 +82,13 @@ pub fn fireball_action_scene(
     let threatens = Threatens {
         cells: trajectory_cells(from_cell, target_cell),
     };
+    // 对抗标签跟着载荷一起挂在行动实体上（能不能被打断由它说了算）
+    let tags = super::abilities::FIREBALL_ABILITY.combat;
     bsn! {
         ActionOf({actor})
         FireballAction { target_cell: {target_cell} }
         template_value(threatens)
+        template_value(tags)
         template_value(timing)
         template_value(schedule)
     }
