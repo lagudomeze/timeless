@@ -7,17 +7,21 @@ use bevy::prelude::*;
 use crate::combat::Faction;
 use crate::combat::attack::MenuSelection;
 use crate::combat::defense::Stamina;
+use crate::combat::reaction::ReactionSlot;
 
 use super::super::HudCache;
 use super::model::{
-    SkillBarCache, affordability, badge_color, badge_text, slot_bg, slot_border, tooltip_text,
+    SkillBarCache, affordability, badge_color, badge_text, counter_hints, slot_bg, slot_border,
+    tooltip_text,
 };
 use super::scene::{SkillBadge, SkillSlot, SkillTooltip, SkillTooltipText};
 
 /// 每帧刷新槽位外观、角标与 tooltip。
 pub fn update_skill_bar_system(
     selection: Res<MenuSelection>,
-    players: Query<(&Faction, &Stamina)>,
+    // 反制建议住在被威胁的玩家身上（`ReactionSlot`）：HUD 只读它、不认识 `CounterCost`。
+    // 表现层仍按 `Faction` 找人（它看的是"哪个阵营的单位"，不是"谁在输入"）。
+    players: Query<(&Faction, &Stamina, Option<&ReactionSlot>)>,
     mut cache: ResMut<HudCache>,
     mut slots: Query<(
         &SkillSlot,
@@ -29,10 +33,13 @@ pub fn update_skill_bar_system(
     mut tooltips: Query<&mut Node, (With<SkillTooltip>, Without<SkillSlot>)>,
     mut tooltip_texts: Query<&mut Text, (With<SkillTooltipText>, Without<SkillBadge>)>,
 ) {
-    let stamina = players
+    let player = players
         .iter()
-        .find(|(faction, _)| **faction == Faction::Player)
-        .map(|(_, stamina)| stamina.current);
+        .find(|(faction, _, _)| **faction == Faction::Player);
+    let stamina = player.map(|(_, stamina, _)| stamina.current);
+    let suggestions = player
+        .and_then(|(_, _, slot)| slot)
+        .map(|slot| slot.suggestions.as_slice());
 
     // 悬停要读 `Interaction`（很便宜），但写节点前先比对快照
     let hovered = slots
@@ -43,6 +50,7 @@ pub fn update_skill_bar_system(
         selected: selection.index(),
         hovered,
         affordable: affordability(stamina),
+        counters: counter_hints(suggestions),
     };
     if cache.skills == snapshot {
         return;
@@ -52,11 +60,13 @@ pub fn update_skill_bar_system(
     for (slot, interaction, mut background, mut border) in &mut slots {
         let affordable = snapshot.affordable[slot.index];
         let selected = slot.index == snapshot.selected;
-        *background = BackgroundColor(slot_bg(affordable, selected));
+        let counter = snapshot.counters[slot.index];
+        *background = BackgroundColor(slot_bg(affordable, selected, counter));
         *border = BorderColor::all(slot_border(
             *interaction == Interaction::Hovered,
             selected,
             affordable,
+            counter,
         ));
     }
 
@@ -82,7 +92,8 @@ pub fn update_skill_bar_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::attack::SKILLS;
+    use crate::combat::attack::{SKILLS, SkillKind};
+    use crate::combat::reaction::CounterSuggestion;
     use crate::presentation::hud::skills::model::{SLOT_BG, SLOT_BG_LOCKED, SLOT_BORDER};
 
     fn skill_app() -> App {
@@ -197,6 +208,56 @@ mod tests {
             tooltip_display(&mut app),
             Display::Flex,
             "悬停时 tooltip 应当显示"
+        );
+    }
+
+    /// **威胁窗口一开，能当反制的那几手就亮起来**——这是 M26 未接完的那一半。
+    ///
+    /// 之前 `suggestions` 算出来了却没人读：玩家被威胁冻结时，技能栏看不出
+    /// "我现在能拿什么挡"。这条钉住整条链：`ReactionSlot` → `counter_hints` → 槽位底色。
+    #[test]
+    fn a_counter_suggestion_lights_up_the_skill_that_can_answer_it() {
+        use crate::combat::reaction::ReactionSlot;
+        use crate::skills::{AbilityId, CounterCost};
+
+        let mut app = skill_app();
+        let roll_index = SKILLS
+            .iter()
+            .position(|def| def.kind == SkillKind::Roll)
+            .expect("技能栏里应当有翻滚");
+        let player = app
+            .world_mut()
+            .spawn((Faction::Player, Stamina::new(5)))
+            .id();
+        let roll = spawn_slot(&mut app, roll_index);
+        let fireball = spawn_slot(&mut app, 2);
+
+        app.update();
+        let background =
+            |app: &App, entity: Entity| app.world().get::<BackgroundColor>(entity).unwrap().0;
+        let before = background(&app, roll);
+
+        // 开窗：威胁压过来，翻滚被列为可用反制
+        app.world_mut().entity_mut(player).insert(ReactionSlot {
+            threat: player,
+            suggestions: vec![CounterSuggestion {
+                ability: AbilityId::Roll,
+                cost: CounterCost::Free,
+                affordable: true,
+            }],
+            resolved: false,
+        });
+        app.update();
+
+        assert_ne!(
+            background(&app, roll),
+            before,
+            "能当反制的那一手应当变色，否则玩家看不出该按哪个"
+        );
+        assert_ne!(
+            background(&app, roll),
+            background(&app, fireball),
+            "只有被建议的那一手亮，其它手不变"
         );
     }
 

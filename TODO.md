@@ -371,6 +371,11 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       "玩家那一手变了没有"（那个判据在**后摇 / 不可撤行动**期间永远为假）。
       验收：225 测试全绿 / clippy 零警告 / fmt 通过。
       **未做**：HUD 高亮"付得起"的技能（建议列表已就绪，HUD 侧未接）。
+      **已补上**：技能栏现在读 `ReactionSlot.suggestions`，把能当反制的那几手高亮
+      （`CounterHint::{Ready, TooExpensive}`，反制色**压过"选中"色**），
+      付不起的也标出来。见 `docs/combat.md` 第四节。
+      验收：`a_counter_suggestion_lights_up_the_skill_that_can_answer_it`
+      （**验过不是空跑**：把建议查找改成恒返回 `None` 后转红）。
 - [ ] **M27 装备系统（D5）**：全新（槽位 / `EquippedTo` / 类型校验 Observer / 穿脱），
       并定下**属性的「基础值 + 加成」结构**。
 - [x] **M28 每个 mod 出 `plugin.rs`**（已完成）：三个父域
