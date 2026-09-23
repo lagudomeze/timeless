@@ -19,7 +19,10 @@ pub mod domain;
 pub mod events;
 pub mod systems;
 
-pub use domain::{DefenseState, INTERRUPT_BASE, counter_damage, interrupt_lands, resolve_defense};
+pub use domain::{
+    DefenseState, INTERRUPT_BASE, blocked_damage, counter_damage, interrupt_lands, resolve_block,
+    resolve_defense,
+};
 pub use events::InterruptEvent;
 pub use systems::{apply_physical_hits_system, interrupt_observer, physical_damage};
 

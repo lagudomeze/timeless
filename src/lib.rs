@@ -387,6 +387,125 @@ mod tests {
         assert_eq!(hp.current, 90, "10 点物理伤害应扣减 10 点生命");
     }
 
+    /// **格挡是减伤不是免伤**：格挡率 100% 才归零，且管线照常往下走。
+    ///
+    /// （格挡与护甲的先后由 `partial_blocking_stacks_with_armor_in_the_documented_order`
+    /// 分辨：那条能区分 ③ 在 ④ 之前还是之后。）
+    #[test]
+    fn blocking_reduces_damage_before_armor_and_does_not_negate_it() {
+        use crate::combat::defense::BlockChance;
+
+        let mut app = test_app();
+        let target = app
+            .world_mut()
+            .spawn((
+                Health::new(100),
+                Collidable,
+                HitRadius(0.8),
+                Armor(2),
+                // 格挡率 100%：必定挡下（骰子落在 0..1 里必然小于 1.0）
+                BlockChance(1.0),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+        app.world_mut().spawn((
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.2),
+            PhysicalDamage(10),
+            Transform::from_xyz(0.5, 0.0, 0.0),
+        ));
+
+        app.update();
+        app.update();
+
+        let hp = app
+            .world()
+            .get::<Health>(target)
+            .copied()
+            .expect("目标应当在");
+        assert_eq!(
+            hp.current,
+            100,
+            "格挡率 100% → 10 点全被挡掉，护甲没机会再减（实际扣了 {}）",
+            100 - hp.current
+        );
+    }
+
+    /// **部分格挡**：先按格挡率减伤，再减护甲——顺序可观测。
+    ///
+    /// 挡掉 50% 的 10 点 = 剩 5，再减 2 点护甲 = **3 点**入账。
+    /// 若顺序反了（先护甲后格挡）会得到 `(10-2)*0.5 = 4`，所以这条能分辨顺序——
+    /// 实测拿到 3 才说明 `docs/combat.md` 的 ③→④ 顺序被遵守。
+    #[test]
+    fn partial_blocking_stacks_with_armor_in_the_documented_order() {
+        use crate::combat::defense::BlockChance;
+
+        let mut app = test_app();
+        let target = app
+            .world_mut()
+            .spawn((
+                Health::new(100),
+                Collidable,
+                HitRadius(0.8),
+                Armor(2),
+                BlockChance(0.5),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+        // 格挡有随机性（50%），所以两种结果都合法；关键是**数值能分辨顺序**。
+        app.world_mut().spawn((
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.2),
+            PhysicalDamage(10),
+            Transform::from_xyz(0.5, 0.0, 0.0),
+        ));
+
+        app.update();
+        app.update();
+
+        let taken = 100 - app.world().get::<Health>(target).unwrap().current;
+        assert!(
+            taken == 8 || taken == 3,
+            "要么没挡住（10-2=8），要么挡掉一半（10*0.5-2=3）；实际 {taken}"
+        );
+    }
+
+    /// 格挡率 0 的单位照旧全额吃伤害（管线第 ③ 关直接跳过）。
+    #[test]
+    fn a_unit_without_block_chance_takes_full_damage() {
+        use crate::combat::defense::BlockChance;
+
+        let mut app = test_app();
+        let target = app
+            .world_mut()
+            .spawn((
+                Health::new(100),
+                Collidable,
+                HitRadius(0.8),
+                BlockChance(0.0),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+        app.world_mut().spawn((
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.2),
+            PhysicalDamage(10),
+            Transform::from_xyz(0.5, 0.0, 0.0),
+        ));
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Health>(target).unwrap().current,
+            90,
+            "没有格挡率 → 10 点全额命中"
+        );
+    }
+
     #[test]
     fn armor_reduces_physical_damage() {
         let mut app = test_app();

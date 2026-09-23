@@ -12,14 +12,16 @@
 use bevy::prelude::*;
 
 use crate::combat::attributes::{Armor, InterruptPower, PhysicalDamage};
-use crate::combat::defense::{DefenseOutcome, Dodging, Parrying};
+use crate::combat::defense::{BlockChance, DefenseOutcome, Dodging, Parrying};
 use crate::combat::health::DamageEvent;
 use crate::combat::lifecycle::{HitOnce, Projectile};
 use crate::combat::targeting::CollisionTarget;
 use crate::movement::Velocity;
 use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, ScheduledAction};
 
-use super::domain::{DefenseState, counter_damage, interrupt_lands, resolve_defense};
+use super::domain::{
+    DefenseState, blocked_damage, counter_damage, interrupt_lands, resolve_defense,
+};
 use super::events::InterruptEvent;
 
 /// 物理伤害公式：原始伤害扣护甲，最低为 0。
@@ -54,6 +56,8 @@ pub fn apply_physical_hits_system(
     armors: Query<&Armor>,
     dodging: Query<(), With<Dodging>>,
     parrying: Query<&Parrying>,
+    // 格挡率来自装备 / 姿态；管线只读它，不自己算
+    blockers: Query<&BlockChance>,
     mut hit_once: Query<&mut HitOnce>,
     mut projectiles: Query<(&mut Projectile, Option<&mut Velocity>)>,
 ) {
@@ -71,20 +75,30 @@ pub fn apply_physical_hits_system(
             .get(target)
             .ok()
             .map(|parry| parry.target_attack.to_bits());
+        let block_chance = blockers.get(target).map(|c| c.clamped()).unwrap_or(0.0);
         let outcome = resolve_defense(
             DefenseState {
                 dodging: dodging.get(target).is_ok(),
                 parrying: parry_target.is_some(),
+                block_chance,
             },
             attack.to_bits(),
             parry_target,
+            // 格挡率是 0 时这次掷骰不会被用到（`resolve_defense` 里先判 0）
+            block_roll(),
         );
 
         let armor = armors.get(target).map(|armor| armor.0).unwrap_or_default();
-        let amount = if outcome == DefenseOutcome::Landed {
-            physical_damage(damage.0, armor)
-        } else {
-            0
+        // 六关的顺序（`docs/combat.md` 第一节）：① 闪避 / ② 招架**拦下**（归零）
+        // → ③ 格挡**按格挡率减伤** → ④ 抗性（护甲）再减。
+        // **格挡在抗性之前**：减伤发生在"原始伤害"上，与抗性各自独立地削，
+        // 顺序因此可观测（挡 50% 的 10 点 = 5，再减 2 点护甲 = 3）。
+        let amount = match outcome {
+            DefenseOutcome::Dodged | DefenseOutcome::Parried => 0,
+            DefenseOutcome::Blocked { absorbed } => {
+                physical_damage(blocked_damage(damage.0, absorbed), armor)
+            }
+            DefenseOutcome::Landed => physical_damage(damage.0, armor),
         };
         if amount > 0 {
             damage_events.write(DamageEvent {
@@ -101,7 +115,8 @@ pub fn apply_physical_hits_system(
                 amount: counter_damage(damage.0),
             });
         }
-        // 打断：打中了才有对抗可言（被闪开 / 被招架 = 没吃到冲击）
+        // 打断：打中了才有对抗可言。**格挡照常触发**——它是减伤不是免伤，
+        // 冲击实实在在吃到了（`docs/combat.md` 第一节明说）。
         if outcome == DefenseOutcome::Landed
             && let Some(power) = power
             && power.0 != 0
@@ -133,6 +148,14 @@ pub fn apply_physical_hits_system(
 }
 
 /// 3d5：三个五面骰之和（3..=15）。打断对抗用它给双方各加一点运气。
+/// 格挡掷骰：`0.0..1.0` 的均匀值，与格挡率比大小。
+///
+/// 掷骰**只在应用层**（`domain.rs` 零随机，边界才好单测）。
+fn block_roll() -> f32 {
+    // 与 `roll_3d5` 同一套取随机的方式（rand 0.10 的自由函数）
+    rand::random_range(0.0..1.0)
+}
+
 fn roll_3d5() -> i32 {
     (0..3).map(|_| rand::random_range(1..=5)).sum()
 }

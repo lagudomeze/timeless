@@ -49,7 +49,9 @@ pub use attack::{
 };
 pub use attributes::{Armor, AttackFrame, AttackRange, HitRadius, InterruptPower, PhysicalDamage};
 pub use components::{Collidable, Faction};
-pub use defense::{DefenseOutcome, Dodging, ParryCommand, Parrying, RollCommand, Stamina};
+pub use defense::{
+    BlockChance, DefenseOutcome, Dodging, ParryCommand, Parrying, RollCommand, Stamina,
+};
 pub use formula::{
     DefenseState, InterruptEvent, counter_damage, interrupt_lands, physical_damage, resolve_defense,
 };
