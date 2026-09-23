@@ -3,8 +3,10 @@
 //! 调度器按设计不感知载荷（见 [`crate::timeline`]），所以这里由表现层代它读一次
 //! 载荷标记，只把「这条行动是什么」翻成人话——HUD 依然只读游戏状态。
 //!
-//! 「前摇中」额外标注 `(windup)`：那正是**还撤得掉**的那段时间窗口
-//! （`now < execute_at`），玩家据此决定要不要右键改主意。
+//! **前摇中会带上剩余秒数**（`act: fireball (windup 0.2s)`）：那是**还撤得掉**、
+//! 也是**还能躲开**的那段时间窗口（`now < execute_at`）。这是信息层的第一块读数
+//! （`docs/game-design.md`「信息即力量」的"帧窗口细节"）——玩家据此决定
+//! 要不要右键改主意、要不要抢在它前面动。
 
 use bevy::prelude::*;
 
@@ -114,7 +116,10 @@ fn action_text(
         action, movements, jumps, rolls, parries, shoots, fireballs, melees,
     );
     if schedule.pending(now) {
-        format!("act: {name} (windup)")
+        // 前摇剩余秒数：信息层的"帧窗口细节"——还剩多久这一手就落地
+        // （满前摇 = `execute_at - declared_at`，当前进度由 `now` 决定）
+        let remaining = (schedule.execute_at - now).max(0.0);
+        format!("act: {name} (windup {remaining:.1}s)")
     } else {
         format!("act: {name}")
     }
@@ -190,9 +195,9 @@ mod tests {
         assert_eq!(text_of(&app, label), "act: -");
     }
 
-    /// 挂着行动时显示载荷名；**前摇中**额外标注 `(windup)`（那正是还能撤的窗口）。
+    /// 挂着行动时显示载荷名；**前摇中**带上剩余秒数——那正是还能撤、还能躲的窗口。
     #[test]
-    fn pending_action_is_named_and_windups_are_marked() {
+    fn pending_action_is_named_and_windups_show_the_time_left() {
         let mut app = label_app();
         let player = spawn_unit(&mut app, Faction::Player);
         let label = spawn_label(&mut app, Faction::Player);
@@ -206,7 +211,10 @@ mod tests {
             .id();
 
         app.update();
-        assert_eq!(text_of(&app, label), "act: move (windup)");
+        // `MOVE_TIMING.windup = 0.15`，声明于 0.0；首帧剩余即接近满前摇
+        let shown = text_of(&app, label);
+        assert!(shown.starts_with("act: move (windup"), "{shown}");
+        assert!(shown.ends_with("s)"), "前摇读数要带剩余秒数与单位：{shown}");
 
         // 世界走过前摇：这条行动已经落地（等执行器收拾），不再标注 windup
         app.world_mut()
@@ -215,6 +223,42 @@ mod tests {
         app.update();
         assert_eq!(text_of(&app, label), "act: move");
         assert!(app.world().get_entity(action).is_ok());
+    }
+
+    /// **倒计时真的在走**：同一手行动，虚拟时间前进之后剩余秒数必须变小。
+    ///
+    /// 这条守的是"读数有没有真的连到 `execute_at`"——只显示一个静态的 `(windup)`
+    /// 也能通过上一条测试，但那样玩家读不到"还剩多久"。
+    #[test]
+    fn the_windup_readout_counts_down_as_time_passes() {
+        let mut app = label_app();
+        let player = spawn_unit(&mut app, Faction::Player);
+        let label = spawn_label(&mut app, Faction::Player);
+        app.world_mut().spawn((
+            ActionOf(player),
+            MoveAction::default(),
+            ScheduledAction::declared_at(MOVE_TIMING, 0.0),
+        ));
+
+        let seconds = |app: &App| -> f32 {
+            let text = app.world().get::<Text>(label).unwrap().0.clone();
+            text.rsplit_once("windup ")
+                .and_then(|(_, rest)| rest.trim_end_matches(['s', ')']).parse().ok())
+                .unwrap_or_else(|| panic!("读不出前摇剩余秒数：{text}"))
+        };
+
+        app.update();
+        let before = seconds(&app);
+        app.world_mut()
+            .resource_mut::<Time<Virtual>>()
+            .advance_by(std::time::Duration::from_millis(60));
+        app.update();
+        let after = seconds(&app);
+
+        assert!(
+            after < before,
+            "时间前进了，前摇剩余应当变小：{before} → {after}"
+        );
     }
 
     /// 单位阵亡（实体没了）时显示 `down`，不留下过期的行动名。
@@ -252,10 +296,10 @@ mod tests {
             ScheduledAction::declared_at(JUMP_TIMING, 0.0),
         ));
         app.update();
-        assert_eq!(
-            text_of(&app, label),
-            "act: jump (windup)",
-            "换了行动就必须重写"
+        let shown = text_of(&app, label);
+        assert!(
+            shown.starts_with("act: jump (windup"),
+            "换了行动就必须重写：{shown}"
         );
     }
 }
