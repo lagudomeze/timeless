@@ -57,6 +57,23 @@ pub fn slot(faction: Faction) -> usize {
     }
 }
 
+/// 两个敌人之间，哪个更该显示在面板上。
+///
+/// 规则：**离玩家更近的优先**；一样近时取格坐标更小的（`Cell` 的序不影响数值，
+/// 只用来把并列打散，保证结果与遍历顺序无关）。没有玩家可参照时按格坐标。
+fn enemy_rank(candidate: &UnitRow, current: &UnitRow, player: Option<&UnitRow>) -> bool {
+    let by_player = |row: &UnitRow| {
+        player
+            .map(|player| row.position.distance(player.position))
+            .unwrap_or(f32::INFINITY)
+    };
+    let (candidate_distance, current_distance) = (by_player(candidate), by_player(current));
+    if candidate_distance != current_distance {
+        return candidate_distance < current_distance;
+    }
+    (candidate.cell.x, candidate.cell.z) < (current.cell.x, current.cell.z)
+}
+
 /// 一帧的面板快照（两条面板各自的读数）。
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct UnitPanels {
@@ -65,14 +82,32 @@ pub struct UnitPanels {
 
 impl UnitPanels {
     /// 按阵营把读数摆进两个槽位。
+    ///
+    /// **玩家只有一个**；敌人可能有很多，而面板只画得下一个——所以定一条明确的规则：
+    /// **显示离玩家最近的那个敌人**，距离相同时取格坐标小的那个。
+    /// 判据完全由数据决定（不含遍历顺序），所以同一份战场状态永远得到同一个面板。
+    ///
+    /// 之前这里是"后遍历到的覆盖前面"，而 **ECS 查询顺序不保证**——
+    /// 两个敌人时显示谁全凭运气，看上去像血条自己在跳。
     pub fn from_rows(rows: &[UnitRow]) -> Self {
         let mut snapshot: [Option<UnitRow>; 2] = [None, None];
+        let player = rows.iter().find(|row| row.faction == Faction::Player);
         for row in rows {
-            snapshot[slot(row.faction)] = Some(*row);
+            let index = slot(row.faction);
+            if row.faction == Faction::Player {
+                snapshot[index] = Some(*row);
+                continue;
+            }
+            let wins = match snapshot[index] {
+                None => true,
+                Some(current) => enemy_rank(row, &current, player),
+            };
+            if wins {
+                snapshot[index] = Some(*row);
+            }
         }
         Self { rows: snapshot }
     }
-
     /// 玩家位置（敌人面板要拿它算距离）。
     pub fn player_position(&self) -> Option<Vec3> {
         self.of(Faction::Player).map(|row| row.position)
@@ -269,5 +304,59 @@ mod tests {
 
         assert_eq!(panels.stamina_text(Faction::Player), "EN -");
         assert_eq!(panels.stamina_percent(Faction::Player), Val::Percent(0.0));
+    }
+
+    /// 两个敌人时面板显示**离玩家最近的那个**，与遍历顺序无关。
+    ///
+    /// 这条守着一个真实的症状：以前是"后遍历到的覆盖前面"，而 ECS 查询顺序不保证，
+    /// 于是两个敌人时血条看起来自己在跳。
+    #[test]
+    fn the_enemy_panel_shows_the_nearest_one_whatever_the_iteration_order() {
+        let player = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        let near = row(Faction::Enemy, Cell::new(1, 0), Vec3::new(2.0, 0.0, 0.0));
+        let far = row(Faction::Enemy, Cell::new(5, 0), Vec3::new(10.0, 0.0, 0.0));
+
+        for order in [
+            vec![player, near, far],
+            vec![player, far, near],
+            vec![far, near, player],
+        ] {
+            let panels = UnitPanels::from_rows(&order);
+            let shown = panels.of(Faction::Enemy).expect("应当有敌人在面板上");
+            assert_eq!(
+                shown.cell,
+                Cell::new(1, 0),
+                "无论遍历顺序如何，显示的都该是更近的那个"
+            );
+        }
+    }
+
+    /// 一样近时按格坐标打散——判据完全由数据决定，不含遍历顺序。
+    #[test]
+    fn equidistant_enemies_are_broken_by_cell_order_not_iteration() {
+        let player = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        let east = row(Faction::Enemy, Cell::new(2, 0), Vec3::new(4.0, 0.0, 0.0));
+        let west = row(Faction::Enemy, Cell::new(-2, 0), Vec3::new(-4.0, 0.0, 0.0));
+
+        let a = UnitPanels::from_rows(&[player, east, west]);
+        let b = UnitPanels::from_rows(&[player, west, east]);
+        assert_eq!(
+            a.of(Faction::Enemy).map(|row| row.cell),
+            b.of(Faction::Enemy).map(|row| row.cell),
+            "并列时两种顺序必须给出同一个答案"
+        );
+    }
+
+    /// 单个敌人时照旧显示他（多敌人的改动不能影响只有一个的情况）。
+    #[test]
+    fn a_single_enemy_is_still_shown() {
+        let panels = UnitPanels::from_rows(&[
+            row(Faction::Player, Cell::new(0, 0), Vec3::ZERO),
+            row(Faction::Enemy, Cell::new(3, 0), Vec3::new(6.0, 0.0, 0.0)),
+        ]);
+        assert_eq!(
+            panels.of(Faction::Enemy).map(|row| row.cell),
+            Some(Cell::new(3, 0))
+        );
     }
 }
