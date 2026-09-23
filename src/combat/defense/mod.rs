@@ -27,7 +27,7 @@ pub use actions::{
     DODGE_SECS, PARRY_COST, PARRY_SECS, PARRY_TIMING, ROLL_COST, declare_parry_system,
     declare_roll, declare_roll_system, parry_executor_system, roll_executor_system, roll_step,
 };
-pub use components::{BlockChance, Blocking, DefenseOutcome, Dodging, ParryAction, Parrying};
+pub use components::{BlockChance, DefenseOutcome, Dodging, ParryAction, Parrying};
 pub use events::{ParryCommand, RollCommand};
 pub use stamina::{STAMINA_REGEN_PER_DECISION, Stamina};
 pub use systems::{expire_defense_markers_system, recover_stamina_observer};
