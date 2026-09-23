@@ -93,6 +93,40 @@ fn unit_sprites_exist_square_and_keep_transparency() {
     }
 }
 
+/// 从源码里抓出**会显示给玩家的中文字面量**。
+///
+/// 手抄一份字表迟早会和代码脱节（刚发生过：日志加了"命中/被击杀"，
+/// 字表没跟上，豆腐块就没被拦住）。这里改成从**真相源**里抽：
+/// 战斗日志与提示条是中文正文的产处，它们的字符串字面量就是要覆盖的字。
+fn chinese_in_source() -> String {
+    let sources = [
+        include_str!("../src/presentation/log.rs"),
+        include_str!("../src/presentation/hud/panels/model.rs"),
+        include_str!("../src/presentation/hud/timeline/model.rs"),
+        include_str!("../src/world/storage/interaction.rs"),
+    ];
+    let mut chars = String::new();
+    for source in sources {
+        for line in source.lines() {
+            // 跳过注释行：注释里的中文不会被渲染出来
+            let code = line.trim_start();
+            if code.starts_with("//") || code.starts_with("*") {
+                continue;
+            }
+            // 抓 `"..."` 字面量里的中文
+            for literal in line.split('"').skip(1).step_by(2) {
+                chars.extend(literal.chars().filter(|c| is_cjk(*c)));
+            }
+        }
+    }
+    chars
+}
+
+/// 是否是 CJK 汉字（够用即可：本项目的中文正文只有汉字）。
+fn is_cjk(c: char) -> bool {
+    ('\u{4E00}'..='\u{9FFF}').contains(&c)
+}
+
 /// **字形覆盖验收**：HUD 字体必须真的能画出界面上会出现的字。
 ///
 /// 已有的那条只验"文件在、是合法 sfnt"——**合法但缺字**的字体照样通过，
@@ -110,18 +144,11 @@ fn the_font_covers_every_character_the_ui_can_show() {
     let font = skrifa::FontRef::new(&bytes).expect("字体应当能解析成 FontRef");
     let charmap = font.charmap();
 
-    // 界面上真正会出现的字：HUD 英文 + 战斗日志中文 + 常用标点与数字。
-    // 覆盖不全的症状就是豆腐块，所以这里逐个查而不是抽查。
+    // HUD 英文 + 数字与符号（这些是代码里写死的展示文案）
     let ui_text = [
-        // HUD（英文）
-        "PLAYER ENEMY HP EN TIMELINE FROZEN RUNNING RUNNING SKILL COST WINDUP RECOVERY POWER",
+        "PLAYER ENEMY HP EN TIMELINE FROZEN RUNNING SKILL COST WINDUP RECOVERY POWER",
         "attack melee fireball roll parry move jump shoot wait",
         "0123456789:/.-+%()[]·",
-        // 战斗日志正文（中文）
-        "敌人玩家火球近战横扫箭矢翻滚招架格挡命中伤害打断撤销掉落死亡重生",
-        "前摇后摇决策槽时间线冻结威胁反应反制精力护甲暴击闪避无敌",
-        "距离格子在左上下右前后目标法术技能等待暂停继续重置战斗日志",
-        "的了一是在有和就不人都一个我他这",
         // 全角标点与常用符号
         "，。：、；！？（）【】「」…—·",
     ];
@@ -132,6 +159,12 @@ fn the_font_covers_every_character_the_ui_can_show() {
             if charmap.map(ch).is_none() && !missing.contains(&ch) {
                 missing.push(ch);
             }
+        }
+    }
+    // 中文正文从源码抽，避免手抄的字表与代码脱节
+    for ch in chinese_in_source().chars() {
+        if charmap.map(ch).is_none() && !missing.contains(&ch) {
+            missing.push(ch);
         }
     }
 
