@@ -10,6 +10,7 @@
 use bevy::prelude::*;
 
 use crate::timeline::{ActionBlocked, BlockReason};
+use crate::world::BlockRefused;
 
 use super::hud_text_tinted;
 
@@ -64,20 +65,29 @@ pub fn hint_panel(font: &Handle<Font>) -> impl Bundle {
 }
 
 /// 消费 [`ActionBlocked`]：起计时器、写文案、显示；到点自己隐藏。
+///
+/// 也消费 [`BlockRefused`]（`world` 域自己的拒绝原因）：方块交互被拒时同样要走
+/// 这条提示——`world` 是纯数据域，不认识时间线的 `ActionBlocked`，所以它的话由
+/// 表现层翻译成同一条提示条上的文案。
 pub fn update_action_hint_system(
     time: Res<Time<Real>>,
     mut timer: ResMut<HintTimer>,
     mut blocked: MessageReader<ActionBlocked>,
+    mut refused: MessageReader<BlockRefused>,
     mut readouts: MessageReader<PreviewReadout>,
     mut nodes: Query<&mut Node, With<ActionHint>>,
     mut texts: Query<(&mut Text, &mut TextColor, &mut BackgroundColor), With<ActionHintText>>,
 ) {
-    if let Some(last) = blocked.read().last() {
+    let refused_message = refused
+        .read()
+        .last()
+        .map(|BlockRefused::TerrainNotLoaded| "NO GROUND HERE · chunk not loaded");
+    let blocked_message = blocked.read().last().map(|last| match last.reason {
+        BlockReason::Busy => "CAN'T ACT YET · still busy",
+        BlockReason::NotEnoughEnergy => "NOT ENOUGH ENERGY",
+    });
+    if let Some(message) = refused_message.or(blocked_message) {
         timer.0 = HINT_SECS;
-        let message = match last.reason {
-            BlockReason::Busy => "CAN'T ACT YET · still busy",
-            BlockReason::NotEnoughEnergy => "NOT ENOUGH ENERGY",
-        };
         for (mut text, mut color, mut background) in &mut texts {
             **text = message.to_string();
             *color = TextColor(WARN_TEXT);
@@ -143,6 +153,7 @@ mod tests {
             )))
             .init_resource::<HintTimer>()
             .add_message::<ActionBlocked>()
+            .add_message::<BlockRefused>()
             .add_message::<PreviewReadout>()
             .add_systems(Update, update_action_hint_system);
         let node = app
@@ -185,6 +196,29 @@ mod tests {
             app.world().get::<Node>(node).unwrap().display,
             Display::None,
             "提示到点应当自己隐藏，不需要玩家做任何事"
+        );
+    }
+
+    /// 方块交互被拒也走同一条提示条——`world` 只宣布原因，文案由表现层给。
+    ///
+    /// 这条钉的是"写了没人读"：`BlockRefused` 有生产者、没有消费者时，
+    /// 玩家在没加载的地方按 B/V **什么都看不到**，只能在代码里读到它。
+    #[test]
+    fn a_refused_block_edit_reaches_the_same_hint_bar() {
+        let (mut app, node, text) = hint_app();
+        app.world_mut()
+            .write_message(BlockRefused::TerrainNotLoaded);
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Node>(node).unwrap().display,
+            Display::Flex,
+            "方块交互被拒也应当看得见"
+        );
+        let shown = app.world().get::<Text>(text).unwrap().0.clone();
+        assert!(
+            shown.contains("GROUND"),
+            "文案要说清楚是「这里没有地」而不是别的：{shown}"
         );
     }
 

@@ -94,4 +94,76 @@ mod tests {
             "新区块应被加载"
         );
     }
+
+    /// **改过的区块不会被卸载**：玩家挖一格、走远、再回来，改动还在。
+    ///
+    /// 这钉的是 `ChunkPinned` 的整条链：方块交互 → `set_voxel` → 钉住 →
+    /// `chunk_streaming_system` 跳过卸载。少了任何一环，改动都会在离开范围时
+    /// **静默消失**（区块重建按噪声重算，看不出是"丢了"）。
+    ///
+    /// 顺带钉住"地表在 y=0 以下也找得到"：默认地形的区块 y=0 是空气、y=-1 才是土，
+    /// 只在单层区块里找地表的实现会让这里**每一格都被拒绝**（改动根本没发生）。
+    #[test]
+    fn edited_terrain_survives_walking_away() {
+        use crate::world::storage::BlockCommand;
+
+        let mut app = world_app();
+        let loader = app
+            .world_mut()
+            .spawn((Transform::default(), ChunkLoader::default()))
+            .id();
+        app.update();
+
+        // 格 (0,0) 的中心是体素列 (1,1)；默认地形高度为 0，
+        // 最上面那块实心方块就是 y = -1
+        let surface = IVec3::new(1, -1, 1);
+        let pos = ChunkPos::from_voxel(surface);
+        let chunk = app.world().resource::<ChunkMap>().get(pos).unwrap();
+        assert_eq!(
+            app.world()
+                .get::<Chunk>(chunk)
+                .unwrap()
+                .get(pos.local(surface)),
+            VoxelType::Grass,
+            "挖之前地表应当是草"
+        );
+
+        // 挖掉它
+        app.world_mut().write_message(BlockCommand {
+            cell: crate::movement::Cell::new(0, 0),
+            place: false,
+        });
+        app.update();
+
+        let chunk = app.world().resource::<ChunkMap>().get(pos).unwrap();
+        assert_eq!(
+            app.world()
+                .get::<Chunk>(chunk)
+                .unwrap()
+                .get(pos.local(surface)),
+            VoxelType::Air,
+            "挖方应当把地表那一格变成空气（找不着地表时这里会停在草）"
+        );
+
+        // 走远：旧区块按理该被卸载——但它被钉住了，必须留下，改动也还在
+        app.world_mut()
+            .entity_mut(loader)
+            .get_mut::<Transform>()
+            .unwrap()
+            .translation = Vec3::new(200.0, -1.0, 200.0);
+        app.update();
+
+        let map = app.world().resource::<ChunkMap>();
+        let chunk = map
+            .get(pos)
+            .expect("改过的区块不该被卸载，否则玩家的改动会丢");
+        assert_eq!(
+            app.world()
+                .get::<Chunk>(chunk)
+                .unwrap()
+                .get(pos.local(surface)),
+            VoxelType::Air,
+            "走远再回来，挖掉的那一格仍然是空的"
+        );
+    }
 }

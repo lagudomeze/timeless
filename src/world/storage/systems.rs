@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use crate::world::chunk::components::{Chunk, ChunkPos};
+use crate::world::chunk::components::{Chunk, ChunkPinned, ChunkPos};
 use crate::world::chunk::events::ChunkDirtyEvent;
 use crate::world::voxel::VoxelType;
 
@@ -25,11 +25,15 @@ pub fn get_voxel(
 /// 命中已加载区块时写入数据、发出 [`ChunkDirtyEvent`]（渲染层据此重建网格），
 /// 返回 `true` 表示数据真的变了。区块未加载或数值没变都返回 `false`。
 ///
-/// 战斗破坏地形、玩家放置方块都走这里——不直接碰区块数组，保证「改动必标脏」。
+/// 改动成功还会**钉住那个区块**（挂 [`ChunkPinned`]）：流式加载不会再卸载它，
+/// 玩家改过的地形因此不会一走远就消失（卸载后再生成是按噪声重算的，改动会丢）。
+/// 钉住与标脏绑在同一处，是为了让"改了就该保住"这条契约**不可能被后来的调用方漏掉**
+/// ——战斗破坏地形将来也走这里。
 pub fn set_voxel(
     chunk_map: &ChunkMap,
     chunks: &mut Query<&mut Chunk>,
     dirty: &mut MessageWriter<ChunkDirtyEvent>,
+    commands: &mut Commands,
     world_pos: IVec3,
     voxel: VoxelType,
 ) -> bool {
@@ -44,6 +48,7 @@ pub fn set_voxel(
         return false;
     }
     dirty.write(ChunkDirtyEvent { chunk: entity });
+    commands.entity(entity).insert(ChunkPinned);
     true
 }
 
@@ -63,6 +68,7 @@ mod tests {
 
     /// 写一个体素，返回是否真的变了。
     fn write_stone_system(
+        mut commands: Commands,
         chunk_map: Res<ChunkMap>,
         mut chunks: Query<&mut Chunk>,
         mut dirty: MessageWriter<ChunkDirtyEvent>,
@@ -72,6 +78,7 @@ mod tests {
             &chunk_map,
             &mut chunks,
             &mut dirty,
+            &mut commands,
             SAMPLE,
             VoxelType::Stone,
         );
@@ -121,6 +128,33 @@ mod tests {
         let pos = ChunkPos(IVec3::new(0, -1, 0));
         let data = app.world().get::<Chunk>(chunk).unwrap();
         assert_eq!(data.get(pos.local(IVec3::new(3, -1, 4))), VoxelType::Stone);
+    }
+
+    /// 写成功会**钉住区块**：流式加载不再卸载它，玩家改过的地形不会一走远就丢。
+    ///
+    /// 症状很隐蔽——区块卸载后重建是按噪声重算的，改动会**静默消失**。
+    #[test]
+    fn writing_a_voxel_pins_the_chunk_against_unloading() {
+        use crate::world::chunk::ChunkPinned;
+
+        let mut app = storage_app();
+        app.add_systems(Update, write_stone_system);
+        let pos = ChunkPos(IVec3::new(0, -1, 0));
+        let chunk = app.world_mut().spawn((Chunk::empty(), pos)).id();
+        app.world_mut()
+            .resource_mut::<ChunkMap>()
+            .insert(pos, chunk);
+
+        app.update();
+
+        assert!(
+            app.world().resource::<Probe>().changed,
+            "先确认这次写入真的成功了"
+        );
+        assert!(
+            app.world().get::<ChunkPinned>(chunk).is_some(),
+            "改过的区块必须被钉住，否则离开范围就会卸载、改动丢失"
+        );
     }
 
     #[test]

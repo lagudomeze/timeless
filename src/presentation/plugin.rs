@@ -66,6 +66,9 @@ impl Plugin for PresentationPlugin {
             .init_resource::<HintTimer>()
             // 预演读数：写方是 interaction，消费方是本域
             .add_message::<PreviewReadout>()
+            // 方块交互被拒：写方是 world（纯数据域，不认识时间线的 ActionBlocked），
+            // 消费方是本域——表现层替它把原因翻译成同一条提示条上的文案
+            .add_message::<crate::world::BlockRefused>()
             .add_message::<PanCamera>()
             .add_message::<ZoomCamera>()
             // 帮助面板的开关消息：写方是 input（F1），消费方是 HUD

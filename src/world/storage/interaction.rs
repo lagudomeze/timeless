@@ -47,13 +47,14 @@ const REMOVED: VoxelType = VoxelType::Air;
 const PLACED: VoxelType = VoxelType::Stone;
 
 pub fn apply_block_command_system(
-    mut commands: MessageReader<BlockCommand>,
+    mut commands: Commands,
+    mut block_commands: MessageReader<BlockCommand>,
     chunk_map: Res<ChunkMap>,
     mut chunks: Query<&mut Chunk>,
     mut dirty: MessageWriter<ChunkDirtyEvent>,
     mut refused: MessageWriter<BlockRefused>,
 ) {
-    for command in commands.read() {
+    for command in block_commands.read() {
         // 格 → 世界体素坐标：格中心的地表那一格。
         // 与地形的量化粒度（`TERRAIN_CELL`）对齐——整格同高，所以取格中心不会
         // 落在台阶的另一侧（见 `world::terrain::systems`）。
@@ -69,26 +70,53 @@ pub fn apply_block_command_system(
             voxel
         };
         let kind = if command.place { PLACED } else { REMOVED };
-        set_voxel(&chunk_map, &mut chunks, &mut dirty, target, kind);
+        set_voxel(
+            &chunk_map,
+            &mut chunks,
+            &mut dirty,
+            &mut commands,
+            target,
+            kind,
+        );
     }
 }
 
-/// 格中心正下方那一格的**地表体素**坐标（没加载区块时 `None`）。
+/// 格中心正下方那一格的**地表体素**坐标（整列都没有实心方块时 `None`）。
+///
+/// **必须沿整列从上往下扫**，而不是只看某一层区块：默认地形的地表在 y ≤ 0
+/// （`TerrainConfig::base_height = 0`，区块 y=0 是空气、y=-1 才是土），
+/// 只查 `from_voxel(.., 0, ..)` 会永远落在地表之上，表现为**每一格都被拒绝**。
+///
+/// 扫的是「这一列上**已加载**的区块」，按 y 从高到低：区块之间可能不连续
+/// （流式加载的范围内外），跳过没加载的那些即可，不需要知道世界的上下边界。
 fn voxel_at_ground(
     chunk_map: &ChunkMap,
     chunks: &Query<&mut Chunk>,
     center: Vec2,
 ) -> Option<IVec3> {
-    let column = IVec3::new(center.x.floor() as i32, 0, center.y.floor() as i32);
-    let pos = ChunkPos::from_voxel(column);
-    let entity = chunk_map.get(pos)?;
-    let chunk = chunks.get(entity).ok()?;
-    // 从区块顶往下找第一个非空气——那就是地表
-    let origin = pos.origin();
-    for y in (0..crate::world::chunk::CHUNK_SIZE as i32).rev() {
-        let local = pos.local(IVec3::new(column.x, origin.y + y, column.z));
-        if chunk.get(local) != VoxelType::Air {
-            return Some(IVec3::new(column.x, origin.y + y, column.z));
+    let x = center.x.floor() as i32;
+    let z = center.y.floor() as i32;
+    let size = crate::world::chunk::CHUNK_SIZE as i32;
+
+    // 这一列上已加载的区块（按 y 从高到低）
+    let mut column: Vec<(ChunkPos, Entity)> = chunk_map
+        .iter()
+        .filter(|(pos, _)| {
+            let origin = pos.origin();
+            origin.x <= x && x < origin.x + size && origin.z <= z && z < origin.z + size
+        })
+        .collect();
+    column.sort_unstable_by_key(|(pos, _)| -pos.origin().y);
+
+    for (pos, entity) in column {
+        let Ok(chunk) = chunks.get(entity) else {
+            continue;
+        };
+        for local_y in (0..size).rev() {
+            let world = IVec3::new(x, pos.origin().y + local_y, z);
+            if chunk.get(pos.local(world)) != VoxelType::Air {
+                return Some(world);
+            }
         }
     }
     None
