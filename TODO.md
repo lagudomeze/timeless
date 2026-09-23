@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 248 通过（245 单元 + 3 资产验收）/ 0 跳过
+cargo test                                  # 251 通过（248 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -417,7 +417,18 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `the_frame_matches_the_frame_on_the_payload` 钉住两处不许分叉
       （验证过：故意改一处后确实转红）。
       验收：240 测试全绿 / clippy 零警告 / fmt 通过。
-- [ ] **没有生产者的预留类型**：`Voxel` / `VoxelPos` / `ChunkPinned`——接上或删掉。
+- [x] **没有生产者的预留类型**（本次）：`Voxel` / `VoxelPos` **早已不存在**（旧条目过时）；
+      `ChunkPinned` 的缺口是真的，而且掩盖了一个**更严重的 bug**：
+      ① `voxel_at_ground` 只在 `from_voxel(.., 0, ..)` 这一层区块里找地表，
+      而默认地形在 y ≤ 0（区块 y=0 是空气、y=-1 才是土）——于是**每一格都被拒绝**
+      （`BlockRefused::TerrainNotLoaded`），玩家按 `B`/`V` 在世界里**哪里都放不了/挖不动**。
+      改成沿这一列**已加载**的区块从上往下扫。
+      ② `set_voxel` 现在顺手挂 `ChunkPinned`（钉住 + 标脏绑在同一处，
+      后来的调用方**漏不掉**）：否则走远再回来，改动会被噪声重新生成覆盖掉。
+      ③ `BlockRefused` 原来**只有生产者没有消费者**（文件注释却写着"消费：提示条"）——
+      接进 `presentation` 的 `ActionHint`，与 `ActionBlocked` 共用同一条提示条。
+      验收：248 测试全绿 / clippy 零警告 / fmt 通过；
+      三条新测试都**验过不是空跑**（分别还原旧实现后转红）。
 - [x] **开发热重载**（本次）：**原来的"环境阻塞"是误判**——`notify-debouncer-full 0.7.0`
       本来就在 USTC 镜像里（`0.6.0` 是本地索引缓存的旧快照；不改 `Cargo.toml`
       就不会刷新）。现在 `Cargo.toml` 里是一个**具名 feature**：
@@ -442,7 +453,6 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **贪婪网格化**：同材质共面合并成矩形，替代逐面四边形。
 - [ ] **纹理图集 / UV**：`materials/assets.rs` 换图集，网格化代码不动。
 - [ ] **AO**：`lighting` 从面朝向明暗升级为按顶点的邻域遮挡。
-- [ ] **区块持久化**：只保存被改动的区块（`ChunkPinned` + 存档）。
 - [x] **方块交互**（本次）：`B` 在**悬停格**放一块石头、`V` 挖掉一块
       （`BlockCommand { cell, place }` → `world` 的 `apply_block_command_system`
       → `set_voxel` → `ChunkDirtyEvent` → 渲染层重建网格）。

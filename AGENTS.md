@@ -33,7 +33,7 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 248 通过（245 单元 + 3 资产验收）/ 0 跳过
+cargo test                                  # 251 通过（248 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check                           # 格式校验
 ```
