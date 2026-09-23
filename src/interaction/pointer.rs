@@ -79,13 +79,19 @@ pub fn update_preview_readout_system(
                 SkillKind::Attack => SkillKind::Fireball,
                 other => other,
             };
-            let power = SKILLS
-                .iter()
-                .find(|def| def.kind == effective)
-                .map(|def| def.power)
-                .unwrap_or_default();
+            let def = SKILLS.iter().find(|def| def.kind == effective);
+            let power = def.map(|def| def.power).unwrap_or_default();
+            // 速度帧（`AttackFrame`）：无回合模型里"到点"由 `execute_at` 决定，
+            // 帧退居**信息层**——它是玩家判断「谁先动」的读数（见 `docs/game-design.md`
+            // 的「洞察力」）。这里把它摆到预演读数上，字段因此有了真正的消费者。
+            let frame = def.map(|def| def.frame).unwrap_or_default();
+            let frame_text = if frame > 0 {
+                format!(" · frame {frame}")
+            } else {
+                String::new() // 翻滚这类不产生攻击实体的动作没有帧
+            };
             Some(format!(
-                "{} · cell ({},{}) · dist {distance:.1} · dmg {power}",
+                "{} · cell ({},{}) · dist {distance:.1} · dmg {power}{frame_text}",
                 effective.label().to_uppercase(),
                 cell.x,
                 cell.z
@@ -232,5 +238,44 @@ mod tests {
         let probes = app.world().resource::<Probes>();
         assert_eq!((probes.undos, probes.moves), (1, 0), "右键只请求撤销");
         assert_eq!(probes.takeovers, 0, "撤销本身就是改主意，不必再多写一条");
+    }
+
+    /// 预演读数带上**速度帧**：`AttackFrame` 的消费者就是它（"谁先动"的洞察力读数）。
+    #[test]
+    fn the_preview_readout_carries_the_speed_frame() {
+        use crate::presentation::hud::PreviewReadout;
+
+        #[derive(Resource, Default)]
+        struct Last(Option<String>);
+        fn capture(mut readouts: MessageReader<PreviewReadout>, mut last: ResMut<Last>) {
+            last.0 = readouts.read().last().and_then(|r| r.0.clone());
+        }
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TerrainConfig::default())
+            .insert_resource(MenuSelection::default())
+            .init_resource::<HoveredCell>()
+            .init_resource::<Last>()
+            .add_message::<PreviewReadout>()
+            .add_systems(Update, (update_preview_readout_system, capture).chain());
+        // 玩家在原点，悬停一格之内的近处 → 「攻击」会派发成近战（frame 5）
+        app.world_mut().spawn((
+            crate::combat::Faction::Player,
+            Transform::from_xyz(1.0, 0.0, 1.0),
+        ));
+        app.world_mut().resource_mut::<HoveredCell>().0 = Some(Cell::new(1, 0));
+        app.update();
+
+        let text = app
+            .world()
+            .resource::<Last>()
+            .0
+            .clone()
+            .expect("应当有读数");
+        assert!(
+            text.contains("frame"),
+            "预演读数应当带上速度帧（`AttackFrame` 的消费者），实际 {text:?}"
+        );
     }
 }

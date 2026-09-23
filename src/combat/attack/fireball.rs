@@ -68,6 +68,8 @@ pub const FIREBALL_RADIUS: f32 = 3.0;
 pub const FIREBALL_TIMING: ActionTiming = ActionTiming::new(0.30, 0.50, 2);
 /// 火球消耗的精力（比翻滚贵，构成资源取舍）。
 pub const FIREBALL_COST: u32 = 2;
+/// 火球的速度帧（**信息层读数**："谁先动"；越小越快）。
+pub const FIREBALL_FRAME: u32 = 7;
 /// 火球的打断力度：出手重，但正在前摇时最怕被打断（见 [`FIREBALL_TIMING`]）。
 pub const FIREBALL_POWER: i32 = 2;
 
@@ -140,7 +142,7 @@ pub fn fireball_scene(origin: Vec3, target_cell: Cell, faction: Faction) -> impl
         TargetCell(target_cell)
         Projectile { max_hits: 0, current_hits: 0, finished: false }
         template_value(PhysicalDamage(FIREBALL_DAMAGE))
-        template_value(AttackFrame(7))
+        template_value(AttackFrame(FIREBALL_FRAME))
         template_value(InterruptPower(FIREBALL_POWER))
         HitRadius(0.35)
         Transform {

@@ -3,6 +3,9 @@
 use bevy::prelude::*;
 
 use crate::combat::attributes::{AttackFrame, HitRadius, InterruptPower, PhysicalDamage};
+
+/// 箭矢的速度帧（**信息层读数**；越小越快——箭最快）。
+pub const ARROW_FRAME: u32 = 4;
 use crate::combat::components::Faction;
 use crate::combat::lifecycle::Projectile;
 use crate::movement::Velocity;
@@ -26,7 +29,7 @@ pub fn arrow_scene(position: Vec3, direction: Vec3, faction: Faction) -> impl Sc
         template_value(Velocity(direction * ARROW_SPEED))
         Projectile { max_hits: 1, current_hits: 0, finished: false }
         template_value(PhysicalDamage(10))
-        template_value(AttackFrame(4))
+        template_value(AttackFrame(ARROW_FRAME))
         template_value(InterruptPower(1))
         HitRadius(0.2)
         Transform {

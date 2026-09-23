@@ -34,12 +34,12 @@ pub use actions::{
     declare_skill_system, melee_action_executor_system, melee_action_scene, refund_melee_observer,
     shoot_action_executor_system, shoot_action_scene,
 };
-pub use arrow::{ARROW_SPEED, arrow_scene};
+pub use arrow::{ARROW_FRAME, ARROW_SPEED, arrow_scene};
 pub use events::{FireCommand, MeleeCommand};
 pub use explosion::{explosion_system, radial_damage_units};
 pub use fireball::{
-    ARRIVAL_TOLERANCE, FIREBALL_COST, FIREBALL_DAMAGE, FIREBALL_POWER, FIREBALL_RADIUS,
-    FIREBALL_SPEED, FIREBALL_TIMING, Fireball, FireballAction, ProjectileArrived,
+    ARRIVAL_TOLERANCE, FIREBALL_COST, FIREBALL_DAMAGE, FIREBALL_FRAME, FIREBALL_POWER,
+    FIREBALL_RADIUS, FIREBALL_SPEED, FIREBALL_TIMING, Fireball, FireballAction, ProjectileArrived,
     declare_fireball_at, declare_fireball_system, declare_melee_system,
     fireball_action_executor_system, fireball_action_scene, fireball_scene,
     projectile_arrival_system, refund_fireball_observer,
