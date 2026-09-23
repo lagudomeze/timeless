@@ -254,7 +254,7 @@ mod tests {
     /// **速度帧不许分叉**：技能表里的 `frame` 与载荷上挂的 `AttackFrame` 必须一致。
     ///
     /// 它们本来是一份数据被抄到两处（技能表给 HUD 读数、载荷给攻击实体），
-    /// 所以要有东西钉住——`docs/components.md` 记录过历史上正是这两处容易脱节。
+    /// 所以要有东西钉住——历史上正是这种"同一份数值抄两处"最容易脱节。
     #[test]
     fn the_frame_matches_the_frame_on_the_payload() {
         assert_eq!(
