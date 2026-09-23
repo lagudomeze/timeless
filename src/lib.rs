@@ -245,6 +245,8 @@ mod tests {
             .add_message::<crate::presentation::ZoomCamera>()
             // F5 重置由 spawn 消费（本测试 App 没有 SpawnPlugin）
             .add_message::<crate::spawn::ResetBattle>()
+            // B/V 方块编辑由 world 消费（本测试 App 没有 WorldPlugin）
+            .add_message::<crate::world::BlockCommand>()
             .add_plugins((
                 ClockPlugin,
                 InputPlugin,

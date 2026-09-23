@@ -186,6 +186,29 @@ pub fn pause_input_system(
     }
 }
 
+/// `B` 放一块 / `V` 挖掉一块（目标是**当前悬停的格**）。
+///
+/// **只翻译**：本域不认识方块类型，也不认识体素坐标——它只知道"玩家想在指着的那一格
+/// 放 / 挖"，剩下（格 → 体素坐标、标脏、重建网格）归 `world`。
+///
+/// ⚠️ 键位是**暂定**的：方块交互属于编辑器能力，等真的做建造玩法时
+/// 该由玩家配置（和技能热键一样外置）。
+pub fn block_edit_input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    hovered: Res<crate::interaction::HoveredCell>,
+    mut blocks: MessageWriter<crate::world::BlockCommand>,
+) {
+    let Some(cell) = hovered.0 else {
+        return; // 光标不在格上（指向天空 / 不在窗口里）
+    };
+    if keys.just_pressed(KeyCode::KeyB) {
+        blocks.write(crate::world::BlockCommand { cell, place: true });
+    }
+    if keys.just_pressed(KeyCode::KeyV) {
+        blocks.write(crate::world::BlockCommand { cell, place: false });
+    }
+}
+
 /// `F5` → [`ResetBattle`]（只翻译，不改状态）。
 ///
 /// 组装车间只负责「清场 + 用同一套工厂重新组装」，**不认识按键**：

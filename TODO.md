@@ -431,7 +431,18 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **纹理图集 / UV**：`materials/assets.rs` 换图集，网格化代码不动。
 - [ ] **AO**：`lighting` 从面朝向明暗升级为按顶点的邻域遮挡。
 - [ ] **区块持久化**：只保存被改动的区块（`ChunkPinned` + 存档）。
-- [ ] **方块交互**：放置 / 破坏走 `world::storage::set_voxel`，自动触发重建网格。
+- [x] **方块交互**（本次）：`B` 在**悬停格**放一块石头、`V` 挖掉一块
+      （`BlockCommand { cell, place }` → `world` 的 `apply_block_command_system`
+      → `set_voxel` → `ChunkDirtyEvent` → 渲染层重建网格）。
+      **分层**：`set_voxel` 是纯函数 + 查询；本系统是应用层（消费消息、把格换算成
+      体素坐标）；按键住在 `input`，`world` 不认识 `KeyCode`。
+      **world 仍是纯数据域**：被拒的原因用**自己的** `BlockRefused`，不写时间线的
+      `ActionBlocked`——否则裸 `MinimalPlugins` 单测会因缺消息而 panic（踩到了）。
+      ⚠️ **键位（B/V）是暂定**：方块交互属建造能力，等做建造玩法时该外置成配置。
+      验收：244 测试全绿 / clippy 零警告 / fmt 通过。
+- [ ] **区块持久化**：只保存被改动的区块（`ChunkPinned` + 存档）。
+      **前置已就绪**（本次的方块交互让"被改动的区块"真的存在了），
+      但存档格式 / 存哪 / 何时存仍是**设计项**。
 
 ### 字体与文本
 
