@@ -33,15 +33,19 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 193 通过（191 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 248 通过（245 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 必须零警告
 cargo fmt --check                           # 格式校验
 ```
 
 根 `Cargo.toml` **不是** workspace（无 `[workspace]`），请不要用 `--workspace`。
 
-环境注意事项：本机 crates.io 直连不可用，依赖经清华镜像解析。**不要使用 `cargo add`**
+环境注意事项：本机 crates.io 直连不可用，依赖经**中科大（USTC）镜像**解析
+（配置在 `~/.cargo/config.toml`，`replace-with = 'ustc'`）。**不要使用 `cargo add`**
 （已知兼容性问题）；依赖须手动写入 `Cargo.toml`，并在 `TODO.md` 的版本索引表登记。
+
+依赖版本**只在改完 `Cargo.toml` 后**才更新本地索引缓存——不改而只跑 `cargo build` / `check`
+时，解析失败可能只是缓存旧，不代表镜像没有那个版本（踩过：见 `TODO.md`「开发热重载」）。
 
 ## 编码风格与命名规范
 

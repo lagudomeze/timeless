@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 224 通过（222 单元 + 2 资产验收）/ 0 跳过
+cargo test                                  # 248 通过（245 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -18,26 +18,29 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ## 当前代码是什么
 
-`src/`（package `app`）= 10 个领域 + 组装车间：
+`src/`（package `app`）= 11 个领域 + 组装车间：
 
-- `world` 32³ 体素区块 / 噪声地形 / 体素读写（零渲染依赖，`MinimalPlugins` 可单测）
+- `world` 32³ 体素区块 / 噪声地形 / 体素读写 / 方块交互（零渲染依赖，`MinimalPlugins` 可单测）
 - `voxel_render` 异步面剔除网格化 / 按类型分组材质 / 面朝向明暗
 - `movement` `Cell` + `MoveGoal` 格子决策、`Transform` + `Velocity` 连续位移、
   移动 / 跳跃 / 翻滚载荷与执行器
 - `combat` 生命 / 护甲公式 / 碰撞与近战扇形 / 攻击实体生命周期 / 箭矢与横扫 /
-  火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 / 招架反制 / 威胁检测
-  （7 个子域，仍由一个 `CombatPlugin` 直接接线；M28 是待办的收尾）
+  火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 / 招架反制 / 格挡 / 反应槽
+  （7 个子域，**每个子域一个 `plugin.rs`**，`CombatPlugin` 只编排顺序）
+- `skills` **静态目录**（顶层域）：`AbilityId` / `AbilityDef` / `SkillRegistry` /
+  `RegisterAbility` / `can_cast`；数值仍归各机制域，目录只聚合
 - `timeline` **无回合**调度：`DecisionSlot` 两态（`Idle { intent }` / `Executing { until }`，
   见 M23）写在行动者身上；`is_idle()` 问"能不能占槽"、`ready()` 问"要不要等他"；
-  行动归行动者所有（`ActionOf` / `Actions`，人没了行动跟着没），`Focus` 让玩家把一次前摇买掉；
+  行动归行动者所有（`ActionOf` / `Actions`，人没了行动跟着没），`Focus`
+  （**每单位一份的组件**）让玩家与敌人都能把一次前摇买掉；
   另有「等待」动作（`wait.rs`，玩家空格绑定的"让我想想"）
 - `clock` **通用冻结设施**（不属于任何领域）：`PauseRequest` 每帧断言 +
   `ManualPause` 布尔，`process_pause_requests` 是**唯一的 `Time<Virtual>` 写入点**。
   谁拥有事实谁断言——`timeline` 说 `awaiting`、`combat::reaction` 说 `threat`、
   `input` 只发消息
-- `ai` 六种战术（含威胁预判）+ 声明行动
-- `input` 只翻译（`F5` → `ResetBattle`、**空格 → 等待**、`P` → 手动暂停、`PlayerTakeover`）·
-  `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
+- `ai` 六种战术（含威胁预判与花钱买前摇的闪避）+ 声明行动
+- `input` 只翻译（`F5` → `ResetBattle`、**空格 → 等待**、`P` → 手动暂停、`B`/`V` 放/挖方块、
+  `PlayerTakeover`）· `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
 - `presentation` 相机 / 单位纸片与贴地阴影 / 装饰 / 中文日志 / 英文 HUD
 - `spawn` 组装车间（消费 `ResetBattle`，不认识按键）
 
@@ -45,7 +48,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 `timeline` · `clock` · `ai` · `input` · `interaction` · `presentation` · `spawn`。
 
 域地图与跨域契约见 [`docs/domain.md`](docs/domain.md)，文档入口是
-[`docs/index.md`](docs/index.md)（`architecture.md` / `components.md` 正在被取代，只作历史参考）。
+[`docs/index.md`](docs/index.md)。
 
 ## 已完成
 
@@ -415,10 +418,13 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       （验证过：故意改一处后确实转红）。
       验收：240 测试全绿 / clippy 零警告 / fmt 通过。
 - [ ] **没有生产者的预留类型**：`Voxel` / `VoxelPos` / `ChunkPinned`——接上或删掉。
-- [ ] **开发热重载** ⛔ **环境阻塞**：`bevy/file_watcher` 要 `notify-debouncer-full = 0.7.0`，
-      而本机用的清华镜像只到 **0.6.0**，`cargo build` 直接解析失败（实测）。
-      解法只有两条：换一个能拿到 0.7.0 的源，或等镜像同步。
-      `Cargo.toml` 里留了注释说明加哪个 feature。
+- [x] **开发热重载**（本次）：**原来的"环境阻塞"是误判**——`notify-debouncer-full 0.7.0`
+      本来就在 USTC 镜像里（`0.6.0` 是本地索引缓存的旧快照；不改 `Cargo.toml`
+      就不会刷新）。现在 `Cargo.toml` 里是一个**具名 feature**：
+      `cargo run --features hot-reload`（生产构建不带它，文件监视器不进依赖树）。
+      验收：`cargo check --features hot-reload` 通过、`cargo tree --features hot-reload`
+      含 `notify-debouncer-full v0.7.0`；不带 feature 时依赖树里没有它。
+      **教训**：报"环境阻塞"之前先改一次 `Cargo.toml` 再解析——见 `AGENTS.md` 的环境注意事项。
 
 ### 玩法与表现
 
@@ -456,9 +462,15 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       （`the_font_covers_every_character_the_ui_can_show`），把"运行时人工看有没有豆腐块"
       变成自动验收。**原以为要新引第三方库，其实不用**——`skrifa` 本来就在
       `bevy_text` 的依赖树里，提成 `dev-dependencies` 不引入新的传递依赖。
-- [ ] **CJK 断行**：Bevy 文本栈缺 `icu_segmenter` 的 CJK 分词模型，运行时会打印
+- [ ] **CJK 断行**（已查明：**只是告警**）：运行时的
       `ICU4X data error: No segmentation model for complex script`
-      （正文仍正常渲染，只是断行退化）。
+      来自 `icu_segmenter::complex::select`——`ComplexScript::ChineseOrJapanese`
+      那条路要一个额外的**词**模型，而 `parley` 只开了 `compiled_data`、
+      没开 `lstm` / `auto`，所以查不到就退化成 `None`。
+      **中文仍然能正确分词与换行**（`LineSegmenter` 用的是编译进数据的 `cjdict`，
+      与这条路无关），实测「敌人向你发射火球」切成 `敌人 / 向 / 你 / 发射 / 火球`。
+      修法是在 `Cargo.toml` 里直接依赖 `icu_segmenter` 并开 `auto`（特性会统一到
+      2.3.0），代价是编译时间与体积——**现状无害，暂不修**。
 - [ ] **中文 HUD 文案**：字体已就位，把 HUD 文案翻成中文还需要中文排版
       （断行 / 标点挤压）。
 - [ ] **字体体积**：现为 8.3 MB 全覆盖，可子集化到几十 KB。
@@ -492,15 +504,19 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ## 依赖与文档索引
 
-> 本机 crates.io 直连不可用，版本经**清华镜像稀疏索引**查询确认。
+> 本机 crates.io 直连不可用，版本经**中科大（USTC）镜像稀疏索引**查询确认
+> （配置在 `~/.cargo/config.toml`）。
 > 依赖一律手动写入 `Cargo.toml`（`cargo add` 在镜像下不可用）；
 > 新依赖确认版本后先登记下表再引入。
+> ⚠️ 本地索引缓存**只在改过 `Cargo.toml` 后**才刷新：解析失败先改一次再试，
+> 别急着判定"镜像没有这个版本"。
 
 | 依赖 | 版本 | 用途 |
 | :--- | :--- | :--- |
 | bevy | 0.19.1 | 引擎（`Cargo.toml` 写 `0.19`，`Cargo.lock` 锁 0.19.1） |
 | rand | 0.10.2 | 装饰物随机摆放 |
 | bevy_brp_extras | 0.22 | 运行时调试协议扩展：截图 / 输入模拟 / 干净退出 |
+| notify-debouncer-full | 0.7.0 | `hot-reload` feature 的传递依赖（`bevy/file_watcher`） |
 | serde + ron | 未引入 | 配置序列化（「动作数值外置」时引入） |
 
 引擎官方文档：<https://bevy.org/learn/> ·
