@@ -22,8 +22,9 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 ```
 
 领域：`world`（体素数据，零渲染依赖）· `voxel_render`（网格化 / 材质 / 明暗）·
-`movement` · `combat` · `skills`（技能**静态定义**）· `timeline` · `ai` · `input` ·
-`interaction` · `presentation` · `spawn`（组装车间）。纯几何不单独建域——形状是
+`movement` · `combat`（8 个子域）· `skills`（技能**静态定义**）· `timeline` ·
+`clock`（通用冻结设施，不属于任何领域）· `ai` · `input` · `interaction` ·
+`presentation` · `spawn`（组装车间）。纯几何不单独建域——形状是
 **一个形状一个组件**（`HitRadius` / `MeleeShape`），判定紧贴各自的系统。
 完整说明见 [`docs/domain.md`](docs/domain.md)。
 
@@ -78,13 +79,14 @@ cargo fmt --check                           # 格式校验
   [`docs/domain.md`](docs/domain.md) 第二节。
 - **消息定义与消费它的系统同属一个领域**：如 `MoveCommand` 与 `declare_move_system`
   在 `movement/`、`FireCommand` 与 `declare_fireball_system` 在 `combat/attack/`、
-  `PauseRequest` / `PlayerTakeover` / `UndoCommand` 与
-  `compute_player_awaiting_system` / `undo_system` /
-  `process_pause_requests` 在 `timeline/`、
-  `PointerCommand` 与 `pointer_command_system` 在 `interaction/`。
+  `PlayerTakeover` / `UndoCommand` / `WaitCommand` 与 `undo_system` /
+  `declare_wait_system` 在 `timeline/`、`PauseRequest` 与 `process_pause_requests`
+  在 `clock/`、`PointerCommand` 与 `pointer_command_system` 在 `interaction/`。
   其他领域需要该操作时只写消息，不重复实现。
-  **按键本身永远住在 `input/`**：空格是暂停、`F5` 是重置、`Q/W/E/R` 是技能，
-  各领域只收到"暂停一下""重置一下"这类意图，不认识 `KeyCode`。
+  **按键本身永远住在 `input/`**（`src/input/keyboard.rs` 是键位的唯一真相，
+  玩家看得到的副本是 `presentation::hud::help::HELP_LINES`，两者由测试对账）：
+  空格是等待、`P` 是暂停、`F5` 是重置、`Q/W/E/R` 是技能，
+  各领域只收到"等一秒""暂停一下""重置一下"这类意图，不认识 `KeyCode`。
 - 跨模块交互一律走 `MessageWriter` / `MessageReader`；只有需要立即生效、
   针对具体实体时才用 Event + Observer，两者不可混用。
 - 新增消息在**消费方领域**的插件 `build` 里用 `add_message::<T>()` 注册
@@ -101,33 +103,37 @@ cargo fmt --check                           # 格式校验
   **系统跟着它操作的数据走**，不要为了凑一个 `systems.rs` 把不相干的系统堆在一起。
   `mod.rs` 只做 `pub mod` + `pub use` 门面。
 - **组合域只编排**：`combat` / `world` / `voxel_render` 这类装着子域的父域，父域
-  `Plugin` 只负责**子域之间的顺序**，不自己注册系统。现状是 `combat` 7 个子域
-  仍由一个 `CombatPlugin` 直接接线（子域 `plugin.rs` 是目标，见 `docs/domain.md`）。
+  `Plugin` 只负责**子域之间的顺序**，不自己注册系统。三个域的子域都已各自出
+  `plugin.rs`，父域只用一行 `.configure_sets((…).chain().in_set(XxxSet))` 说出先后——
+  **子域之间靠 `SystemSet` 排序，不靠插件添加顺序**（Bevy 的 `Plugin` 添加顺序
+  不决定系统顺序，那样写出来的"顺序"是假的）。
 - **角色实体不是模块**：零件归各领域（`Health` → combat、`Velocity` → movement、
   `EnemyBrain` → ai、`ChunkLoader` → world），组装归 `spawn/`（`unit_scene` 给共用
   零件，`player.rs` / `enemy.rs` 追加驱动源）；**没有任何领域依赖 `spawn` 的组装逻辑**
   （唯一的例外是输入域写 `spawn::ResetBattle` 这一条消息，它由 `spawn` 消费）。
 - **执行器自己收尾**：`if !schedule.due(now) { continue; }` → 落地效果 → 销毁行动实体 →
-  给行动者写 `DecisionSlot::recovering(timing, now, effect_delay)`。没有集中式收尾函数；
+  给行动者写 `DecisionSlot::recovering(timing, &schedule, effect_delay)`。没有集中式收尾函数；
   「效果延迟发生」的动作（移动 / 火球 / 箭矢）必须把 `effect_delay` 给到效果真的发生
   （走到格中心 / 飞到落点），否则玩家一空闲世界就冻住、效果停在半路。
-- **暂停是两种时序**：各领域这一帧还想停表就写一条
-  `PauseRequest::Pause(reason)`（`"awaiting"` / `"threat"`）；下一帧不再断言，
-  原因自然消失，不需要谁去撤销。玩家的空格是**翻转**：`PauseRequest::Toggle("manual")`
-  冻着就清空原因（世界立刻动）、没冻就停住并闩进 `timeline::LatchedReasons`。
-  **两种时序别混**：断言每帧重来，按键是一次性事件；共用一条消息就得从原因集合猜
-  "上一帧谁断言过"，而集合里混着别人的原因，猜不准（踩过：威胁冻着时按空格被误判成
-  "暂停"而不是"继续"）。
-  **翻转必须先于各领域的断言落地**（`apply_pause_toggles_system` 排在 `TimelineSet`
-  最前），否则同一帧里"威胁还在断言 `Pause(THREAT)`"会把玩家刚清掉的原因加回来；
-  各领域的断言统一在帧末 `process_pause_requests` 收进集合，唯一的 `Time<Virtual>`
-  写入点是 `ClockSet` 的 `apply_clock`（Bevy 每帧把虚拟时间拷进通用 `Time`，
-  位移 / 投射物 / 后摇自动停表）；禁止在其它地方手写 `if paused` 阶段门控。
-- **威胁窗口是边沿开的、持续按住的**（`combat::reaction`）：窗口状态住在
-  `ThreatWindow`（`open` / `dismissed`），威胁检测**每帧**在窗口开着时继续断言
-  `Pause(THREAT)`（世界冻着时来源与移动都停在半路，窗口该一直开着）；
-  玩家按空格 → 原因集合被清空 → 检测系统读到"没有 `THREAT`"，关窗并记 `dismissed`，
-  **同一次威胁不再重开**：那一击照常落地（**忍受伤害也是一种决策**）。
+- **冻结设施住在 `clock` 域**（不属于任何领域，不认识决策槽 / 威胁 / 按键）：
+  判据是 `PauseReasons 非空 || ManualPause`，`process_pause_requests` 是**唯一**写
+  `Time<Virtual>` 的地方（帧末 `ClockSet`）。Bevy 每帧把虚拟时间拷进通用 `Time`，
+  位移 / 投射物 / 后摇自动停表；**禁止在其它地方手写 `if paused` 阶段门控**。
+- **暂停是两种时序，别混**：各领域这一帧还想停表就写一条
+  `PauseRequest::Pause(reason)`（`clock::AWAITING` / `clock::THREAT`）——**每帧断言**，
+  下一帧不再写原因就自然消失，不需要谁去撤销。玩家按键是**一次性事件**：
+  `PauseRequest::Toggle`——冻着就清空原因（世界立刻动）、没冻就置 `ManualPause`。
+  **`Toggle` 不带原因**：玩家自己按的那个暂停不进 `PauseReasons`（那个集合回答的是
+  "**别人**为什么停表"，HUD 展示用），状态记在 `ManualPause` 布尔上。
+  两种时序共用一条消息就得从原因集合猜"上一帧谁断言过"，而集合里混着别人的原因，
+  猜不准（踩过：威胁冻着时按空格被误判成"暂停"而不是"继续"）。
+- **威胁窗口就是 `ReactionSlot`**（`combat::reaction`，挂在被威胁的玩家身上）：
+  检测系统**每帧**在窗口开着且 `!resolved` 时继续断言 `Pause(THREAT)`（世界冻着时
+  来源与移动都停在半路，窗口该一直开着）；玩家表态走显式的
+  `ReactionAnswer::{Counter, Abandon}`（技能键 / 右键），表过态或威胁源没了就关窗，
+  **不像旧实现那样靠"那一手变了没有"推断**——那个判据在后摇 / 不可撤行动期间
+  永远为假，会把玩家锁死在冻结里（已修）。
+  忍受伤害也是一种决策：`Abandon` 之后那一击照常落地。
   `Threatened` 只是打在威胁源上的可读标记（BRP 锚点），不参与判定。
 - **坐标：决策按格、结算按真实距离**。格（`movement::Cell`，边长 `CELL_SIZE`）只用于
   决策与同格判定；命中 / 射程 / 爆炸半径一律用世界距离。位置只有一份真相

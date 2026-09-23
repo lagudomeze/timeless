@@ -1,12 +1,9 @@
 # 域地图 与 跨域契约
 
-> ⚠️ **目标设计**：标 🚧 的部分代码里还没有。当前与本文的差异有三处：
->
-> 1. `voxel_render` / `world` 的子域仍未各自出 `plugin.rs`（`combat` 已完成，见第一节末）；
-> 2. 攻击子域目录仍叫 `combat/attack`（本文按语义写作 `combat::attack`）；
-> 3. `utils` 域**不建了**（形状改为"一个形状一个组件"，见第一节末）。
->
-> 落地进度见 `TODO.md` M22+。
+> ⚠️ **目标设计**：标 🚧 的部分代码里还没有。
+> 三个装着子域的父域（`combat` / `world` / `voxel_render`）都已完成「每个子域一个
+> `plugin.rs`、父域只编排」（M28）；`utils` 域**不建了**（形状改为"一个形状一个
+> 组件"，见第一节末）。落地进度见 `TODO.md` M22+。
 
 > 本篇回答三件事：**有哪些域**、**域之间怎么说话**、**什么算违规**。
 > 铁律在文末；每个域的内部设计见各自的专题篇。
@@ -21,8 +18,9 @@
 | `voxel_render` | 体素**表现**：异步网格化、材质、明暗 | —（消费 `world` 的区块消息） |
 | `movement` | 格子坐标（`Cell`）+ 连续位移（`Velocity`）+ 移动 / 跳跃 / 翻滚载荷与执行器 | `combat`、`ai`、`interaction`、`spawn` |
 | `combat` | 战斗的**全部子域**（见下） | `ai`、`spawn`、`presentation` |
-| `skills` | 技能**静态定义**：`AbilityId` / `AbilityDef` / `CombatTags` 已落地；`Requirement` / `can_cast` / 反制代价 🚧；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理 | 几乎所有域（读目录） |
-| `timeline` | 决策槽 + 行动实体 + 世界何时冻结 | 几乎所有域 |
+| `skills` | 技能**静态定义**：`AbilityId` / `AbilityDef` / `CombatTags` / `Requirement` / `can_cast` / 反制代价 ✅；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理 | 几乎所有域（读目录） |
+| `timeline` | 决策槽 + 行动实体 + 撤销 / 后摇恢复 / Focus | 几乎所有域 |
+| `clock` | **通用冻结设施**（不属于任何领域）：暂停请求 → 原因集合 → `Time<Virtual>` | 各领域（写请求） |
 | `ai` | 敌人决策（填意图） | — |
 | `input` | 键盘 / 鼠标 → **消息**（只翻译） | —（没有域依赖它） |
 | `interaction` | 鼠标拾取、高亮、点击 → 消息 | — |
@@ -38,7 +36,7 @@
 | `targeting` | 打到了谁（形状相交 / 扇形） |
 | `lifecycle` | 攻击实体的存活、命中计数、清理 |
 | `formula` | 命中结算：防御链 → 减伤 → 扣血 → 触发打断（纯公式住 `domain.rs`，零 Bevy） |
-| `attack` 🚧 | 攻击行动：火球 / 横扫 / 箭矢 + 爆炸（载荷 + 工厂 + 执行器）——**现在这个目录叫 `skills`** |
+| `attack` | 攻击行动：火球 / 横扫 / 箭矢 + 爆炸（载荷 + 工厂 + 执行器），外加技能菜单 |
 | `defense` | 翻滚 / 招架 / 格挡 |
 | `reaction` | 威胁探测 → 开反应槽 → 反制（`ReactionSlot` + `CounterSuggestion`） |
 
@@ -49,10 +47,10 @@
 **每个 mod 出自己的 `plugin.rs`**；父域（`CombatPlugin`）**只负责编排子域之间的顺序**，
 不自己注册系统、不自己定义组件。这条对 `combat` / `voxel_render` / `world` 都成立。
 
-> `combat` 的 **7 个子域已各自出 `plugin.rs`**（M28）：每个子域把自己的系统放进自己的
-> `*Set`，`CombatPlugin` 只用一行 `.configure_sets((…).chain().in_set(CombatSet))` 说出先后。
+> **三个父域的子域已各自出 `plugin.rs`**（M28）：每个子域把自己的系统放进自己的
+> `*Set`，父域只用一行 `.configure_sets((…).chain().in_set(XxxSet))` 说出先后。
 > **子域之间靠 `SystemSet` 排序，不靠插件添加顺序**——Bevy 的 `Plugin` 添加顺序不决定
-> 系统顺序，那样写出来的"顺序"是假的（一改就散）。`voxel_render` / `world` 仍是待办。
+> 系统顺序，那样写出来的"顺序"是假的（一改就散）。
 
 ### 不是领域的东西
 
@@ -85,16 +83,17 @@
 | `MoveCommand` / `MoveToCommand` / `JumpCommand` | `input` / `interaction` | `movement` 的声明系统 |
 | `FireCommand` / `MeleeCommand` | `input` / `combat::attack` 的菜单派发 | `combat::attack` 的声明系统 |
 | `RollCommand` / `ParryCommand` | `input` | `combat::defense` 的声明系统 |
+| `WaitCommand` | `input`（空格） | `timeline::declare_wait_system` |
 | `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` | `combat::attack` 的菜单 |
 | `RegisterAbility` | 各机制域（`movement` / `combat`） | `skills` 的注册表 |
-| `CounterCommand` / `AbandonReaction` 🚧 | `input` | `combat::reaction` |
-| `PauseRequest` | `input`（手动）/ `timeline`（等 PC 决策）/ `combat::reaction`（威胁） | `timeline::process_pause_requests` |
+| `ReactionAnswer::{Counter, Abandon}` | `input`（技能键）/ `interaction`（右键） | `combat::reaction::resolve_reaction_system` |
+| `PauseRequest` | `input`（手动）/ `timeline`（等 PC 决策）/ `combat::reaction`（威胁） | `clock::process_pause_requests` |
 | `PlayerTakeover` | `input`（键盘）/ `interaction`（左键） | `timeline::undo_system` |
-| `UseFocus` | `input` | `timeline` |
+| `UseFocus` | `input` | 各声明系统（读 `PendingFocus`） |
 | `UndoCommand` | `interaction`（右键） | `timeline::undo_system` |
-| `ActionBlocked` | 各声明系统（`can_cast` 🚧 落地后也写它） | `presentation` 的提示条 |
-| `ActionCancelled` | `timeline::undo_system` | 花钱的域（`skills` 退款） |
-| `DecisionReady` | `timeline::recovery_system` | `combat::defense`（回精力） |
+| `ActionBlocked` | 各声明系统 | `presentation` 的提示条 |
+| `BlockCommand` | `input`（`B` / `V`） | `world::apply_block_command_system` |
+| `BlockRefused` | `world`（方块交互被拒） | `presentation` 的提示条 |
 | `DamageEvent` / `DeathEvent` | `combat::formula` / `combat::health` | `combat::health` / `presentation` 的日志 |
 | `ProjectileArrived` | `combat::attack`（火球到达） | `combat::attack`（爆炸） |
 | `PointerCommand` | `input` | `interaction`（解释成走 / 打 / 撤） |
@@ -145,8 +144,8 @@ ClockSet 排在帧末：这一帧所有系统看到同一个冻结状态，唯�
 - `InputSet` 在 `AiSet` 之前：玩家这一帧的表态先落地。
 - `AiSet` 在 `CombatSet` 之前：**敌人先决策**，威胁扫描（`combat::reaction`）才能
   看到它刚生成的前摇行动——否则永远扫不到东西。
-- 暂停断言由**各域自己写**（`timeline` 写 `"awaiting"`、`combat::reaction` 写
-  `"threat"`、`input` 写 `"manual"`），统一在帧末 `ClockSet` 生效——
+- 暂停断言由**各域自己写**（`timeline` 写 `AWAITING`、`combat::reaction` 写
+  `THREAT`；玩家的 `Toggle` 由 `input` 写），统一在帧末 `ClockSet` 生效——
   所以谁写在哪一段都不影响"这一帧的结论一致"。
 
 ## 五、铁律
@@ -163,12 +162,12 @@ ClockSet 排在帧末：这一帧所有系统看到同一个冻结状态，唯�
 7. **物理附着用 `ChildOf`，逻辑关系用自定义关系**（见 [relations.md](relations.md)）。
 8. **行动实体化**：行动 = 独立实体（载荷 + `ScheduledAction` + `ActionTiming`），
    归属用 `ActionOf` / `Actions`，调度器不感知载荷。
-9. **唯一的暂停判据是 `PauseReasons` 非空**，且各域用**每帧断言**加减原因；
-   只有帧末 `ClockSet` 的 `apply_clock` 能写 `Time<Virtual>`。
+9. **冻结判据是 `PauseReasons 非空 || ManualPause`**，且各域用**每帧断言**加减原因；
+   只有帧末 `ClockSet` 的 `process_pause_requests` 能写 `Time<Virtual>`。
 10. **执行器自己收尾**：到点落地 → 销毁行动实体 → 把行动者推进后摇。
     没有集中式收尾函数。
 11. **领域层零 Bevy**：`combat/formula/domain.rs` 可脱离 App 单测；应用层不写公式。
 12. **文档防漂移**：文档里引用的类型名必须先在 `src/` 里 grep 确认存在；
-    还没落地的（`can_cast` / `Requirement` / `Intent` / `combat::attack` / 反应槽）
-    **必须标 🚧**。已删除的设想（`utils` 域、`Shape` 枚举）直接改写或删除，
-    **不要用 🚧 让它假装还存在**。
+    还没落地的（`Effect` / `Phase` / 装备系统）**必须标 🚧**。
+    已删除的设想（`utils` 域、`Shape` 枚举、`ThreatWindow`、`LatchedReasons`、
+    `apply_clock`、`Blocking`）直接改写或删除，**不要用 🚧 让它假装还存在**。

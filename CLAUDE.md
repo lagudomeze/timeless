@@ -85,9 +85,9 @@ WorldSet ──────────────────────▶�
 
 | 概念 | 管什么 | 住在哪 |
 | :--- | :--- | :--- |
-| 决策槽 `DecisionSlot` | 这个单位此刻能不能决策（`Empty` / `Windup` / `Recovery { until }`） | 单位身上 |
+| 决策槽 `DecisionSlot` | 这个单位此刻能不能决策（`Idle { intent }` / `Executing { until }`） | 单位身上 |
 | 行动实体 | 这一手什么时候落地（`ScheduledAction.execute_at` + 载荷 + `ActionOf`） | 独立实体 |
-| 时钟 | 世界现在停不停 | `Time<Virtual>`，只由 `apply_clock` 写 |
+| 时钟 | 世界现在停不停 | `Time<Virtual>`，只由 `clock::process_pause_requests` 写 |
 
 - 「行动实体化」：行动 = 独立实体（载荷组件 + `ScheduledAction` + 可选的 `Uncancellable`）。
   归属是**自定义关系** `ActionOf` / `Actions`（`linked_spawn`），**不是 `ChildOf`**——行动没有
@@ -99,9 +99,12 @@ WorldSet ──────────────────────▶�
   （走到格中心 / 飞到落点）。给少了，行动者一空闲虚拟时间就冻住，效果停在半路、伤害不结算。
   这条是整机级 bug，单域测试看不出来（见 `src/lib.rs` 的
   `a_long_shot_keeps_the_shooter_busy_until_impact`）。
-- **暂停是每帧断言**：各域这一帧还想停表就写 `PauseRequest::Pause(reason)`
-  （`"manual"` / `"slot_empty"` / `"threat"`）；下一帧不再断言，原因自然消失，不需要撤销。
-  除了帧末 `ClockSet::apply_clock`，**任何地方都不许写 `Time<Virtual>`**，也不许手写 `if paused` 门控。
+- **冻结设施住在独立的 `clock` 域**（不属于任何领域）：各域这一帧还想停表就写
+  `PauseRequest::Pause(reason)`（`clock::AWAITING` / `clock::THREAT`）——**每帧断言**，
+  下一帧不再写原因就自然消失，不需要撤销；玩家按键写一次性的 `Toggle`
+  （冻着就放开、没冻就置 `ManualPause`）。
+  判据是 `PauseReasons 非空 || ManualPause`，只有帧末 `ClockSet` 的
+  `process_pause_requests` 能写 `Time<Virtual>`；**任何地方都不许手写 `if paused` 门控**。
 
 ### 坐标与分层
 
@@ -120,7 +123,7 @@ WorldSet ──────────────────────▶�
 
 - 裸写组件名即可（`Name("X")` / `HoverHighlight` / `Transform { .. }`），
   组件要 `Clone + Default` 才能这么写（`bevy_ecs::template` 的 blanket impl）。
-- **非 Default 的初值用 `template_value(x)`**（`DecisionSlot::Empty`、`Health::new(50)`、`ActionOf(actor)`）。
+- **非 Default 的初值用 `template_value(x)`**（`DecisionSlot::Idle { intent: None }`、`Health::new(50)`、`ActionOf(actor)`）。
 - 现场造资产用 `asset_value(expr)`，里面是**普通 Rust 表达式**，可以写 `..default()`。
 - 字段值不是字面量时包 `{expr}`；**不要写 `..default()` 做结构体剩余字段**
   （那是 `asset_value` 里才有的写法）。
