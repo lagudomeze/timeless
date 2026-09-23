@@ -5,7 +5,8 @@
 
 use bevy::prelude::*;
 
-use crate::combat::attack::{SKILLS, SkillKind};
+use crate::combat::attack::{SKILLS, SkillDef, SkillKind};
+use crate::combat::reaction::CounterSuggestion;
 
 /// 技能图标贴图（占位图，程序生成，见 `assets/LICENSES.md`）。
 pub fn icon_path(kind: SkillKind) -> &'static str {
@@ -17,29 +18,50 @@ pub fn icon_path(kind: SkillKind) -> &'static str {
     }
 }
 
-/// 技能栏快照：选中项 / 悬停项 / 每个槽位买不买得起，三者都没变就整帧不碰 UI。
+/// 一个槽位此刻算不算「能拿来反制」。
+///
+/// 三态而不是布尔：**付不起的那条也要画出来**（只是画成另一副样子）——
+/// 玩家看得见"我本可以用翻滚，但 Focus 不够"，比看不见更有信息量
+/// （见 `docs/combat.md` 第四节）。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum CounterHint {
+    /// 不是反制建议（威胁窗口没开，或这一手不能当反制）
+    #[default]
+    None,
+    /// 是反制建议且付得起 → 高亮
+    Ready,
+    /// 是反制建议但付不起 → 仍然标出来
+    TooExpensive,
+}
+
+/// 技能栏快照：选中项 / 悬停项 / 每个槽位买不买得起 / 反制提示，
+/// 四者都没变就整帧不碰 UI。
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SkillBarCache {
     pub selected: usize,
     pub hovered: Option<usize>,
     pub affordable: [bool; SKILLS.len()],
+    pub counters: [CounterHint; SKILLS.len()],
 }
 
-/// 槽位底色。
-pub fn slot_bg(affordable: bool, selected: bool) -> Color {
-    if !affordable {
-        SLOT_BG_LOCKED
-    } else if selected {
-        SLOT_BG_SELECTED
-    } else {
-        SLOT_BG
+/// 槽位底色：**反制优先**——威胁压过来时玩家要找的就是"我拿什么挡"，
+/// 所以能当反制的那几手比"选中"更显眼。
+pub fn slot_bg(affordable: bool, selected: bool, counter: CounterHint) -> Color {
+    match counter {
+        CounterHint::Ready => SLOT_BG_COUNTER,
+        CounterHint::TooExpensive => SLOT_BG_COUNTER_BLOCKED,
+        CounterHint::None if !affordable => SLOT_BG_LOCKED,
+        CounterHint::None if selected => SLOT_BG_SELECTED,
+        CounterHint::None => SLOT_BG,
     }
 }
 
-/// 槽位描边：悬停最优先，其次是"选中的那一手且付得起"。
-pub fn slot_border(hovered: bool, selected: bool, affordable: bool) -> Color {
+/// 槽位描边：悬停最优先，其次是"反制且付得起"，再是"选中的那一手且付得起"。
+pub fn slot_border(hovered: bool, selected: bool, affordable: bool, counter: CounterHint) -> Color {
     if hovered {
         SLOT_BORDER_HOVER
+    } else if counter == CounterHint::Ready {
+        SLOT_BORDER_COUNTER
     } else if selected && affordable {
         SLOT_BORDER_SELECTED
     } else {
@@ -58,6 +80,28 @@ pub fn affordability(stamina: Option<u32>) -> [bool; SKILLS.len()] {
         SKILLS
             .get(index)
             .is_some_and(|def| stamina.is_none_or(|stamina| def.cost <= stamina))
+    })
+}
+
+/// 每个槽位是不是反制建议（`None` = 没开窗口 / 没玩家）。
+///
+/// 靠 [`SkillDef::catalogue_entry`] 把菜单项映射回 `AbilityId` 再与建议比对——
+/// 「攻击」是派发规则、没有目录项，因此永远不会被高亮（它确实不是一条技能）。
+pub fn counter_hints(suggestions: Option<&[CounterSuggestion]>) -> [CounterHint; SKILLS.len()] {
+    std::array::from_fn(|index| {
+        let Some(ability) = SKILLS.get(index).and_then(SkillDef::catalogue_entry) else {
+            return CounterHint::None;
+        };
+        let Some(suggestion) = suggestions
+            .and_then(|list| list.iter().find(|suggestion| suggestion.ability == ability))
+        else {
+            return CounterHint::None;
+        };
+        if suggestion.affordable {
+            CounterHint::Ready
+        } else {
+            CounterHint::TooExpensive
+        }
     })
 }
 
@@ -89,10 +133,16 @@ pub const SLOT_BG: Color = Color::srgba(0.09, 0.11, 0.16, 0.88);
 const SLOT_BG_SELECTED: Color = Color::srgba(0.32, 0.28, 0.12, 0.92);
 /// 买不起的槽位底色。
 pub const SLOT_BG_LOCKED: Color = Color::srgba(0.05, 0.05, 0.07, 0.9);
+/// 能当反制、且付得起：威胁压过来时最该看见的那一档。
+const SLOT_BG_COUNTER: Color = Color::srgba(0.10, 0.30, 0.24, 0.94);
+/// 能当反制但付不起：仍然标出来（"我本可以用它"也是信息）。
+const SLOT_BG_COUNTER_BLOCKED: Color = Color::srgba(0.14, 0.11, 0.10, 0.92);
 /// 槽位默认描边（场景建槽时用，运行时由 [`slot_border`] 换）。
 pub const SLOT_BORDER: Color = Color::srgba(0.55, 0.60, 0.70, 0.85);
 const SLOT_BORDER_SELECTED: Color = Color::srgb(0.95, 0.84, 0.42);
 const SLOT_BORDER_HOVER: Color = Color::srgb(0.95, 0.96, 0.98);
+/// 反制的描边（青色，与"选中"的金色区分开）。
+const SLOT_BORDER_COUNTER: Color = Color::srgb(0.35, 0.95, 0.80);
 const BADGE_TEXT: Color = Color::srgb(0.86, 0.90, 0.96);
 const LOCKED_TEXT: Color = Color::srgb(0.62, 0.35, 0.35);
 
@@ -103,11 +153,17 @@ mod tests {
     /// 三档底色互不相同，且买不起的那一档压过"选中"。
     #[test]
     fn the_three_slot_tints_are_distinct_and_locked_wins() {
-        assert_ne!(slot_bg(true, false), slot_bg(true, true));
-        assert_ne!(slot_bg(true, false), slot_bg(false, false));
+        assert_ne!(
+            slot_bg(true, false, CounterHint::None),
+            slot_bg(true, true, CounterHint::None)
+        );
+        assert_ne!(
+            slot_bg(true, false, CounterHint::None),
+            slot_bg(false, false, CounterHint::None)
+        );
         assert_eq!(
-            slot_bg(false, true),
-            slot_bg(false, false),
+            slot_bg(false, true, CounterHint::None),
+            slot_bg(false, false, CounterHint::None),
             "买不起时不该还显示选中色"
         );
     }
@@ -115,13 +171,98 @@ mod tests {
     /// 悬停压过选中：鼠标指哪一格，玩家看的就是哪一格。
     #[test]
     fn hovering_outranks_selection_for_the_border() {
-        assert_eq!(slot_border(true, true, true), SLOT_BORDER_HOVER);
-        assert_eq!(slot_border(false, true, true), SLOT_BORDER_SELECTED);
-        assert_eq!(slot_border(false, false, true), SLOT_BORDER);
         assert_eq!(
-            slot_border(false, true, false),
+            slot_border(true, true, true, CounterHint::None),
+            SLOT_BORDER_HOVER
+        );
+        assert_eq!(
+            slot_border(false, true, true, CounterHint::None),
+            SLOT_BORDER_SELECTED
+        );
+        assert_eq!(
+            slot_border(false, false, true, CounterHint::None),
+            SLOT_BORDER
+        );
+        assert_eq!(
+            slot_border(false, true, false, CounterHint::None),
             SLOT_BORDER,
             "选中但付不起：不画金色描边"
+        );
+    }
+
+    /// **反制提示压过"选中"**：威胁已经压过来了，玩家要找的是"我拿什么挡"，
+    /// 而不是"我上一条选的是什么"。
+    #[test]
+    fn a_counter_suggestion_outranks_the_selected_slot() {
+        assert_ne!(
+            slot_bg(true, false, CounterHint::Ready),
+            slot_bg(true, true, CounterHint::None),
+            "能当反制的手不该与普通选中项同色"
+        );
+        assert_eq!(
+            slot_border(false, true, true, CounterHint::Ready),
+            SLOT_BORDER_COUNTER,
+            "既是选中又能反制：画反制色（青色）而不是选中色（金色）"
+        );
+        assert_eq!(
+            slot_border(true, true, true, CounterHint::Ready),
+            SLOT_BORDER_HOVER,
+            "但悬停仍然最优先"
+        );
+    }
+
+    /// 付不起的反制**也要标出来**，只是用另一档底色——
+    /// 玩家看得见"我本可以用它"，比看不见更有信息量。
+    #[test]
+    fn an_unaffordable_counter_is_still_drawn_differently() {
+        let ready = slot_bg(true, false, CounterHint::Ready);
+        let blocked = slot_bg(false, false, CounterHint::TooExpensive);
+        let plain = slot_bg(true, false, CounterHint::None);
+        assert_ne!(ready, blocked, "付得起与付不起必须可分辨");
+        assert_ne!(blocked, plain, "付不起的反制仍要标出来，不能退回普通底色");
+    }
+
+    /// 建议列表 → 槽位提示：按 `AbilityId` 映射，**「攻击」永远不亮**
+    /// （它是派发规则，不是一条技能）。
+    #[test]
+    fn counter_hints_map_suggestions_onto_slots() {
+        use crate::skills::{AbilityId, CounterCost};
+
+        let roll_index = SKILLS
+            .iter()
+            .position(|def| def.kind == SkillKind::Roll)
+            .expect("技能栏里应当有翻滚");
+        let attack_index = SKILLS
+            .iter()
+            .position(|def| def.kind == SkillKind::Attack)
+            .expect("技能栏里应当有攻击");
+
+        let hints = counter_hints(Some(&[CounterSuggestion {
+            ability: AbilityId::Roll,
+            cost: CounterCost::Free,
+            affordable: true,
+        }]));
+        assert_eq!(hints[roll_index], CounterHint::Ready);
+        assert_eq!(
+            hints[attack_index],
+            CounterHint::None,
+            "「攻击」是派发规则、没有目录项，不该被当成反制"
+        );
+
+        // 付不起的照样标出来
+        let broke = counter_hints(Some(&[CounterSuggestion {
+            ability: AbilityId::Roll,
+            cost: CounterCost::Resource(1),
+            affordable: false,
+        }]));
+        assert_eq!(broke[roll_index], CounterHint::TooExpensive);
+
+        // 没有窗口（`None`）时什么都不标
+        assert!(
+            counter_hints(None)
+                .iter()
+                .all(|hint| *hint == CounterHint::None),
+            "没开窗口时不该有任何反制提示"
         );
     }
 

@@ -131,15 +131,13 @@ pub enum CounterCost {
 - 付不起的那一条**仍然列出来**（`affordable: false`），只是 HUD 画成不可选：
   玩家看得见"我本来能用招架，但精力不够"，这比看不见更有信息量。
 
-### HUD 怎么表现（`presentation` 只读）🚧
+### HUD 怎么表现（`presentation` 只读）
 
-| 位置 | 画什么 |
-| :--- | :--- |
-| 技能栏 | 有 `suggestions` 时**高亮**其中 `affordable == true` 的技能；`affordable == false` 的压暗并标注代价 |
-| 顶部时间轴 | 高亮 `threat` 那一条（玩家能看出"打过来的是它"） |
-| 提示条 | 一行文案：反制可选 / 右键放弃 |
-
-（这三行都是**目标设计**：`suggestions` / `threat` 实体引用都还不存在。）
+| 位置 | 画什么 | 落地 |
+| :--- | :--- | :--- |
+| 技能栏 | 有 `suggestions` 时**高亮**其中 `affordable == true` 的技能；`affordable == false` 的压暗并标注代价 | ✅ `hud::skills::model::counter_hints` → `slot_bg` / `slot_border`（反制色压过"选中"色） |
+| 顶部时间轴 | 高亮 `threat` 那一条（玩家能看出"打过来的是它"） | 🚧 |
+| 提示条 | 一行文案：反制可选 / 右键放弃 | 🚧 |
 
 HUD 只读 `ReactionSlot`，不认识 `CounterCost` 的语义——它只画
 "亮 / 不亮、代价是多少"。**输入只翻译**：技能键 → `ReactionAnswer::Counter(ability)` ✅，
