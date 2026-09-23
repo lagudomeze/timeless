@@ -28,7 +28,7 @@ use crate::movement::{
     CELL_SIZE, Cell, MOVE_TIMING, ROLL_TIMING, move_action_scene, step_from_axis,
 };
 use crate::skills::{AbilityId, can_cast};
-use crate::timeline::{DecisionSlot, Intent, ScheduledAction, Target};
+use crate::timeline::{DecisionSlot, Focus, Intent, ScheduledAction, Target};
 
 use super::components::{EnemyBrain, Tactic};
 
@@ -142,6 +142,7 @@ pub fn enemy_declare_system(
             &Cell,
             &Faction,
             &Stamina,
+            &mut Focus,
             &DecisionSlot,
             &mut Tactic,
         ),
@@ -151,7 +152,7 @@ pub fn enemy_declare_system(
 ) {
     let now = time.elapsed_secs();
 
-    for (entity, transform, cell, faction, stamina, slot, mut tactic) in &mut enemies {
+    for (entity, transform, cell, faction, stamina, mut focus, slot, mut tactic) in &mut enemies {
         if !slot.is_idle() {
             continue;
         }
@@ -184,13 +185,17 @@ pub fn enemy_declare_system(
                         .iter()
                         .map(|(body, _, other)| (body.translation, *other)),
                 );
+                // **闪避是花 Focus 的地方**：威胁已经在前摇了，等一个正常前摇再滚
+                // 就来不及——买掉前摇（`with_focus`）才闪得开。
+                // 这也是 `Focus` 改成"每单位一份"的**理由**：全局资源那个形态下
+                // 敌人永远不可能有 Focus。
                 declare_roll(
                     &mut commands,
                     entity,
                     *cell,
                     Cell::new(cell.x + dx, cell.z + dz),
                     ROLL_TIMING,
-                    ScheduledAction::declared_at(ROLL_TIMING, now),
+                    ScheduledAction::with_focus(ROLL_TIMING, now, &mut focus, true),
                 );
             }
             Tactic::Approach | Tactic::Retreat => {
@@ -390,6 +395,84 @@ mod tests {
             app.world().get::<DecisionSlot>(player).copied(),
             Some(DecisionSlot::Idle { intent: None }),
             "玩家的决策槽不该被 AI 的行动消耗掉"
+        );
+    }
+
+    /// **AI 会花 Focus 抢先手**：闪避时买掉前摇（`execute_at = 声明时刻`）。
+    ///
+    /// 这条是 `Focus` 改成"每单位一份组件"的**验收**——全局资源那个形态下
+    /// 敌人不可能有 Focus，这条断言也就写不出来。
+    #[test]
+    fn a_dodging_enemy_spends_focus_to_zero_its_windup() {
+        use crate::movement::RollAction;
+        use crate::timeline::{FOCUS_MAX, Focus};
+
+        let mut app = crate::test_support::headless_app();
+        app.update();
+
+        let (player, enemy, enemy_cell) = {
+            let mut query = app.world_mut().query::<(Entity, &Faction, &Cell)>();
+            let units: Vec<(Entity, Faction, Cell)> = query
+                .iter(app.world())
+                .map(|(entity, faction, cell)| (entity, *faction, *cell))
+                .collect();
+            let find = |wanted: Faction| {
+                units
+                    .iter()
+                    .find(|(_, faction, _)| *faction == wanted)
+                    .map(|(entity, _, cell)| (*entity, *cell))
+                    .expect("应当有单位")
+            };
+            let (player, _) = find(Faction::Player);
+            let (enemy, cell) = find(Faction::Enemy);
+            (player, enemy, cell)
+        };
+
+        // 清场：把首帧声明的行动销毁、槽清空，并让敌人的 Focus 满格
+        let stale: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<ScheduledAction>>()
+            .iter(app.world())
+            .collect();
+        for action in stale {
+            app.world_mut().entity_mut(action).despawn();
+        }
+        app.world_mut()
+            .entity_mut(enemy)
+            .insert(DecisionSlot::Idle { intent: None });
+        app.world_mut()
+            .get_mut::<Focus>(enemy)
+            .expect("敌人在组装时就该有 Focus")
+            .current = FOCUS_MAX;
+
+        // 威胁指向敌人脚下 → 战术变 Dodge
+        app.world_mut().spawn((
+            ActionOf(player),
+            ScheduledAction::declared_at(MELEE_TIMING, 0.0),
+            Threatens {
+                cells: vec![enemy_cell],
+            },
+        ));
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Focus>(enemy).map(|focus| focus.current),
+            Some(FOCUS_MAX - 1),
+            "闪避应当花掉 1 点 Focus"
+        );
+
+        // 买掉前摇：执行时刻 = 声明时刻（不是"声明 + 前摇"）
+        let roll = app
+            .world_mut()
+            .query_filtered::<Entity, With<RollAction>>()
+            .iter(app.world())
+            .next()
+            .expect("敌人应当声明了一条翻滚");
+        let schedule = *app.world().get::<ScheduledAction>(roll).unwrap();
+        assert!(
+            schedule.execute_at < ROLL_TIMING.windup.max(f32::EPSILON),
+            "前摇应当被 Focus 买掉（execute_at 该在声明那一刻），实际 {}",
+            schedule.execute_at
         );
     }
 }

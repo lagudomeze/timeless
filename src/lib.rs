@@ -331,6 +331,8 @@ mod tests {
                 cell,
                 DecisionSlot::Idle { intent: None },
                 InputDriven,
+                // `Focus` 是**挂在单位身上的组件**（每单位一份）——AI 因此也能用
+                Focus::default(),
                 Transform::from_translation(world),
             ))
             .id()
@@ -1058,8 +1060,8 @@ mod tests {
         app.update();
 
         assert_eq!(
-            app.world().resource::<Focus>().current,
-            FOCUS_MAX - 1,
+            app.world().get::<Focus>(player).map(|focus| focus.current),
+            Some(FOCUS_MAX - 1),
             "用掉 1 点 Focus"
         );
         let action = {
@@ -1096,14 +1098,14 @@ mod tests {
     #[test]
     fn focus_is_not_spent_when_the_pool_is_empty() {
         let mut app = test_app();
-        spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
-        app.world_mut().resource_mut::<Focus>().current = 0;
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        app.world_mut().get_mut::<Focus>(player).unwrap().current = 0;
 
         press(&mut app, KeyCode::ShiftLeft);
         press(&mut app, KeyCode::ArrowUp);
         app.update();
 
-        assert_eq!(app.world().resource::<Focus>().current, 0);
+        assert_eq!(app.world().get::<Focus>(player).map(|f| f.current), Some(0));
         let declared_at = app.world().resource::<Time<Virtual>>().elapsed_secs();
         let mut query = app
             .world_mut()
@@ -1395,8 +1397,13 @@ mod tests {
             "时间线资源应当在整机里就位"
         );
         assert!(
-            app.world().get_resource::<Focus>().is_some(),
-            "反应资源 Focus 应当在整机里就位"
+            {
+                let mut query = app
+                    .world_mut()
+                    .query_filtered::<&Focus, With<InputDriven>>();
+                query.iter(app.world()).next().is_some()
+            },
+            "反应资源 Focus 应当挂在玩家身上（每单位一份）"
         );
     }
 

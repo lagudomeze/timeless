@@ -9,7 +9,7 @@ use crate::movement::{Cell, Velocity};
 use crate::presentation::unit_sprite::{
     SHADOW_DIAMETER, SHADOW_OFFSET, SPRITE_SIZE, UnitShadow, UnitSprite, UnitSprites,
 };
-use crate::timeline::DecisionSlot;
+use crate::timeline::{DecisionSlot, Focus, FocusRecoverTimer};
 
 /// 单位骨架：逻辑组件 + 2D 精灵纸片 + 贴地阴影。
 ///
@@ -37,6 +37,10 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
         template_value(BlockChance(0.0))
         template_value(Velocity(Vec3::ZERO))
         template_value(DecisionSlot::Idle { intent: None })
+        // Focus（**每个单位各一份**）：玩家和敌人都能攒够余量抢先手。
+        // 回复计时器跟着走，所以各回各的、新上场的不会蹭进度。
+        template_value(Focus::default())
+        template_value(FocusRecoverTimer::default())
         template_value(stamina)
         template_value(cell)
         Transform {

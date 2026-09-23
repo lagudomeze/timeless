@@ -17,6 +17,7 @@ use bevy::prelude::*;
 use crate::clock::{PauseRequest, THREAT};
 use crate::combat::Faction;
 use crate::movement::Cell;
+use crate::timeline::Focus;
 use crate::timeline::{ActionOf, InputDriven, ScheduledAction};
 
 use super::components::{CounterSuggestion, ReactionSlot, TargetCell, Threatened, Threatens};
@@ -47,15 +48,14 @@ pub fn detect_threat_system(
     mut commands: Commands,
     threats: Query<(Entity, &ScheduledAction, &Threatens, &ActionOf)>,
     projectiles: Query<(Entity, &TargetCell, &Faction)>,
-    mut players: Query<(Entity, &Cell, Option<&mut ReactionSlot>), With<InputDriven>>,
+    mut players: Query<(Entity, &Cell, &Focus, Option<&mut ReactionSlot>), With<InputDriven>>,
     actors: Query<&Faction>,
     catalogue: Res<crate::skills::SkillRegistry>,
-    focus: Res<crate::timeline::Focus>,
     time: Res<Time<Virtual>>,
     mut pause: MessageWriter<PauseRequest>,
 ) {
     let now = time.elapsed_secs();
-    for (player, cell, slot) in &mut players {
+    for (player, cell, focus, slot) in &mut players {
         // 被我方阵营"光顾"的格不算威胁（自己人打自己人另有规则）
         let hostile_to = |faction: &Faction| *faction != Faction::Player;
         let threatens_me = |cells: &[Cell]| cells.contains(cell);
@@ -262,7 +262,6 @@ mod tests {
                 100,
             )))
             .insert_resource(catalogue())
-            .init_resource::<Focus>()
             .init_resource::<Captured>()
             .add_message::<PauseRequest>()
             .add_message::<ReactionAnswer>()
@@ -282,8 +281,9 @@ mod tests {
     }
 
     fn spawn_player(app: &mut App, cell: Cell) -> Entity {
+        // `Focus` 现在是**挂在单位身上的组件**（每单位一份），不再是全局资源
         app.world_mut()
-            .spawn((InputDriven, cell, Faction::Player))
+            .spawn((InputDriven, cell, Faction::Player, Focus::default()))
             .id()
     }
 

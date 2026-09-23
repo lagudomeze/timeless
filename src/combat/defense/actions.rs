@@ -92,20 +92,37 @@ pub fn declare_roll(
 /// **只有 PC 靠按键决策**：`RollCommand` 是玩家输入消息，AI 不经它
 /// （AI 的 `Intent::Dodge` 直接调 [`declare_roll`]）。
 #[allow(clippy::too_many_arguments)]
+/// 「翻滚时要查的玩家」：身份 + 位置 + 精力 + 位姿 + Focus + 决策槽。
+///
+/// 抽成别名是因为元组变长了（`Focus` 变成每单位一份的组件之后）。
+type RollerPlayer<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Cell,
+        &'static Stamina,
+        &'static Transform,
+        &'static mut Focus,
+        &'static DecisionSlot,
+    ),
+    With<InputDriven>,
+>;
+
 pub fn declare_roll_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    mut focus: ResMut<Focus>,
     pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<RollCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    rollers: Query<(Entity, &Cell, &Stamina, &Transform, &DecisionSlot), With<InputDriven>>,
+    mut rollers: RollerPlayer<'_, '_>,
     units: Query<(&Transform, &Faction)>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    let Some((entity, cell, stamina, transform, _)) = rollers.iter().first_ready(&mut blocked)
+    let Some((entity, cell, stamina, transform, mut focus, _)) =
+        rollers.iter_mut().first_ready(&mut blocked)
     else {
         return;
     };
@@ -187,17 +204,16 @@ pub fn roll_executor_system(
 pub fn declare_parry_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    mut focus: ResMut<Focus>,
     pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<ParryCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    players: Query<(Entity, &Stamina, &DecisionSlot), With<InputDriven>>,
+    mut players: Query<(Entity, &Stamina, &mut Focus, &DecisionSlot), With<InputDriven>>,
     attacks: Query<(Entity, &crate::combat::targeting::CollisionTarget)>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    let Some((player, stamina, _)) = players.iter().first_ready(&mut blocked) else {
+    let Some((player, stamina, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
         return;
     };
     if let Err(reason) = can_cast(&PARRY_ABILITY, stamina.current) {

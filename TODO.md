@@ -397,8 +397,14 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **反应窗口的粒度**：现在是"一次威胁一个窗口"，多段攻击（连续三刀）只会问玩家一次。
       将来按威胁**来源**分别开窗（`ThreatWindow` 存集合而不是一个 `Option`）。
 - [ ] **威胁窗口存的是行动者而不是行动**：`ThreatWindow.opening_action` 存的是玩家实体，`detect_threat_system` 用它判断"表态了没有"。玩家在**前摇中**被威胁冻结时，撤销再声明一手不会改变这个值，窗口于是永远等不到表态——双方一起冻死。改成存行动实体即可修好（行动实体在撤销/重新声明时会变）。
-- [ ] **AI 不会用 Focus**：`Focus` 只在玩家侧，敌人声明固定排前摇。
-      要让精英怪也会抢先手，得给 AI 一套"什么时候值得花资源"的策略。
+- [x] **AI 不会用 Focus**（本次）：**根因是 `Focus` 曾经是全局资源**——只有一份，
+      敌人不可能有自己的。改成**每单位一份的组件**（`Focus` Component +
+      `FocusRecoverTimer` 也随单位走），**玩家与敌人对称**。
+      AI 的**闪避**（`Tactic::Dodge`）走共用入口 `ScheduledAction::with_focus(.., true)`：
+      威胁已经在前摇了，等一个正常前摇再滚就来不及——买掉前摇才闪得开。
+      顺带：`counter_suggestions` 现在读**被威胁玩家自己的** Focus（以前读全局的）。
+      验收：245 测试全绿 / clippy 零警告 / fmt 通过；
+      `a_dodging_enemy_spends_focus_to_zero_its_windup` **验过不是空跑**（不花就转红）。
 - [x] **`AttackFrame` 没有消费者**（已接上）：预演读数现在带上**速度帧**
       （`FIREBALL · cell (1,0) · dist 2.2 · dmg 12 · frame 7`）——那就是
       「谁先动」的洞察力读数，字段因此有了真正的消费者。

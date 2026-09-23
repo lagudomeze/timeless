@@ -147,11 +147,10 @@ pub struct Jumping {
 pub fn declare_move_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    mut focus: ResMut<Focus>,
     pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<MoveCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
-    players: Query<(Entity, &Cell, &DecisionSlot), With<InputDriven>>,
+    mut players: Query<(Entity, &Cell, &mut Focus, &DecisionSlot), With<InputDriven>>,
 ) {
     let Some(axis) = requests.read().last().map(|command| command.axis) else {
         return;
@@ -161,7 +160,7 @@ pub fn declare_move_system(
         return;
     }
     // 忙（前摇 / 后摇 / 位移中）或没有玩家时，first_ready 会替 HUD 记下原因
-    let Some((player, cell, _)) = players.iter().first_ready(&mut blocked) else {
+    let Some((player, cell, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
         return;
     };
 
@@ -194,16 +193,15 @@ pub fn declare_move_system(
 pub fn declare_move_to_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    mut focus: ResMut<Focus>,
     pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<MoveToCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
-    players: Query<(Entity, &Cell, &DecisionSlot), With<InputDriven>>,
+    mut players: Query<(Entity, &Cell, &mut Focus, &DecisionSlot), With<InputDriven>>,
 ) {
     let Some(target) = requests.read().last().map(|request| request.cell) else {
         return;
     };
-    let Some((player, cell, _)) = players.iter().first_ready(&mut blocked) else {
+    let Some((player, cell, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
         return;
     };
     if *cell == target {
@@ -273,16 +271,15 @@ pub fn move_action_executor_system(
 pub fn declare_jump_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    mut focus: ResMut<Focus>,
     pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<JumpCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
-    players: Query<(Entity, &DecisionSlot), With<InputDriven>>,
+    mut players: Query<(Entity, &mut Focus, &DecisionSlot), With<InputDriven>>,
 ) {
     if requests.read().last().is_none() {
         return;
     }
-    let Some((player, _)) = players.iter().first_ready(&mut blocked) else {
+    let Some((player, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
         return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
     let now = time.elapsed_secs();
