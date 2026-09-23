@@ -11,8 +11,8 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
+use crate::combat::attack::events::{FireCommand, MeleeCommand};
 use crate::combat::defense::{RollCommand, Stamina};
-use crate::combat::skills::events::{FireCommand, MeleeCommand};
 use crate::movement::CELL_SIZE;
 use crate::movement::Cell;
 use crate::timeline::{DecisionSlot, FirstReady, InputDriven};

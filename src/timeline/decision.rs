@@ -546,7 +546,7 @@ mod tests {
 
     /// 撤销：广播 [`ActionCancelled`]、销毁行动实体、清空决策槽。
     ///
-    /// 退多少归花钱的领域（见 `combat::skills` 的退款 Observer），这里只保证
+    /// 退多少归花钱的领域（见 `combat::attack` 的退款 Observer），这里只保证
     /// **广播打在行动实体上、而且发生在销毁之前**——排在销毁之后的话，
     /// Observer 已经读不到载荷，退款会静默丢失。
     #[test]

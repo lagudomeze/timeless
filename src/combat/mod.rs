@@ -9,7 +9,7 @@
 //! | [`attributes`] | 攻击 / 防御的数值属性（伤害、护甲、命中半径、打断力度） |
 //! | [`targeting`] | 打到了谁（碰撞、近战扇形） |
 //! | [`lifecycle`] | 攻击实体的存活、命中计数与清理 |
-//! | [`skills`] | 生成攻击实体（箭矢、横扫、火球） |
+//! | [`attack`] | 生成攻击实体（箭矢、横扫、火球） |
 //! | [`defense`] | 翻滚 / 招架与它们的短命标记 |
 //! | [`reaction`] | 威胁检测：有东西瞄准玩家 → 请求冻结世界 |
 //!
@@ -17,7 +17,7 @@
 //!
 //! ```text
 //! reaction（检测威胁 → 请求冻结）
-//!   ─▶ skills（声明 → 到点生成攻击实体 / 火球投射物）
+//!   ─▶ attack（声明 → 到点生成攻击实体 / 火球投射物）
 //!   ─▶ projectile_arrival + explosion（到达目标格 → 按真实距离 AoE）
 //!   ─▶ targeting（挂 CollisionTarget）
 //!   ─▶ apply_physical_hits（防御判定 + 护甲 + 打断触发 + 命中计数）
@@ -32,6 +32,7 @@
 
 use bevy::prelude::*;
 
+pub mod attack;
 pub mod attributes;
 pub mod components;
 pub mod defense;
@@ -40,9 +41,12 @@ pub mod health;
 pub mod lifecycle;
 pub mod plugin;
 pub mod reaction;
-pub mod skills;
 pub mod targeting;
 
+pub use attack::{
+    FIREBALL_COST, FireCommand, Fireball, FireballAction, MeleeAction, MeleeCommand, MenuSelection,
+    ProjectileArrived, SKILLS, ShootAction, SkillDef, SkillKind,
+};
 pub use attributes::{Armor, AttackFrame, AttackRange, HitRadius, InterruptPower, PhysicalDamage};
 pub use components::{Collidable, Faction};
 pub use defense::{DefenseOutcome, Dodging, ParryCommand, Parrying, RollCommand, Stamina};
@@ -56,10 +60,6 @@ pub use reaction::{
     CounterSuggestion, ReactionAnswer, ReactionSlot, TargetCell, Threatened, Threatens,
     counter_suggestions, detect_threat_system, mark_threatened_system, melee_arc_cells,
     resolve_reaction_system, trajectory_cells,
-};
-pub use skills::{
-    FIREBALL_COST, FireCommand, Fireball, FireballAction, MeleeAction, MeleeCommand, MenuSelection,
-    ProjectileArrived, SKILLS, ShootAction, SkillDef, SkillKind,
 };
 pub use targeting::{CollisionTarget, MeleeShape};
 

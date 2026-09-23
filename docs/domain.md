@@ -2,9 +2,8 @@
 
 > ⚠️ **目标设计**：标 🚧 的部分代码里还没有。当前与本文的差异有三处：
 >
-> 1. `combat` 还是**一个** `CombatPlugin` 装着 7 个子域（本文要求每个 mod 出自己的
->    `plugin.rs`，父域只编排）——**7 个子域目前 0 个 `plugin.rs`**；
-> 2. 攻击子域目录仍叫 `combat/skills`（本文按语义写作 `combat::attack`）；
+> 1. `voxel_render` / `world` 的子域仍未各自出 `plugin.rs`（`combat` 已完成，见第一节末）；
+> 2. 攻击子域目录仍叫 `combat/attack`（本文按语义写作 `combat::attack`）；
 > 3. `utils` 域**不建了**（形状改为"一个形状一个组件"，见第一节末）。
 >
 > 落地进度见 `TODO.md` M22+。
@@ -49,6 +48,11 @@
 
 **每个 mod 出自己的 `plugin.rs`**；父域（`CombatPlugin`）**只负责编排子域之间的顺序**，
 不自己注册系统、不自己定义组件。这条对 `combat` / `voxel_render` / `world` 都成立。
+
+> `combat` 的 **7 个子域已各自出 `plugin.rs`**（M28）：每个子域把自己的系统放进自己的
+> `*Set`，`CombatPlugin` 只用一行 `.configure_sets((…).chain().in_set(CombatSet))` 说出先后。
+> **子域之间靠 `SystemSet` 排序，不靠插件添加顺序**——Bevy 的 `Plugin` 添加顺序不决定
+> 系统顺序，那样写出来的"顺序"是假的（一改就散）。`voxel_render` / `world` 仍是待办。
 
 ### 不是领域的东西
 

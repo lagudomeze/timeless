@@ -22,7 +22,7 @@ use bevy::prelude::*;
 use bevy::light::NotShadowCaster;
 
 use crate::combat::Faction;
-use crate::combat::skills::{FIREBALL_RADIUS, MELEE_REACH, MenuSelection, SKILLS, SkillKind};
+use crate::combat::attack::{FIREBALL_RADIUS, MELEE_REACH, MenuSelection, SKILLS, SkillKind};
 use crate::movement::CELL_SIZE;
 use crate::movement::Cell;
 use crate::world::{TerrainConfig, ground_position};

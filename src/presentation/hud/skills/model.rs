@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::combat::skills::{SKILLS, SkillKind};
+use crate::combat::attack::{SKILLS, SkillKind};
 
 /// 技能图标贴图（占位图，程序生成，见 `assets/LICENSES.md`）。
 pub fn icon_path(kind: SkillKind) -> &'static str {

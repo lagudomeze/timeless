@@ -176,8 +176,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::clock::{AWAITING, PauseReasons, THREAT};
+    use crate::combat::attack::{FIREBALL_TIMING, FireballAction, fireball_action_scene};
     use crate::combat::defense::{Dodging, Parrying, ROLL_COST, RollCommand, Stamina};
-    use crate::combat::skills::{FIREBALL_TIMING, FireballAction, fireball_action_scene};
     use crate::combat::{
         Armor, Collidable, DamageEvent, Faction, Fireball, HitOnce, HitRadius, InterruptEvent,
         InterruptPower, Lifetime, MeleeShape, PhysicalDamage, Projectile, Threatens,
@@ -884,7 +884,7 @@ mod tests {
     }
 
     /// 撤销：行动实体销毁、决策槽立刻清空，花掉的钱由花钱的领域退回来
-    /// （`ActionCancelled` → `combat::skills` 的退款 Observer）。
+    /// （`ActionCancelled` → `combat::attack` 的退款 Observer）。
     ///
     /// 火球是「声明扣 2、撤销退 2 但收 2 的取消代价」→ 净额不变（3 点进 3 点出）。
     #[test]

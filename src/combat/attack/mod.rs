@@ -14,6 +14,7 @@
 //!
 //! ⚠️ 待办：把 `registry`（旧的 `SKILLS` 表）并进技能目录，见 `TODO.md` M24。
 
+use bevy::prelude::*;
 pub mod abilities;
 pub mod actions;
 pub mod arrow;
@@ -51,3 +52,10 @@ pub use menu::{
 pub use registry::{
     PARRY_COST_DISPLAY, SKILLS, SkillDef, SkillKind, affordable_indices, index_of, skill,
 };
+
+pub mod plugin;
+pub use plugin::AttackPlugin;
+
+/// 攻击：菜单、声明与执行在本域系统链里的位置（跨子域的先后由 [`CombatPlugin`](super::CombatPlugin) 编排）。
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AttackSet;

@@ -19,9 +19,9 @@
 
 use bevy::prelude::*;
 
+use crate::combat::attack::{FIREBALL_TIMING, MELEE_TIMING, declare_fireball_at, declare_melee_at};
 use crate::combat::defense::{Stamina, declare_roll, roll_step};
 use crate::combat::reaction::Threatens;
-use crate::combat::skills::{FIREBALL_TIMING, MELEE_TIMING, declare_fireball_at, declare_melee_at};
 use crate::combat::{AttackRange, Faction, Health};
 use crate::movement::abilities::ROLL_ABILITY;
 use crate::movement::{

@@ -10,8 +10,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::combat::Faction;
+use crate::combat::attack::{MELEE_REACH, MenuSelection, SKILLS, SkillKind, UseSelectedSkill};
 use crate::combat::reaction::ReactionAnswer;
-use crate::combat::skills::{MELEE_REACH, MenuSelection, SKILLS, SkillKind, UseSelectedSkill};
 use crate::movement::Cell;
 use crate::movement::MoveToCommand;
 use crate::presentation::MainCamera;

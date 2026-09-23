@@ -4,11 +4,11 @@
 //! 不需要在三个地方各写一遍花费。数值先硬编码，后续外置成 `.ron`（见
 //! [TODO.md](../../../TODO.md) 的「动作数值外置」）。
 
+use crate::combat::attack::FIREBALL_DAMAGE;
+use crate::combat::attack::actions::MELEE_TIMING;
+use crate::combat::attack::fireball::{FIREBALL_COST, FIREBALL_TIMING};
+use crate::combat::attack::melee::MELEE_DAMAGE;
 use crate::combat::defense::{PARRY_COST, ROLL_COST};
-use crate::combat::skills::FIREBALL_DAMAGE;
-use crate::combat::skills::actions::MELEE_TIMING;
-use crate::combat::skills::fireball::{FIREBALL_COST, FIREBALL_TIMING};
-use crate::combat::skills::melee::MELEE_DAMAGE;
 use crate::movement::ROLL_TIMING;
 use crate::timeline::ActionTiming;
 
@@ -169,7 +169,7 @@ pub fn affordable_indices(stamina_current: u32) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::combat::skills::melee::{MELEE_FRAME, MELEE_POWER};
+    use crate::combat::attack::melee::{MELEE_FRAME, MELEE_POWER};
 
     #[test]
     fn attack_and_melee_share_the_frame_of_their_payload() {
@@ -215,15 +215,15 @@ mod tests {
         let catalogue: [(AbilityId, AbilityDef); 4] = [
             (
                 AbilityId::Melee,
-                crate::combat::skills::abilities::MELEE_ABILITY,
+                crate::combat::attack::abilities::MELEE_ABILITY,
             ),
             (
                 AbilityId::Shoot,
-                crate::combat::skills::abilities::SHOOT_ABILITY,
+                crate::combat::attack::abilities::SHOOT_ABILITY,
             ),
             (
                 AbilityId::Fireball,
-                crate::combat::skills::abilities::FIREBALL_ABILITY,
+                crate::combat::attack::abilities::FIREBALL_ABILITY,
             ),
             (AbilityId::Roll, crate::movement::abilities::ROLL_ABILITY),
         ];

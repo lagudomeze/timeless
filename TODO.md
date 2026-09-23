@@ -131,8 +131,8 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [x] **M18 节奏与格尺度归位 + 调度数据瘦身**（两次提交 3c043c7 / 本次）：
       ① `timeline/timing.rs` 只留 `ActionTiming` 这个**形状**，六个具体数值搬到载荷旁边
       （`MOVE_TIMING` / `JUMP_TIMING` / `ROLL_TIMING` → `movement/actions.rs`、
-      `MELEE_TIMING` / `ARROW_TIMING` → `combat/skills/actions.rs`、
-      `FIREBALL_TIMING` → `combat/skills/fireball.rs`、`PARRY_TIMING` →
+      `MELEE_TIMING` / `ARROW_TIMING` → `combat/attack/actions.rs`、
+      `FIREBALL_TIMING` → `combat/attack/fireball.rs`、`PARRY_TIMING` →
       `combat/defense/actions.rs`）。动机是时间线自己的承诺「新增动作时调度器一行不改」
       在此之前**是假的**——加一个动作必须回头改 `timeline/timing.rs`；旁证是
       `SHOOT` 同时服务两个载荷、`ROLL` 被两个领域引用、`timeline/schedule.rs` 的单测
@@ -246,7 +246,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 | # | 主题 | 决议 |
 | :--- | :--- | :--- |
 | D1 | 命名 | `ai::Intent` → **`ai::Tactic`**（战术），`ai::Decision` → **`ai::Situation`**（战况），`timeline::PlayerIntent` → **`PlayerTakeover`**（玩家动手了），`FocusIntent` → **`PendingFocus`**；`Intent` 这个词**只留给"动作决策"** |
-| D2 | 技能 | **`skills` 抽成顶层域**（不再挂在 `combat` 下）；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理；`AbilityDef` 是**静态、可序列化**的那一半（不许出现 `Entity` / 闭包），各机制域通过 `RegisterAbility` 把自己的定义交上来；`combat/skills` 改名 **`combat/attack`** |
+| D2 | 技能 | **`skills` 抽成顶层域**（不再挂在 `combat` 下）；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理；`AbilityDef` 是**静态、可序列化**的那一半（不许出现 `Entity` / 闭包），各机制域通过 `RegisterAbility` 把自己的定义交上来；`combat/attack` 改名 **`combat/attack`** |
 | D3 | 范围 | `Shape` 只是几何：住 **`utils`**，不是领域、没有 Plugin；伤害 = `Point`、回血 = 正方形；具体实现**直接引用或包一层**，不抽象成机制 |
 | D4 | 反制 | `CounterSuggestion` = **所有能当反制的技能 + 它要付的反制资源**，也就是 `ReactionSlot` 的 UI；HUD 高亮"付得起"的那些 |
 | D5 | 属性叠加 | 「基础值 + 加成」的结构**排在技能静态定义之后**定（`can_cast` 与命中公式都要读属性） |
@@ -349,7 +349,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **M27 装备系统（D5）**：全新（槽位 / `EquippedTo` / 类型校验 Observer / 穿脱），
       并定下**属性的「基础值 + 加成」结构**。
 - [ ] **M28 每个 mod 出 `plugin.rs`**：`CombatPlugin` 只编排子域顺序、不注册系统；
-      顺带把 `combat/skills` 改名 `combat/attack`（D2 的收尾）。与其它步独立，随时可做。
+      顺带把 `combat/attack` 改名 `combat/attack`（D2 的收尾）。与其它步独立，随时可做。
 - [ ] **M29 删掉 `architecture.md` / `components.md` / `NEW_DESGIN.md`**：替代完成后的收尾。
 - [x] **M30 形状按需抽取（D3）—— 结论：不建 `utils` 域、不建 `Shape` 枚举。**
       形状改为**一个形状一个组件**（`HitRadius` / `MeleeShape`），判定系统紧贴各自的

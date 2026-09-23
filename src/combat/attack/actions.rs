@@ -161,7 +161,7 @@ pub fn declare_skill_system(
             schedule,
         );
     } else {
-        crate::combat::skills::declare_fireball_at(
+        crate::combat::attack::declare_fireball_at(
             &mut commands,
             player,
             *cell,
