@@ -126,15 +126,33 @@ fn nearest_enemy_cell(
 /// `fireball::declare_melee_system` 承担（它们按各自的技能配置扣费）。
 /// 这里保留的是"同一条声明流程、不同触发源"的参考实现。
 #[allow(clippy::too_many_arguments)]
+/// 「声明攻击时要查的玩家」：身份 + 位置 + 阵营 + Focus + 决策槽。
+///
+/// 抽成类型别名是因为元组变长了（`Focus` 变成每单位一份的组件之后），
+/// 直接写在签名里会触发 `clippy::type_complexity`。
+type AttackerPlayer<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Cell,
+        &'static Transform,
+        &'static Faction,
+        &'static mut Focus,
+        &'static DecisionSlot,
+    ),
+    With<InputDriven>,
+>;
+
+#[allow(clippy::too_many_arguments)]
 pub fn declare_skill_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
-    mut focus: ResMut<Focus>,
     pending_focus: Res<PendingFocus>,
     mut fires: MessageReader<FireCommand>,
     mut melees: MessageReader<MeleeCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
-    players: Query<(Entity, &Cell, &Transform, &Faction, &DecisionSlot), With<InputDriven>>,
+    mut players: AttackerPlayer<'_, '_>,
     units: Query<(&Transform, &Faction)>,
 ) {
     let request = fires.read().last().copied();
@@ -142,7 +160,8 @@ pub fn declare_skill_system(
     if request.is_none() && !melee {
         return;
     }
-    let Some((player, cell, transform, faction, _)) = players.iter().first_ready(&mut blocked)
+    let Some((player, cell, transform, faction, mut focus, _)) =
+        players.iter_mut().first_ready(&mut blocked)
     else {
         return;
     };

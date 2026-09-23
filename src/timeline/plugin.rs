@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use super::TimelineSet;
 use super::decision::{compute_player_awaiting_system, recovery_system, undo_system};
 use super::events::{ActionBlocked, PlayerTakeover, UndoCommand, UseFocus};
-use super::focus::{Focus, PendingFocus, recover_focus_system, track_pending_focus_system};
+use super::focus::{PendingFocus, recover_focus_system, track_pending_focus_system};
 use super::wait::{
     WaitCommand, declare_wait_system, register_wait_ability_system, wait_executor_system,
 };
@@ -28,7 +28,7 @@ pub struct TimelinePlugin;
 
 impl Plugin for TimelinePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Focus>()
+        app
             // 「等待」动作：写方是 input（空格），消费方是本域
             .add_message::<WaitCommand>()
             // 目录必须存在才能把「等待」交上去（与 combat / movement 同一约定）

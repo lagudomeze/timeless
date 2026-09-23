@@ -222,6 +222,12 @@ impl<A, B, C, D, E> HasDecisionSlot for (A, B, C, D, E, &DecisionSlot) {
     }
 }
 
+impl<A, B, C, D, E, F> HasDecisionSlot for (A, B, C, D, E, F, &DecisionSlot) {
+    fn decision_slot(&self) -> &DecisionSlot {
+        self.6
+    }
+}
+
 /// **占一个决策槽的唯一入口**：挑出那个现在能决策的行动者，挑不到就替 HUD
 /// 记下原因（[`ActionBlocked::BUSY`]）。
 ///

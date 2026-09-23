@@ -1,11 +1,15 @@
-//! ⚠️ **这一族不是时间线的概念**：`Focus` 是玩家的**反制资源**（和 `combat::defense`
-//! 的 `Stamina` 同类），按计划要搬去 `combat` 并改成挂在单位身上的组件
-//! （见 `docs/combat.md` 第五节、`TODO.md` 的工程债）。
-//! 它现在寄住在这里，只是因为搬迁会和 `spawn` / HUD / 8 个声明点一起动，
-//! 所以单独排了一步。
+//! ⚠️ **这一族不是时间线的概念**：`Focus` 是单位的**反制资源**（和
+//! `combat::defense` 的 `Stamina` 同类）。它寄住在时间线里，只是因为
+//! "把一次声明的前摇买掉"这件事发生在声明那一刻——而**声明归各领域**，
+//! 时间线只提供 [`ScheduledAction::with_focus`](super::ScheduledAction::with_focus)
+//! 这个共用入口。
 //!
-//! 时间线里寄住的 Focus 一族：资源 [`Focus`] + 本帧请求 [`PendingFocus`]
-//! （暂停原因集合不在这里，见 [`clock`](super::clock)）。
+//! **`Focus` 是挂在单位身上的组件**，不是全局资源：**每个单位有自己的余量**。
+//! 这就让 AI 也能用它——精英怪攒够 Focus 同样可以抢先手（见 [`crate::ai`]）。
+//! 全局资源只有一份，那个形态下敌人永远不可能有 Focus。
+//!
+//! 本帧请求 [`PendingFocus`] 仍是资源：它表达的是"**玩家**这一帧按了
+//! Shift + 决策键"，与具体单位无关（AI 不走这条路，它自己决定）。
 
 use bevy::prelude::*;
 
@@ -16,11 +20,13 @@ pub const FOCUS_MAX: u32 = 3;
 /// Focus 恢复间隔（虚拟秒）：世界在走才回，冻结时不回。
 pub const FOCUS_RECOVER_INTERVAL: f32 = 10.0;
 
-/// 反应资源：**1 点 Focus = 把一次声明的前摇归零**。
+/// 反应资源（**挂在单位身上**）：**1 点 Focus = 把一次声明的前摇归零**。
 ///
 /// 它买的是「反应速度」而不是数值：威胁压过来时，只有攒着 Focus 的人才来得及
 /// 在同一瞬间改手（见 `docs/combat.md` 第五节）。
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// **每个单位各有一份**——玩家和敌人都会有，AI 因此能像玩家一样抢先手。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Focus {
     pub current: u32,
     pub max: u32,
@@ -81,15 +87,29 @@ pub fn track_pending_focus_system(
 /// Focus 回复：每 [`FOCUS_RECOVER_INTERVAL`] 虚拟秒回 1 点。
 ///
 /// 走到 `Time<Virtual>` 上，因此**冻结时不回复**：暂停不是"白送资源"的时间。
+///
+/// **每个单位各有自己的计时**：`Timer` 挂在单位身上，所以新上场的单位不会
+/// 蹭到别人的进度，也不会因为"全队共用一个计时器"而整齐地一起回。
+#[derive(Component, Debug, Clone)]
+pub struct FocusRecoverTimer(pub Timer);
+
+impl Default for FocusRecoverTimer {
+    fn default() -> Self {
+        Self(Timer::from_seconds(
+            FOCUS_RECOVER_INTERVAL,
+            TimerMode::Repeating,
+        ))
+    }
+}
+
 pub fn recover_focus_system(
-    mut focus: ResMut<Focus>,
     time: Res<Time<Virtual>>,
-    mut timer: Local<f32>,
+    mut focuses: Query<(&mut Focus, &mut FocusRecoverTimer)>,
 ) {
-    *timer += time.delta_secs();
-    while *timer >= FOCUS_RECOVER_INTERVAL {
-        *timer -= FOCUS_RECOVER_INTERVAL;
-        focus.recover();
+    for (mut focus, mut timer) in &mut focuses {
+        if timer.0.tick(time.delta()).just_finished() {
+            focus.recover();
+        }
     }
 }
 
@@ -121,14 +141,24 @@ mod tests {
     #[test]
     fn focus_recovers_only_while_the_world_runs() {
         let mut app = timeline_app();
-        app.world_mut().resource_mut::<Focus>().current = 0;
+        // Focus 现在挂在**单位**身上（每个单位一份），所以测试造一个单位
+        let unit = app
+            .world_mut()
+            .spawn((
+                Focus {
+                    current: 0,
+                    max: FOCUS_MAX,
+                },
+                FocusRecoverTimer::default(),
+            ))
+            .id();
 
         app.update();
         for _ in 0..30 {
             app.update();
         }
         assert_eq!(
-            app.world().resource::<Focus>().current,
+            app.world().get::<Focus>(unit).unwrap().current,
             0,
             "冻结时不该回复 Focus"
         );
@@ -138,7 +168,7 @@ mod tests {
             app.update();
         }
         assert_eq!(
-            app.world().resource::<Focus>().current,
+            app.world().get::<Focus>(unit).unwrap().current,
             1,
             "世界走了 10 秒就该回 1 点"
         );

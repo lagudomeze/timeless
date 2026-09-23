@@ -80,7 +80,7 @@ pub use events::{
     ActionBlocked, ActionCancelled, BlockReason, DecisionReady, PlayerTakeover, UndoCommand,
     UseFocus,
 };
-pub use focus::{FOCUS_MAX, FOCUS_RECOVER_INTERVAL, Focus, PendingFocus};
+pub use focus::{FOCUS_MAX, FOCUS_RECOVER_INTERVAL, Focus, FocusRecoverTimer, PendingFocus};
 pub use focus::{recover_focus_system, track_pending_focus_system};
 pub use ownership::{ActionOf, Actions};
 pub use plugin::TimelinePlugin;
@@ -127,7 +127,6 @@ pub(crate) mod test_support {
             .init_resource::<crate::clock::PauseReasons>()
             .init_resource::<crate::clock::ManualPause>()
             .init_resource::<ManualLatch>()
-            .init_resource::<Focus>()
             .init_resource::<PendingFocus>()
             .add_message::<crate::clock::PauseRequest>()
             .add_message::<PlayerTakeover>()
