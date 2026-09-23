@@ -1200,6 +1200,65 @@ mod tests {
         );
     }
 
+    /// **回归：对威胁按下「能当反制」的技能键 → 窗口关掉、世界继续跑。**
+    ///
+    /// 这条路径此前没有整机测试：`resolve_reaction_system` 判定
+    /// 「这个 `AbilityId` 在建议列表里吗」，而**没接进目录的技能按了不算表态**。
+    /// 症状是玩家明明按了技能，世界还是冻着——单域测试各看各的都是绿的。
+    #[test]
+    fn answering_a_threat_with_a_suggested_counter_releases_the_world() {
+        use crate::combat::reaction::ReactionAnswer;
+        use crate::skills::AbilityId;
+
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
+
+        // 敌人瞄着玩家脚下的格：窗口该开
+        app.world_mut().spawn((
+            ActionOf(enemy),
+            FIREBALL_TIMING,
+            ScheduledAction::declared_at(FIREBALL_TIMING, 900.0),
+            crate::combat::Threatens {
+                cells: vec![Cell::new(0, 0)],
+            },
+        ));
+        app.update();
+        let slot = app
+            .world()
+            .get::<crate::combat::ReactionSlot>(player)
+            .expect("威胁应当开出一个反应窗口");
+        assert!(!slot.resolved, "刚开窗时还没表态");
+
+        // 翻滚是唯一 `counter != None` 的已注册技能——先确认它**真的在建议列表里**，
+        // 否则下面测的就不是这条路径
+        assert!(
+            slot.suggestions
+                .iter()
+                .any(|suggestion| suggestion.ability == AbilityId::Roll),
+            "翻滚应当在建议列表里（`CounterCost::Free`），实际 {:?}",
+            slot.suggestions
+        );
+
+        // 表态：用建议列表里的一手
+        let suggested = slot.suggestions[0].ability;
+        app.world_mut()
+            .write_message(ReactionAnswer::Counter(suggested));
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<crate::combat::ReactionSlot>(player)
+                .is_some_and(|slot| slot.resolved),
+            "按了建议里的技能，窗口应当记下「已表态」"
+        );
+        assert!(
+            !app.world().resource::<PauseReasons>().contains(THREAT),
+            "表态之后不该再断言冻结；实际 {:?}",
+            app.world().resource::<PauseReasons>().labels()
+        );
+    }
+
     /// 打断：命中打向一个**正在前摇**的单位 → 那一手被打掉，决策槽立刻清空。
     #[test]
     fn a_landed_hit_interrupts_the_targets_windup() {
