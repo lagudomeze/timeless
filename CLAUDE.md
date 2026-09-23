@@ -17,7 +17,7 @@ Project Timeless：基于 **Bevy 0.19.1** 的 roguelike 策略游戏原型。pac
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 全部测试（193：191 单元 + 2 资产验收）
+cargo test                                  # 全部测试（248：245 单元 + 3 资产验收）
 cargo test <name>                           # 单个测试，例：cargo test fireball_flies_to_the_locked_cell_and_explodes
 cargo test --lib                            # 只跑单元测试
 cargo test --test assets                    # 只跑资产验收（改日志文案 / 加技能后必跑）
@@ -28,9 +28,12 @@ cargo fmt --check                           # 必须通过
 环境注意事项：
 
 - 根 `Cargo.toml` **不是** workspace（无 `[workspace]`），**不要**加 `--workspace`。
-- crates.io 直连不可用，依赖经清华镜像解析（配置在 `~/.cargo/config.toml`）。
+- crates.io 直连不可用，依赖经**中科大（USTC）镜像**解析（`~/.cargo/config.toml`）。
   **不要用 `cargo add`**（已知兼容性问题）；依赖手动写进 `Cargo.toml`，
   并在 `TODO.md` 的版本索引表登记。
+- **依赖版本只在改过 `Cargo.toml` 之后才刷新本地索引缓存**：解析失败可能只是缓存旧
+  （踩过：`file_watcher` 曾被误判为"镜像没有"）。
+- 开发期热重载：`cargo run --features hot-reload`（生产构建不带这个 feature）。
 - 提交前三条必须全过（test / clippy / fmt）。**禁止用 `#[ignore]` 隐藏失败**——
   要么修好，要么在 `TODO.md` 写明根因与下一步。
 - `main.rs` 启用了 `bevy_remote` + `bevy_brp_extras`：运行时可用 BRP 查询 / 模拟输入 / 截图，

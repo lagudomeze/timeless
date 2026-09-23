@@ -10,9 +10,11 @@ use bevy_brp_extras::BrpExtrasPlugin;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(LogPlugin {
-            // 文本栈缺 CJK 分词模型时会每帧往 stderr 刷一行 `ICU4X data error: ...`：
-            // 渲染本身没问题，但噪音会淹掉真正有用的日志，这里把这两个 crate 静音。
-            // （真正的修法是给 `icu_segmenter` 编译进分词数据，见 TODO.md「CJK 断行」。）
+            // 文本栈每帧往 stderr 刷一行 `ICU4X data error: No segmentation model
+            // for complex script`：那是 `icu_segmenter` 的**附加词模型**没编译进来，
+            // 中文的断行与分词其实正常（走的是 `LineSegmenter` 自带的 `cjdict`）。
+            // 渲染没问题，但噪音会淹掉真正有用的日志，这里把这两个 crate 静音
+            // （见 TODO.md「CJK 断行」）。
             filter: "wgpu=error,naga=warn,icu_segmenter=off,icu_provider=off".to_string(),
             ..default()
         }))
