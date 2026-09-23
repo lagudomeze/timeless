@@ -1,11 +1,14 @@
-//! 世界数据域插件：注册资源、消息与「流式加载 → 地形生成」系统链。
+//! 世界数据域插件：**只编排子域**——注册什么、跑什么都是各子域自己的事。
+//!
+//! 顺序即语义：**先流式加载区块，再生成地形**（数据先于填充）。
+//! 子域之间靠 `SystemSet` 排序，不靠插件添加顺序（Bevy 的 `Plugin` 添加顺序不决定系统顺序）。
 
 use bevy::prelude::*;
 
 use super::WorldSet;
-use super::chunk::{ChunkDirtyEvent, ChunkLoadEvent, ChunkUnloadEvent, chunk_streaming_system};
-use super::storage::ChunkMap;
-use super::terrain::{TerrainConfig, generate_terrain_system};
+use super::chunk::{ChunkPlugin, ChunkSet};
+use super::storage::StoragePlugin;
+use super::terrain::{TerrainPlugin, TerrainSet};
 
 /// 体素地图数据域插件。
 ///
@@ -16,17 +19,9 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ChunkMap>()
-            .init_resource::<TerrainConfig>()
-            .add_message::<ChunkLoadEvent>()
-            .add_message::<ChunkUnloadEvent>()
-            .add_message::<ChunkDirtyEvent>()
-            .add_systems(
-                Update,
-                (chunk_streaming_system, generate_terrain_system)
-                    .chain()
-                    .in_set(WorldSet),
-            );
+        app.add_plugins((StoragePlugin, ChunkPlugin, TerrainPlugin))
+            // 数据先于填充：区块先存在，地形才有地方写
+            .configure_sets(Update, (ChunkSet, TerrainSet).chain().in_set(WorldSet));
     }
 }
 
@@ -34,6 +29,7 @@ impl Plugin for WorldPlugin {
 mod tests {
     use super::*;
     use crate::world::chunk::{Chunk, ChunkLoader, ChunkPos};
+    use crate::world::storage::ChunkMap;
     use crate::world::voxel::VoxelType;
 
     /// 最小 App：世界数据域不需要渲染环境即可运行（分层约束的可执行证明）。

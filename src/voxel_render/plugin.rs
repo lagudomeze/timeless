@@ -1,34 +1,26 @@
-//! 体素表现域插件：材质注册 + 网格化系统链。
+//! 体素表现域插件：**只编排子域**。
+//!
+//! 顺序：材质先装配（网格化要拿材质句柄）→ 网格化（数据先于网格）。
+//! 子域之间靠 `SystemSet` 排序，不靠插件添加顺序。
 
 use bevy::prelude::*;
 
 use super::VoxelRenderSet;
-use super::materials::{VoxelMaterialRegistry, setup_voxel_materials};
-use super::meshing::{
-    MeshingConfig, apply_meshing_result_system, despawn_chunk_surfaces_system,
-    schedule_meshing_system,
-};
+use super::materials::{MaterialSet, MaterialsPlugin};
+use super::meshing::{MeshingPlugin, MeshingSet};
 
-/// 体素表现域插件。
-///
-/// 启动时注册方块材质；每帧把脏区块送去异步网格化，并把结果挂成网格实体。
+/// 体素表现插件：异步网格化 + 材质 + 明暗。
 #[derive(Debug, Default)]
 pub struct VoxelRenderPlugin;
 
 impl Plugin for VoxelRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MeshingConfig>()
-            .init_resource::<VoxelMaterialRegistry>()
-            .add_systems(Startup, setup_voxel_materials)
-            .add_systems(
+        // 明暗（`lighting`）没有插件：它是纯函数 `face_shade`，
+        // 在网格化时烘进顶点色（见该子域的文首说明）。
+        app.add_plugins((MaterialsPlugin, MeshingPlugin))
+            .configure_sets(
                 Update,
-                (
-                    schedule_meshing_system,
-                    apply_meshing_result_system,
-                    despawn_chunk_surfaces_system,
-                )
-                    .chain()
-                    .in_set(VoxelRenderSet),
+                (MaterialSet, MeshingSet).chain().in_set(VoxelRenderSet),
             );
     }
 }
