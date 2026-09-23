@@ -503,15 +503,19 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       （`the_font_covers_every_character_the_ui_can_show`），把"运行时人工看有没有豆腐块"
       变成自动验收。**原以为要新引第三方库，其实不用**——`skrifa` 本来就在
       `bevy_text` 的依赖树里，提成 `dev-dependencies` 不引入新的传递依赖。
-- [ ] **CJK 断行**（已查明：**只是告警**）：运行时的
-      `ICU4X data error: No segmentation model for complex script`
-      来自 `icu_segmenter::complex::select`——`ComplexScript::ChineseOrJapanese`
-      那条路要一个额外的**词**模型，而 `parley` 只开了 `compiled_data`、
-      没开 `lstm` / `auto`，所以查不到就退化成 `None`。
-      **中文仍然能正确分词与换行**（`LineSegmenter` 用的是编译进数据的 `cjdict`，
-      与这条路无关），实测「敌人向你发射火球」切成 `敌人 / 向 / 你 / 发射 / 火球`。
-      修法是在 `Cargo.toml` 里直接依赖 `icu_segmenter` 并开 `auto`（特性会统一到
-      2.3.0），代价是编译时间与体积——**现状无害，暂不修**。
+- [x] **CJK 断行**（本次收口：**那条告警在这个依赖版本上根本不会出现**）：
+      文档一直说运行时会刷 `ICU4X data error: No segmentation model for complex script`，
+      **实测复现不出来**——把 `main.rs` 里对 `icu_segmenter` / `icu_provider` 的静音
+      撤掉，打印中文上屏、跑完整局战斗，stderr 一行都没有。
+      **根因**：那行错误住在 `icu_segmenter::complex::select` 的 `ChineseOrJapanese` 分支，
+      而当 `ja` 模型缺失时才走到——可 `parley` 0.9 根本不用复杂脚本分段器：
+      它调的是 `LineSegmenter::new_for_non_complex_scripts`（见
+      `parley/src/analysis/mod.rs`），中文按 `cjdict` 的规则分段，**那条报错分支
+      永远不执行**。所以：
+      ① 静音已从 `main.rs` 撤掉（留着的唯一理由是软件渲染的 wgpu 告警）；
+      ② 顺手验过"加 icu_segmenter + auto"这条路**能编译**（`cargo tree -e features`
+      看到 `auto` 统一到 2.3.0），但**没有必要**——它解决的是一个不存在的问题。
+      ③ 中文分词本身正常：「敌人向你发射火球」切成 `敌人 / 向 / 你 / 发射 / 火球`。
 - [ ] **中文 HUD 文案**：字体已就位，把 HUD 文案翻成中文还需要中文排版
       （断行 / 标点挤压）。
 - [ ] **字体体积**：现为 8.3 MB 全覆盖，可子集化到几十 KB。
