@@ -62,6 +62,10 @@ pub enum DefenseOutcome {
 /// **来源是装备 / 姿态**（见 `docs/combat.md` 第五节）——现在先作为单位身上的
 /// 属性存在，等装备系统（M27）落地后改成从装备读。管线只读它、不自己算，
 /// 所以这次改动不需要动管线。
+///
+/// **格挡没有标记组件**（对比 [`Dodging`] / [`Parrying`]）：那两者要跨帧存在
+/// （无敌帧有时间窗、招架等的是一次具体攻击），而格挡在命中系统里**当帧就结算完了**，
+/// 结果落在 [`DefenseOutcome::Blocked`] 上，没有"还在格挡"这种状态可表达。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
 pub struct BlockChance(pub f32);
 
@@ -70,14 +74,4 @@ impl BlockChance {
     pub fn clamped(self) -> f32 {
         self.0.clamp(0.0, 1.0)
     }
-}
-
-/// 格挡**判定**：挡下了就按格挡率减伤。
-///
-/// 与闪避 / 招架的区别是它是**减伤不是免伤**——所以"有没有吃到冲击"仍是"有"，
-/// 第 ⑥ 关（打断）照常触发（见 `docs/combat.md` 第一节）。
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Blocking {
-    /// 这一次挡下了多少（0..1）：`damage * (1 - absorbed)`
-    pub absorbed: f32,
 }
