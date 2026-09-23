@@ -399,8 +399,15 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **威胁窗口存的是行动者而不是行动**：`ThreatWindow.opening_action` 存的是玩家实体，`detect_threat_system` 用它判断"表态了没有"。玩家在**前摇中**被威胁冻结时，撤销再声明一手不会改变这个值，窗口于是永远等不到表态——双方一起冻死。改成存行动实体即可修好（行动实体在撤销/重新声明时会变）。
 - [ ] **AI 不会用 Focus**：`Focus` 只在玩家侧，敌人声明固定排前摇。
       要让精英怪也会抢先手，得给 AI 一套"什么时候值得花资源"的策略。
-- [ ] **`AttackFrame` 没有消费者**：攻击实体都挂着它，但没有系统读——
-      它是「洞察力」面板的读数（"谁先动"），接上或删掉。
+- [x] **`AttackFrame` 没有消费者**（已接上）：预演读数现在带上**速度帧**
+      （`FIREBALL · cell (1,0) · dist 2.2 · dmg 12 · frame 7`）——那就是
+      「谁先动」的洞察力读数，字段因此有了真正的消费者。
+      顺带把散落的帧数提成常量（`FIREBALL_FRAME = 7` / `ARROW_FRAME = 4`，
+      与既有的 `MELEE_FRAME = 5` 同形），载荷与技能表共用一份。
+      **技能表的 `frame` 与载荷上的 `AttackFrame` 是对账过的**——
+      `the_frame_matches_the_frame_on_the_payload` 钉住两处不许分叉
+      （验证过：故意改一处后确实转红）。
+      验收：240 测试全绿 / clippy 零警告 / fmt 通过。
 - [ ] **没有生产者的预留类型**：`Voxel` / `VoxelPos` / `ChunkPinned`——接上或删掉。
 - [ ] **开发热重载** ⛔ **环境阻塞**：`bevy/file_watcher` 要 `notify-debouncer-full = 0.7.0`，
       而本机用的清华镜像只到 **0.6.0**，`cargo build` 直接解析失败（实测）。

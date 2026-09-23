@@ -6,8 +6,8 @@
 
 use crate::combat::attack::FIREBALL_DAMAGE;
 use crate::combat::attack::actions::MELEE_TIMING;
-use crate::combat::attack::fireball::{FIREBALL_COST, FIREBALL_TIMING};
-use crate::combat::attack::melee::MELEE_DAMAGE;
+use crate::combat::attack::fireball::{FIREBALL_COST, FIREBALL_FRAME, FIREBALL_TIMING};
+use crate::combat::attack::melee::{MELEE_DAMAGE, MELEE_FRAME};
 use crate::combat::defense::{PARRY_COST, ROLL_COST};
 use crate::movement::ROLL_TIMING;
 use crate::timeline::ActionTiming;
@@ -51,6 +51,9 @@ pub struct SkillDef {
     pub timing: ActionTiming,
     /// 大致威力（展示用；实际伤害在各自的载荷里）
     pub power: i32,
+    /// 速度帧（**展示用**："谁先动"的读数，见 `AttackFrame`）。
+    /// 数值与载荷上挂的 `AttackFrame` 同源——加技能时两处都要有。
+    pub frame: u32,
 }
 
 impl SkillDef {
@@ -113,6 +116,7 @@ pub const SKILLS: [SkillDef; 4] = [
         cost: FIREBALL_COST,
         timing: FIREBALL_TIMING,
         power: FIREBALL_DAMAGE,
+        frame: FIREBALL_FRAME,
     },
     SkillDef {
         kind: SkillKind::Melee,
@@ -120,6 +124,7 @@ pub const SKILLS: [SkillDef; 4] = [
         cost: 0,
         timing: MELEE_TIMING,
         power: MELEE_DAMAGE,
+        frame: MELEE_FRAME,
     },
     SkillDef {
         kind: SkillKind::Fireball,
@@ -127,6 +132,7 @@ pub const SKILLS: [SkillDef; 4] = [
         cost: FIREBALL_COST,
         timing: FIREBALL_TIMING,
         power: FIREBALL_DAMAGE,
+        frame: FIREBALL_FRAME,
     },
     SkillDef {
         kind: SkillKind::Roll,
@@ -134,6 +140,8 @@ pub const SKILLS: [SkillDef; 4] = [
         cost: ROLL_COST,
         timing: ROLL_TIMING,
         power: 0,
+        // 翻滚不产生攻击实体，因此没有速度帧可言
+        frame: 0,
     },
 ];
 
@@ -241,5 +249,38 @@ mod tests {
             assert_eq!(def.timing, entry.timing, "{} 的节奏与目录分叉了", def.label);
             assert_eq!(def.power, entry.power, "{} 的威力与目录分叉了", def.label);
         }
+    }
+
+    /// **速度帧不许分叉**：技能表里的 `frame` 与载荷上挂的 `AttackFrame` 必须一致。
+    ///
+    /// 它们本来是一份数据被抄到两处（技能表给 HUD 读数、载荷给攻击实体），
+    /// 所以要有东西钉住——`docs/components.md` 记录过历史上正是这两处容易脱节。
+    #[test]
+    fn the_frame_matches_the_frame_on_the_payload() {
+        assert_eq!(
+            SKILLS
+                .iter()
+                .find(|def| def.kind == SkillKind::Melee)
+                .map(|def| def.frame),
+            Some(MELEE_FRAME),
+            "近战技能表的 frame 与 `MELEE_FRAME` 分叉了"
+        );
+        assert_eq!(
+            SKILLS
+                .iter()
+                .find(|def| def.kind == SkillKind::Fireball)
+                .map(|def| def.frame),
+            Some(FIREBALL_FRAME),
+            "火球技能表的 frame 与 `FIREBALL_FRAME` 分叉了"
+        );
+        // 翻滚不产生攻击实体，帧数写 0 表示"没有读数"
+        assert_eq!(
+            SKILLS
+                .iter()
+                .find(|def| def.kind == SkillKind::Roll)
+                .map(|def| def.frame),
+            Some(0),
+            "翻滚没有速度帧"
+        );
     }
 }
