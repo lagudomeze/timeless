@@ -33,7 +33,9 @@ pub use chunk::{
     ChunkPos, ChunkUnloadEvent,
 };
 pub use plugin::WorldPlugin;
-pub use storage::{ChunkMap, get_voxel, set_voxel};
+pub use storage::{
+    BlockCommand, BlockRefused, ChunkMap, apply_block_command_system, get_voxel, set_voxel,
+};
 pub use terrain::{TerrainConfig, ground_position, surface_height, surface_height_at};
 pub use voxel::VoxelType;
 
