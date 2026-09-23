@@ -38,8 +38,10 @@ pub struct Parrying {
     pub expires_at: f32,
 }
 
-/// 三种判定结果（由 [`resolve_defense`](crate::combat::formula::resolve_defense) 给出）。
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// 四种判定结果（由 [`resolve_defense`](crate::combat::formula::resolve_defense) 给出）。
+///
+/// **不是 `Eq`**：`Blocked` 带着一个减伤比例（`f32`）。
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum DefenseOutcome {
     /// 命中
     #[default]
@@ -48,4 +50,34 @@ pub enum DefenseOutcome {
     Dodged,
     /// 被招架（免伤 + 反制）
     Parried,
+    /// 被格挡（**减伤**，不是免伤）
+    Blocked {
+        /// 减伤比例（0..1）
+        absorbed: f32,
+    },
+}
+
+/// 格挡率（0.0..=1.0）：命中管线第 ③ 关读它。
+///
+/// **来源是装备 / 姿态**（见 `docs/combat.md` 第五节）——现在先作为单位身上的
+/// 属性存在，等装备系统（M27）落地后改成从装备读。管线只读它、不自己算，
+/// 所以这次改动不需要动管线。
+#[derive(Component, Debug, Default, Clone, Copy, PartialEq)]
+pub struct BlockChance(pub f32);
+
+impl BlockChance {
+    /// 夹在 0..=1：设计数据写错不该让伤害算成负数。
+    pub fn clamped(self) -> f32 {
+        self.0.clamp(0.0, 1.0)
+    }
+}
+
+/// 格挡**判定**：挡下了就按格挡率减伤。
+///
+/// 与闪避 / 招架的区别是它是**减伤不是免伤**——所以"有没有吃到冲击"仍是"有"，
+/// 第 ⑥ 关（打断）照常触发（见 `docs/combat.md` 第一节）。
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Blocking {
+    /// 这一次挡下了多少（0..1）：`damage * (1 - absorbed)`
+    pub absorbed: f32,
 }

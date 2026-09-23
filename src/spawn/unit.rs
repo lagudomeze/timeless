@@ -2,6 +2,7 @@
 
 use bevy::prelude::*;
 
+use crate::combat::defense::BlockChance;
 use crate::combat::health::Health;
 use crate::combat::{AttackRange, Collidable, Faction, HitRadius, Stamina};
 use crate::movement::{Cell, Velocity};
@@ -31,6 +32,9 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
         HitRadius(0.8)
         AttackRange::MELEE
         Collidable
+        // 格挡率：现在是单位属性（**没有单位真的会格挡**，`0.0` = 管线第 ③ 关直接跳过），
+        // 等装备系统（M27）落地后改成从装备 / 姿态读。
+        template_value(BlockChance(0.0))
         template_value(Velocity(Vec3::ZERO))
         template_value(DecisionSlot::Idle { intent: None })
         template_value(stamina)

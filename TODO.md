@@ -343,7 +343,16 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       而招架实际标的却是 `STRIKE`——已按注释改成 `COMMITTED`。
       缺 `CombatTags` 的行动（老载荷 / 测试夹具）按普通攻击处理。
       验收：228 测试全绿（新增 2 条，且**去掉闸门后确实转红**）/ clippy 零警告 / fmt 通过。
-- [ ] **M25 后半：格挡**：防御链补第 ③ 关（格挡率来自装备 / 姿态 `BlockChance`）。
+- [x] **M25 后半：格挡**（本次）：防御链补齐第 ③ 关。`BlockChance(f32)`（单位属性，
+      **来源本该是装备 / 姿态**，等 M27）+ 纯逻辑 `resolve_block` / `blocked_damage`
+      （零 Bevy、零随机，骰子由应用层掷好传进来）+ `DefenseOutcome::Blocked { absorbed }`。
+      **顺序按 `docs/combat.md` 第一节实现**：① 闪避 ② 招架（**拦下**，归零）
+      → ③ 格挡（**按格挡率减伤**）→ ④ 护甲再减。
+      **格挡是减伤不是免伤**，所以它照常触发打断（"吃到了冲击"）。
+      踩到一个顺序细节：`docs` 说 ③ 在 ④ **之前**，我第一版写成了"先护甲后格挡"——
+      是那条能分辨顺序的测试（`partial_blocking_stacks_with_armor_in_the_documented_order`，
+      挡 50% 得 3 而不是 4）把它抓出来的。
+      验收：235 测试全绿 / clippy 零警告 / fmt 通过；随机那条连跑 5 次不飘。
 - [x] **M26 反应槽 + 反制（D4）**（本次）：`ReactionSlot`（挂在**被威胁的玩家**身上，
       `threat` + `suggestions` + `resolved`）取代 `ThreatWindow`；`CounterSuggestion`
       从目录算出来（遍历 `counter != None`，**无硬编码白名单**）；`CounterCost`
