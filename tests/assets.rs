@@ -2,10 +2,12 @@
 //!
 //! 这是一个**端到端**断言，而不是「看起来还行」：读 `assets/` 下真实文件的字节。
 //!
-//! 刻意只查「文件在不在、格式对不对」，不查字形覆盖：逐字查 `cmap` 要引第三方
-//! 字体解析库（`skrifa`），而字体本身已经随仓库发版（`assets/LICENSES.md` 有许可）。
-//! 字形覆盖目前靠**运行时人工确认**（战斗日志出现中文时看有没有豆腐块），
-//! release 前再决定要不要把 cmap 验收加回来（见 TODO.md 的「代码 A 专属待办」）。
+//! 三条验收各守一类回归：**格式**（字体是合法 sfnt）、**字形覆盖**（界面文案里的字
+//! 真的画得出来）、**贴图**（精灵是带 alpha 的方图）。它们都不会让别的测试变红，
+//! 只会在屏幕上表现为豆腐块 / 人不见了 / 纸片带黑底——所以在这里钉死。
+//!
+//! 字形覆盖用 `skrifa` 逐字查 `cmap`；它本来就在 `bevy_text` 的依赖树里，
+//! 提成直接依赖不引入新的传递依赖。
 
 use std::path::PathBuf;
 
@@ -89,4 +91,54 @@ fn unit_sprites_exist_square_and_keep_transparency() {
         );
         assert!(width >= 16, "{path} 只有 {width}px，做成纸片会糊");
     }
+}
+
+/// **字形覆盖验收**：HUD 字体必须真的能画出界面上会出现的字。
+///
+/// 已有的那条只验"文件在、是合法 sfnt"——**合法但缺字**的字体照样通过，
+/// 而症状是屏幕上出现豆腐块（□□），只在运行时肉眼可见。这条把那次人工确认
+/// 变成自动验收：逐字查 `cmap`。
+///
+/// `skrifa` 本来就在 `bevy_text` 的依赖树里（这里只是提成直接依赖），
+/// 所以不必为了这条测试引入新的传递依赖。
+#[test]
+fn the_font_covers_every_character_the_ui_can_show() {
+    use skrifa::MetadataProvider;
+
+    let path = font_path();
+    let bytes = std::fs::read(&path).expect("字体文件应当在");
+    let font = skrifa::FontRef::new(&bytes).expect("字体应当能解析成 FontRef");
+    let charmap = font.charmap();
+
+    // 界面上真正会出现的字：HUD 英文 + 战斗日志中文 + 常用标点与数字。
+    // 覆盖不全的症状就是豆腐块，所以这里逐个查而不是抽查。
+    let ui_text = [
+        // HUD（英文）
+        "PLAYER ENEMY HP EN TIMELINE FROZEN RUNNING RUNNING SKILL COST WINDUP RECOVERY POWER",
+        "attack melee fireball roll parry move jump shoot wait",
+        "0123456789:/.-+%()[]·",
+        // 战斗日志正文（中文）
+        "敌人玩家火球近战横扫箭矢翻滚招架格挡命中伤害打断撤销掉落死亡重生",
+        "前摇后摇决策槽时间线冻结威胁反应反制精力护甲暴击闪避无敌",
+        "距离格子在左上下右前后目标法术技能等待暂停继续重置战斗日志",
+        "的了一是在有和就不人都一个我他这",
+        // 全角标点与常用符号
+        "，。：、；！？（）【】「」…—·",
+    ];
+
+    let mut missing: Vec<char> = Vec::new();
+    for text in ui_text {
+        for ch in text.chars() {
+            if charmap.map(ch).is_none() && !missing.contains(&ch) {
+                missing.push(ch);
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "字体 {} 缺这些字形：{:?}\n（它们在界面文案里出现过，缺了会显示成豆腐块）",
+        path.display(),
+        missing
+    );
 }

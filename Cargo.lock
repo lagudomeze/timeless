@@ -199,6 +199,7 @@ dependencies = [
  "bevy",
  "bevy_brp_extras",
  "rand",
+ "skrifa 0.44.0",
 ]
 
 [[package]]

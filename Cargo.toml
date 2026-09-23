@@ -7,6 +7,11 @@ edition = "2024"
 rand = "0.10.2"
 bevy_brp_extras = "0.22"
 
+# 字体验收用（`tests/assets.rs`）：逐字查 `cmap`，确认中文字形不缺失。
+# 它本来就在 bevy_text 的依赖树里，这里只是把它提成直接依赖。
+[dev-dependencies]
+skrifa = "0.44"
+
 [dependencies.bevy]
 version = "0.19"
 # 想开开发期热重载就加 `"file_watcher"`——**但本机开不了**：它要

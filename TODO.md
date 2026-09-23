@@ -412,8 +412,10 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ### 字体与文本
 
-- [ ] **字体覆盖验收**：`tests/assets.rs` 目前只验「文件在、是合法 sfnt」；
-      逐字查 `cmap` 要引第三方库（`skrifa`，已移除）。release 前评估是否加回。
+- [x] **字体覆盖验收**（本次）：`tests/assets.rs` 现在逐字查 `cmap`
+      （`the_font_covers_every_character_the_ui_can_show`），把"运行时人工看有没有豆腐块"
+      变成自动验收。**原以为要新引第三方库，其实不用**——`skrifa` 本来就在
+      `bevy_text` 的依赖树里，提成 `dev-dependencies` 不引入新的传递依赖。
 - [ ] **CJK 断行**：Bevy 文本栈缺 `icu_segmenter` 的 CJK 分词模型，运行时会打印
       `ICU4X data error: No segmentation model for complex script`
       （正文仍正常渲染，只是断行退化）。
