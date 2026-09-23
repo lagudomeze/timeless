@@ -37,7 +37,7 @@
 //! ```
 //!
 //! [`ClockSet`] 排在帧末：这一帧所有系统看到的是同一个冻结状态，而**唯一**写
-//! `Time<Virtual>` 的 `apply_clock` 就在那里落地（见 [`timeline`]）。
+//! `Time<Virtual>` 的 [`clock::process_pause_requests`] 就在那里落地。
 
 use bevy::prelude::*;
 

@@ -139,8 +139,8 @@ impl PauseReasons {
 /// 3. **落到时钟**：`PauseReasons 非空 || ManualPause` → 停，否则放开。
 ///
 /// 清空集合同时是**威胁窗口的关窗信号**：威胁检测（`CombatSet`，本系统之后）
-/// 下一帧读到"集合里没有 `THREAT`"，就关窗并记 `dismissed`——它不必知道
-/// "玩家是不是按了空格"。
+/// 下一帧读到"集合里没有 `THREAT`"，就关窗（移除 [`ReactionSlot`]）——它不必知道
+/// "玩家是不是按了空格还是用了反制"。
 pub fn process_pause_requests(
     mut requests: MessageReader<PauseRequest>,
     mut reasons: ResMut<PauseReasons>,

@@ -19,7 +19,11 @@ pub struct ToggleHelp;
 #[reflect(Component)]
 pub struct HelpPanel;
 
-/// 面板里列出的按键（英文，与 `AGENTS.md` 的键位表保持一致）。
+/// 面板里列出的按键。
+///
+/// **改按键必须同步这里**：这是玩家唯一看得到的清单——漏改的症状是"游戏里教的按键是错的"。
+/// 有一条测试（`the_help_lists_every_key_the_input_domain_reads`）拿它和 `src/input/`
+/// 里出现的按键对账，漏了就红。
 pub const HELP_LINES: &[&str] = &[
     "KEYBOARD",
     "  arrows          move one cell (screen-relative)",
@@ -28,7 +32,9 @@ pub const HELP_LINES: &[&str] = &[
     "  Tab / Shift+Tab cycle affordable skills",
     "  G               use selected skill",
     "  C               jump (cannot be interrupted)",
-    "  Space           pause / resume",
+    "  Space           wait 1s: hold the slot but let the world run",
+    "  P               pause / resume",
+    "  B / V           place / remove a block on the hovered cell",
     "  Shift + a key   spend 1 Focus: no windup on that action",
     "  F5              reset the battle",
     "  F1              close this help",
@@ -138,5 +144,114 @@ mod tests {
             app.world().get::<Node>(panel).unwrap().display,
             Display::None
         );
+    }
+
+    /// **帮助面板不许教错按键**：它列出的键必须与 `input` 域真正读的键对得上。
+    ///
+    /// 这条是被真事逼出来的：空格从"暂停"改成"等待"、暂停挪到 `P` 之后，
+    /// 帮助面板还写着 `Space  pause / resume`——玩家照做，得到的却是"等待一秒"。
+    /// 键位只有 `src/input/` 一个真相，这份文案是**玩家唯一看得到的副本**，
+    /// 所以拿它跟真相源对账：`input` 里出现的每个按键都得在面板里出现。
+    #[test]
+    fn the_help_lists_every_key_the_input_domain_reads() {
+        let help = HELP_LINES.join("\n");
+        // `input` 域真正读的按键（名字 → 玩家看到的写法）
+        let keys: [(&str, &str); 14] = [
+            ("ArrowUp", "arrows"),
+            ("ArrowDown", "arrows"),
+            ("ArrowLeft", "arrows"),
+            ("ArrowRight", "arrows"),
+            ("Digit1", "1-4"),
+            ("Digit2", "1-4"),
+            ("Digit3", "1-4"),
+            ("Digit4", "1-4"),
+            ("Tab", "Tab"),
+            ("KeyG", "G"),
+            ("KeyC", "C"),
+            ("Space", "Space"),
+            ("KeyP", "P"),
+            ("F5", "F5"),
+        ];
+        for (code, shown) in keys {
+            assert!(
+                help.contains(shown),
+                "`input` 读了 {code}，但帮助面板里没有 {shown:?}：玩家会照着错的清单按"
+            );
+        }
+    }
+
+    /// **反向对账**：面板里写的按键必须真的存在——断掉"教一个已经删掉的键"。
+    ///
+    /// 做法是从真相源（`src/input/keyboard.rs` 的源码）里抓出所有 `KeyCode::X`
+    /// 出现过的名字，再看面板首列写的键能不能落进去。这条能抓住
+    /// 「按键删了但帮助没改」这类漂移，比逐字母维护一张白名单稳。
+    #[test]
+    fn every_key_the_help_teaches_still_exists_in_the_input_domain() {
+        // 真相源：输入域源码里出现过的所有 KeyCode 变体名
+        let source = include_str!("../../input/keyboard.rs");
+        let mut known: Vec<String> = Vec::new();
+        for chunk in source.split("KeyCode::").skip(1) {
+            let name: String = chunk
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect();
+            if !name.is_empty() {
+                known.push(name);
+            }
+        }
+        assert!(!known.is_empty(), "没从输入域源码里解析出任何按键");
+
+        // 面板首列写的每个键（`arrows` 与 `1-4` 是多个物理键的写法，单独认）
+        let spellings = [
+            "arrows", "1-4", "Q", "W", "E", "R", "Tab", "G", "C", "Space", "P", "B", "V", "F5",
+            "F1",
+        ];
+        for spelling in spellings {
+            assert!(
+                HELP_LINES.join("\n").contains(spelling),
+                "面板里少了 {spelling}：它是玩家能按的键，帮助必须列出来"
+            );
+        }
+        // 正则式地确认：面板教的每个单键都能在源码里找到对应变体
+        let pairs = [
+            ("Q", "KeyQ"),
+            ("W", "KeyW"),
+            ("E", "KeyE"),
+            ("R", "KeyR"),
+            ("Tab", "Tab"),
+            ("G", "KeyG"),
+            ("C", "KeyC"),
+            ("Space", "Space"),
+            ("P", "KeyP"),
+            ("B", "KeyB"),
+            ("V", "KeyV"),
+            ("F5", "F5"),
+            ("F1", "F1"),
+        ];
+        for (shown, variant) in pairs {
+            assert!(
+                known.iter().any(|name| name == variant),
+                "帮助面板教了 {shown}（{variant}），但输入域源码里已经没有这个按键了"
+            );
+        }
+    }
+
+    /// 空格与 `P` 的分工必须写在面板里：两者都是"让世界停 / 动"，
+    /// 写反了危害最大（玩家以为按了暂停，其实只是等一秒）。
+    #[test]
+    fn the_help_says_space_is_a_wait_and_p_is_the_pause() {
+        let space = HELP_LINES
+            .iter()
+            .find(|line| line.contains("Space"))
+            .expect("面板里必须有空格那一行");
+        assert!(
+            space.contains("wait"),
+            "空格现在是「等待」而不是暂停：{space:?}"
+        );
+        let p = HELP_LINES
+            .iter()
+            .find(|line| line.trim_start().starts_with("P "))
+            .expect("面板里必须有 P 那一行");
+        assert!(p.contains("pause"), "手动暂停已经挪到 P：{p:?}");
     }
 }
