@@ -171,7 +171,6 @@ WorldSet ──────────────────────▶�
 | `docs/relations.md` | 物理附着（`ChildOf`）vs 逻辑关系（自定义关系） |
 | `docs/timeline.md` / `docs/skills.md` / `docs/combat.md` | 时间线 / 技能 / 战斗专题（🚧 = 目标设计，代码未落地） |
 | `docs/bevy-019.md` | **写任何 Bevy 代码之前**必读：0.19 API 与迁移清单 |
-| `docs/architecture.md` / `docs/components.md` / `NEW_DESGIN.md` | 正在被取代 / 历史快照，只作参考，新内容不写这里 |
 
 ## 风格要点
 

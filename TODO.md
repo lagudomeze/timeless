@@ -233,7 +233,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 | C8 | 关系模型总纲 | **物理附着用 `ChildOf`，逻辑关系用自定义关系**（新铁律） |
 | — | `ActionQueue` | **删除**：决策槽 + 时间轴已覆盖"收集决策、排序执行" |
 | — | 目录粒度 | **每个 mod 出自己的 `plugin.rs`**，父域只编排顺序 |
-| — | 文档 | **重建**（不增补）：新增 domain / relations / combat / skills / equipment，`architecture.md` 与 `components.md` 待替代完成后删除 |
+| — | 文档 | **重建**（不增补）：新增 domain / relations / combat / skills / equipment；`architecture.md` / `components.md` / `NEW_DESGIN.md` **已替代完成并删除**（M29） |
 
 **C2 的两个技术发现**（写进 `docs/timeline.md` 第三节）：
 
@@ -369,7 +369,16 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       并定下**属性的「基础值 + 加成」结构**。
 - [ ] **M28 每个 mod 出 `plugin.rs`**：`CombatPlugin` 只编排子域顺序、不注册系统；
       顺带把 `combat/attack` 改名 `combat/attack`（D2 的收尾）。与其它步独立，随时可做。
-- [ ] **M29 删掉 `architecture.md` / `components.md` / `NEW_DESGIN.md`**：替代完成后的收尾。
+- [x] **M29 删掉 `architecture.md` / `components.md` / `NEW_DESGIN.md`**（本次）：
+      替代已完成并删除三篇。删之前确认过**没有独有内容丢失**：
+      `components.md` 第九节（系统 × 组件反查）与 `architecture.md` 第十一节
+      （按键总表）**都已过时**——反查表里的 `ThreatWindow` / `ChildOf` 取行动者 /
+      `apply_clock` 全是被取代的写法，按键表还把空格写成"暂停"（真相反查
+      `src/input/keyboard.rs`，玩家可见副本是 `HELP_LINES`，两者现有测试对账）；
+      `architecture.md` 第二节的「铁律 → 违反后果」表**有价值**，
+      已并进 [`docs/domain.md`](docs/domain.md) 第五节。
+      验收：三篇已删、全仓库无残留引用（`grep -rn 'architecture\.md\|components\.md\|NEW_DESGIN'`
+      只剩本页的历史记录）、`docs/index.md` 与 `CLAUDE.md` 的文档地图已更新。
 - [x] **M30 形状按需抽取（D3）—— 结论：不建 `utils` 域、不建 `Shape` 枚举。**
       形状改为**一个形状一个组件**（`HitRadius` / `MeleeShape`），判定系统紧贴各自的
       形状（`combat/targeting/`），与 `combat.md` 第三节"不要中心化类型枚举"一致。

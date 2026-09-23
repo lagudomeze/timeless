@@ -73,8 +73,8 @@ Bevy 文本栈缺 `icu_segmenter` 的 CJK 分词模型，运行时会打印
 - 优势：成本低一个量级、漂浮物识别度高、风格化复古感；
 - 取舍：光影画死（无实时明暗）、纸片无厚度（镜头侧转穿帮）、无体积遮挡；
 - 实现：`presentation/unit_sprite.rs`（`billboard_system` + `shadow_system`），
-  单位根节点保持「脚底 + 无旋转 + 无缩放」，见
-  [components.md](components.md) 第八节。
+  单位根节点保持「脚底 + 无旋转 + 无缩放」（纸片与阴影是它的子节点，靠局部坐标
+  直接表达世界偏移；见 [relations.md](relations.md) 的「物理附着用 `ChildOf`」）。
 
 ## 接入 Bevy 0.19 的要点
 

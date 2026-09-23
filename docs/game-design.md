@@ -2,7 +2,7 @@
 
 > **描述对象：设计意图（不是代码现状）。** 实现状态见 [../TODO.md](../TODO.md)。
 > 本文只写「想要什么体验」；可行的机制设计与实现落点见
-> [timeline.md](timeline.md) 与 [architecture.md](architecture.md)。
+> [timeline.md](timeline.md) 与 [domain.md](domain.md)。
 
 ## 定位与灵感
 
@@ -63,6 +63,7 @@
 ## 关联文档
 
 - 战斗节奏与坐标模型：[timeline.md](timeline.md)
-- 模块结构与分层：[architecture.md](architecture.md)
-- 组件与系统的逐层对照：[components.md](components.md)
+- 模块结构与分层：[domain.md](domain.md)
+- 战斗机制与命中管线：[combat.md](combat.md)
+- 技能静态定义与释放条件：[skills.md](skills.md)
 - 当前进度与 backlog：[../TODO.md](../TODO.md)

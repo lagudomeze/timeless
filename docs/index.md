@@ -41,9 +41,9 @@
 > **本轮范围 = 战斗时间线**：roguelike 的另一半（供应链 / 信息 / 掉落 / 局外成长）
 > 只有 [game-design.md](game-design.md) 的总纲，机制文档先不做。
 
-> `architecture.md` 与 `components.md` 正在被上面几篇取代（前者并入 `domain.md`，
-> 后者拆进各专题篇）；`NEW_DESGIN.md` 是**第 1 轮**的草稿快照（已落地并被取代）。
-> **新内容一律写进上面这几篇**，那三篇只作历史参考，等替代完成即删除。
+> `architecture.md` / `components.md` / `NEW_DESGIN.md` 已被上面这几篇**取代并删除**
+> （架构并入 `domain.md`，组件对照拆进各专题篇，第 1 轮草稿快照已完成使命）。
+> 需要它们的历史版本请查 git 历史。
 
 ## 当前状态
 
