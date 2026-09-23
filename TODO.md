@@ -314,12 +314,18 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `the_recovery_window_does_not_depend_on_when_the_executor_notices` 钉住基准。
 - [ ] **等待时长要可配**：现在是 `timeline::WAIT_SECONDS = 1.0` 常量；
       等动作数值外置（`.ron`）之后应进技能表。
-- [ ] **暂停：情形 A 已由「等待」动作解决**（`feat/wait-action`）：玩家空闲时按空格
+- [x] **暂停：情形 A 已由「等待」动作解决**（`feat/wait-action`，已合并）：玩家空闲时按空格
       生成一条占槽 1s 的等待行动 → `awaiting` 消失 → 世界继续跑。
       **`ManualPause` 因此只服务"忙碌 + 运行"那一种情形**（他没有槽可占）。
-- [ ] **威胁：按 action 上报一次**：取代现在靠 `ThreatWindow.dismissed` 的全局记账，
-      语义变成"威胁是 action 的属性"，于是"放开之后第二帧又冻住"必然意味着**新威胁**。
-      落在 M26 一起做。
+      `ManualPause` 的引入**已被证明是必要的**：`clock` 的测试
+      `the_manual_pause_survives_a_domain_reason_disappearing` 就是钉这条语义的。
+      验收：`cargo test` 的 `space_asks_for_a_wait_not_a_pause` / `p_toggles_the_manual_pause`。
+- [x] **威胁：按 action 上报一次**（M26 落地的形态与这里设想的不同）：原计划
+      "威胁是 action 的属性"，实际做成了 **`ReactionSlot` 挂在被威胁的玩家身上**
+      （`threat` + `suggestions` + `resolved`），表态走显式的
+      `ReactionAnswer::{Counter, Abandon}`——比"改属性"更直接地解决了同一个问题：
+      同一个 `threat` 实体只开一次窗，表过态就 `resolved`，**不再靠全局记账**。
+      验收：`combat::reaction` 的用例（表态后再冻结必然是**新威胁**）。
 - [ ] **M24c 菜单改读目录**：`SKILLS`（4 项，其中"攻击"是**派发规则**不是技能）与目录
       （7 项）不是一一对应，迁移要先定 `MenuSelection` 存什么（`SkillKind` 还是 `AbilityId`）。
       现状已由 `menu_matches_the_catalogue` 兜住，不急。
@@ -367,8 +373,14 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       **未做**：HUD 高亮"付得起"的技能（建议列表已就绪，HUD 侧未接）。
 - [ ] **M27 装备系统（D5）**：全新（槽位 / `EquippedTo` / 类型校验 Observer / 穿脱），
       并定下**属性的「基础值 + 加成」结构**。
-- [ ] **M28 每个 mod 出 `plugin.rs`**：`CombatPlugin` 只编排子域顺序、不注册系统；
-      顺带把 `combat/attack` 改名 `combat/attack`（D2 的收尾）。与其它步独立，随时可做。
+- [x] **M28 每个 mod 出 `plugin.rs`**（已完成）：三个父域
+      （`combat` / `world` / `voxel_render`）的子域**都已各自出 `plugin.rs`**，
+      父域只编排顺序、不注册系统。做法是每个子域声明自己的 `*Set`，
+      父域一行 `.configure_sets((…).chain().in_set(XxxSet))` 串起来。
+      **踩过的坑**：先按"插件添加顺序"接线时 6 条测试立刻转红（`armor_reduces_physical_damage`
+      看到 100 而不是 93）——Bevy 的 `Plugin` 添加顺序**不决定**系统顺序，
+      那样写出来的"顺序"是假的。子域 `plugin.rs` 数量：`combat` 7 / `world` 3 /
+      `voxel_render` 2；`combat/attack` 的目录名本来就对，无需改名。
 - [x] **M29 删掉 `architecture.md` / `components.md` / `NEW_DESGIN.md`**（本次）：
       替代已完成并删除三篇。删之前确认过**没有独有内容丢失**：
       `components.md` 第九节（系统 × 组件反查）与 `architecture.md` 第十一节
@@ -407,8 +419,13 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       时间线 / 反应系统 / 撤销 / 各玩家声明系统都认它，不再满世界找 `Faction::Player`。
       表现层仍按 `Faction` 找单位——它看的是阵营，不是输入归属。
 - [ ] **反应窗口的粒度**：现在是"一次威胁一个窗口"，多段攻击（连续三刀）只会问玩家一次。
-      将来按威胁**来源**分别开窗（`ThreatWindow` 存集合而不是一个 `Option`）。
-- [ ] **威胁窗口存的是行动者而不是行动**：`ThreatWindow.opening_action` 存的是玩家实体，`detect_threat_system` 用它判断"表态了没有"。玩家在**前摇中**被威胁冻结时，撤销再声明一手不会改变这个值，窗口于是永远等不到表态——双方一起冻死。改成存行动实体即可修好（行动实体在撤销/重新声明时会变）。
+      将来按威胁**来源**分别开窗（`ReactionSlot` 存集合而不是一个 `threat` + `suggestions`）。
+- [x] **威胁窗口存的是行动者而不是行动 → 死锁**（已修，M26）：`ThreatWindow.opening_action`
+      存的是**玩家实体**，`detect_threat_system` 靠"玩家那一手变了没有"推断表态——
+      玩家在**前摇中**被威胁冻结时，撤销再声明一手不会改变这个值，窗口于是永远等不到
+      表态，**双方一起冻死**。M26 的 `ReactionSlot` 换成显式表态通道
+      （`ReactionAnswer::{Counter, Abandon}`），这个判据整条删掉了——
+      不再依赖任何"变了没有"的间接推断。
 - [x] **AI 不会用 Focus**（本次）：**根因是 `Focus` 曾经是全局资源**——只有一份，
       敌人不可能有自己的。改成**每单位一份的组件**（`Focus` Component +
       `FocusRecoverTimer` 也随单位走），**玩家与敌人对称**。
@@ -508,7 +525,15 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       的固定两格——**属于表现设计**，等需要时再做。
 - [ ] **资源分线**：`AmmoPouch`（重击 / 射击）/ 架势槽 `Poise`（打断抗性 / 格挡）；
       平 A 免费。
-- [ ] **格挡减伤**：与现有翻滚 / 招架并列的第三条防御路径。
+- [x] **格挡减伤**（M25 后半，已落地）：防御链第 ③ 关，与翻滚 / 招架并列。
+      `BlockChance` 是单位属性（**来源本该是装备 / 姿态**，等 M27），
+      纯逻辑 `resolve_block` / `blocked_damage` 零 Bevy 零随机。
+      顺序按 `docs/combat.md`：① 闪避 ② 招架（拦下）→ ③ 格挡（按率**减伤**）
+      → ④ 护甲再减；格挡照常触发打断（减伤不是免伤）。
+      **没有 `Blocking` 标记组件**：格挡当帧结算完，状态落在 `DefenseOutcome::Blocked` 上
+      （与跨帧的 `Dodging` / `Parrying` 不同；曾有过的空组件已删）。
+      验收：`blocking_reduces_damage_instead_of_negating_it` /
+      `partial_blocking_stacks_with_armor_in_the_documented_order`（挡 50% 得 3 而不是 4）。
 - [ ] **范围攻击排程 / 冲刺（位移 2 格）**。
 - [ ] **`ActionTemplate` 资产图**：动作的静态定义（相位 / 消耗 / 效果 / 可取消规则）
       资产化，按边条件在图上转移。当前已落地的最小形态是
