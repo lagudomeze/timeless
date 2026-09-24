@@ -425,9 +425,27 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ### 工程债（按优先级）
 
-- [ ] **动作数值外置**：各领域的 `*_TIMING` 与 `SKILLS` 的数值改成 `.ron`
-      （serde + ron），应用层不再硬编码技能数值；顺带做 `ActionRegistry` 资源，
-      让 HUD / 菜单从注册表读选项与消耗。
+- [x] **动作数值外置**（本次，第一版）：`config/actions.ron` 一份文件描述所有动作数值，
+      由 `src/config/` 装载成 `ActionConfig` 资源。
+      **分层决定（按你的指示）**：配置**独立一个目录、不放进 `assets/`**——
+      `assets/` 是素材（换皮），`config/` 是数值（换手感）；发行时可以不带上它，
+      热重载素材时也不会把数值一起卷进来。装载走**普通文件读写**（`PreStartup`），
+      不是资产管线：数值要在**各域注册技能定义之前**就绪，走资产管线会引入
+      "异步加载好了没"的时序问题，而这是本地小文件、同步读没有代价。
+      **失败策略**：文件不存在 → 内置默认值（= 原有常量，所以没有它也能跑）；
+      解析失败 → **大声报错**（带行号）并退回默认值，**不 panic**
+      （打错的数字不该让游戏起不来，但也不该被静默忽略）。
+      **一处真相**：各域常量**保留**为"默认值"，配置是**覆盖**；目录、声明系统、
+      帮助面板全从 `ActionConfig` 读，改一处全都跟着变。
+      **改到的链路**：8 条技能定义（移动 / 跳跃 / 翻滚 / 横扫 / 箭矢 / 火球 / 招架 / 等待）
+      + 7 个声明系统（`declare_move` / `move_to` / `jump` / `roll` / `melee` / `fireball` / `parry`）
+      + Focus 上限与回复间隔 + 三种移速。
+      验收：`a_changed_config_reaches_the_catalogue_and_the_declaration`——
+      三段分别钉**目录**、**行动实体**、**玩家按键声明**都拿到了配置里的值；
+      **验过不是空跑**（让 `melee_timing` 忽略配置后，第三段立刻转红，
+      报"实际 [0.35]"）。
+      **仍未做**：热重载（改文件要重启）、`ActionRegistry` 让 HUD 从注册表读
+      （现在仍是 `SKILLS` 数组）、伤害数值（`PhysicalDamage` 仍写在各载荷里）。
 - [x] **死代码清理**：删除 `defense/actions.rs` 里重复且未注册的
       `expire_defense_markers_system`、`lifecycle::manage_projectile_hits_system`、
       写而无消费的 `AttackResolved`。剩下的 `declare_skill_system` / `arrow_scene`

@@ -34,7 +34,7 @@ pub use actions::{
     declare_skill_system, melee_action_executor_system, melee_action_scene, refund_melee_observer,
     shoot_action_executor_system, shoot_action_scene,
 };
-pub use arrow::{ARROW_FRAME, ARROW_SPEED, arrow_scene};
+pub use arrow::{ARROW_DAMAGE, ARROW_FRAME, ARROW_POWER, ARROW_SPEED, arrow_scene};
 pub use events::{FireCommand, MeleeCommand};
 pub use explosion::{explosion_system, radial_damage_units};
 pub use fireball::{

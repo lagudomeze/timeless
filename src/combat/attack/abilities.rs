@@ -12,6 +12,7 @@ use crate::skills::{
 };
 
 use crate::combat::defense::PARRY_COST;
+use crate::config::ActionConfig;
 
 use super::actions::{ARROW_TIMING, MELEE_TIMING};
 use super::fireball::{FIREBALL_COST, FIREBALL_TIMING};
@@ -80,9 +81,52 @@ pub const ABILITIES: [AbilityDef; 4] = [
     PARRY_ABILITY,
 ];
 
+/// 按配置生成四条定义（**数值来自 `.ron`**，缺省时等于上面的常量）。
+pub fn abilities_from(config: &ActionConfig) -> [AbilityDef; 4] {
+    [
+        AbilityDef {
+            timing: config.melee.timing(),
+            cost: config.melee.cost,
+            power: config.melee.power,
+            ..MELEE_ABILITY
+        },
+        AbilityDef {
+            timing: config.shoot.timing(),
+            cost: config.shoot.cost,
+            power: config.shoot.power,
+            ..SHOOT_ABILITY
+        },
+        AbilityDef {
+            timing: config.fireball.timing(),
+            cost: config.fireball.cost,
+            power: config.fireball.power,
+            // 花不花钱决定要不要这条条件（与 `SkillDef::as_ability` 同一判据）
+            requirements: if config.fireball.cost == 0 {
+                &[]
+            } else {
+                &[Requirement::EnoughEnergy]
+            },
+            ..FIREBALL_ABILITY
+        },
+        AbilityDef {
+            timing: config.parry.timing(),
+            cost: config.parry.cost,
+            counter: Some(CounterCost::Resource(config.parry.cost)),
+            ..PARRY_ABILITY
+        },
+    ]
+}
+
 /// 启动时把自己的定义交上去（写：[`crate::combat`]；消费：[`crate::skills`]）。
-pub fn register_abilities_system(mut registrations: MessageWriter<RegisterAbility>) {
-    for def in ABILITIES {
+///
+/// **从配置构造**：`config/actions.ron` 里的数值经此进入技能目录。
+pub fn register_abilities_system(
+    // 轻量测试 App 可能没装 `ConfigPlugin`：那时用内置默认值（= 各域常量）
+    config: Option<Res<ActionConfig>>,
+    mut registrations: MessageWriter<RegisterAbility>,
+) {
+    let config = config.map(|config| *config).unwrap_or_default();
+    for def in abilities_from(&config) {
         registrations.write(RegisterAbility(def));
     }
 }

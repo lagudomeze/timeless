@@ -109,12 +109,14 @@ type RollerPlayer<'w, 's> = Query<
     With<InputDriven>,
 >;
 
+#[allow(clippy::too_many_arguments)]
 pub fn declare_roll_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<RollCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
+    config: Option<Res<crate::config::ActionConfig>>,
     mut rollers: RollerPlayer<'_, '_>,
     units: Query<(&Transform, &Faction)>,
 ) {
@@ -126,7 +128,17 @@ pub fn declare_roll_system(
     else {
         return;
     };
-    if let Err(reason) = can_cast(&ROLL_ABILITY, stamina.current) {
+    // 翻滚的节奏 / 花费都从配置来（缺省 = 常量）
+    let (timing, cost) = match config.as_deref() {
+        Some(config) => (config.roll.timing(), config.roll.cost),
+        None => (ROLL_TIMING, ROLL_COST),
+    };
+    let def = crate::skills::AbilityDef {
+        timing,
+        cost,
+        ..ROLL_ABILITY
+    };
+    if let Err(reason) = can_cast(&def, stamina.current) {
         blocked.write(crate::timeline::ActionBlocked { reason });
         return;
     }
@@ -139,13 +151,13 @@ pub fn declare_roll_system(
             .iter()
             .map(|(other, faction)| (other.translation, *faction)),
     );
-    let schedule = ScheduledAction::with_focus(ROLL_TIMING, now, &mut focus, pending_focus.wants());
+    let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
     declare_roll(
         &mut commands,
         entity,
         *cell,
         Cell::new(cell.x + dx, cell.z + dz),
-        ROLL_TIMING,
+        timing,
         schedule,
     );
 }
@@ -207,6 +219,7 @@ pub fn declare_parry_system(
     pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<ParryCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
+    config: Option<Res<crate::config::ActionConfig>>,
     mut players: Query<(Entity, &Stamina, &mut Focus, &DecisionSlot), With<InputDriven>>,
     attacks: Query<(Entity, &crate::combat::targeting::CollisionTarget)>,
 ) {
@@ -216,7 +229,16 @@ pub fn declare_parry_system(
     let Some((player, stamina, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
         return;
     };
-    if let Err(reason) = can_cast(&PARRY_ABILITY, stamina.current) {
+    let (timing, cost) = match config.as_deref() {
+        Some(config) => (config.parry.timing(), config.parry.cost),
+        None => (PARRY_TIMING, PARRY_COST),
+    };
+    let def = crate::skills::AbilityDef {
+        timing,
+        cost,
+        ..PARRY_ABILITY
+    };
+    if let Err(reason) = can_cast(&def, stamina.current) {
         info!("招架失败：{reason:?}");
         blocked.write(crate::timeline::ActionBlocked { reason });
         return;
@@ -231,12 +253,11 @@ pub fn declare_parry_system(
     };
 
     let now = time.elapsed_secs();
-    let schedule =
-        ScheduledAction::with_focus(PARRY_TIMING, now, &mut focus, pending_focus.wants());
+    let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
     // `now` 用于上面的排期与下面的槽（声明即排期：`until = now + total`）
     commands.spawn_scene(crate::combat::defense::parry_action_scene(
         target_attack,
-        PARRY_TIMING,
+        timing,
         schedule,
         player,
     ));

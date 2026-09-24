@@ -44,6 +44,7 @@ use bevy::prelude::*;
 pub mod ai;
 pub mod clock;
 pub mod combat;
+pub mod config;
 pub mod input;
 pub mod interaction;
 pub mod movement;
@@ -57,6 +58,7 @@ pub mod world;
 pub use ai::{AiPlugin, AiSet};
 pub use clock::{ClockPlugin, ClockSet};
 pub use combat::{CombatPlugin, CombatSet};
+pub use config::ConfigPlugin;
 pub use input::{InputPlugin, InputSet};
 pub use interaction::{InteractionPlugin, InteractionSet};
 pub use movement::{MovementPlugin, MovementSet};
@@ -104,6 +106,8 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         configure_pipeline(app);
         app.add_plugins((
+            // 配置最先：各域在 Startup 里交技能定义时要读它（`PreStartup` 装载）
+            ConfigPlugin,
             // 时钟是通用设施，各领域都依赖它，先装
             ClockPlugin,
             WorldPlugin,
@@ -148,6 +152,7 @@ pub(crate) mod test_support {
             .insert_resource(ButtonInput::<bevy::input::mouse::MouseButton>::default())
             .insert_resource(bevy::input::mouse::AccumulatedMouseMotion::default())
             .add_plugins((
+                ConfigPlugin,
                 ClockPlugin,
                 WorldPlugin,
                 PresentationPlugin,
@@ -1438,6 +1443,96 @@ mod tests {
         assert!(
             app.world().get_entity(action).is_err(),
             "行动归行动者所有：人没了，那一手也不该留在时间线上"
+        );
+    }
+
+    /// **配置文件真的会改变玩法**：改 `.ron` → 技能目录 → 声明出来的行动。
+    ///
+    /// 这条是"外置数值"这件事的验收：如果链路只连到目录、没连到声明系统，
+    /// 那就会出现"菜单显示 99 威力、打出来还是 15"这种最糟的分叉。
+    /// 这里用一个**改过的 `ActionConfig` 资源**模拟"配置文件里写了别的数"
+    /// （不依赖磁盘文件，因此不受仓库里那份 `config/actions.ron` 影响）。
+    #[test]
+    fn a_changed_config_reaches_the_catalogue_and_the_declaration() {
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        // 覆盖配置：近战威力 99、后摇 2.5 秒（都远离默认值）
+        let tweaked = crate::config::ActionConfig {
+            melee: crate::config::ActionNumbers {
+                windup: 0.2,
+                recovery: 2.5,
+                interrupt_resist: 3,
+                cost: 0,
+                power: 99,
+                frame: 5,
+            },
+            ..Default::default()
+        };
+        // 顺序要紧：第一次 `update()` 会跑 `PreStartup`（装载磁盘配置，会覆盖注入），
+        // 所以先让它跑完、再注入配置、最后手动跑一次 `Startup` 重新注册
+        app.update();
+        app.world_mut().insert_resource(tweaked);
+        app.world_mut().run_schedule(Startup);
+        // 注册是走消息的，合并那一步在 `Update` 里
+        for _ in 0..3 {
+            app.update();
+        }
+
+        // ① 目录里读到了新数值
+        let registry = app.world().resource::<crate::skills::SkillRegistry>();
+        let melee = registry.expect(crate::skills::AbilityId::Melee);
+        assert_eq!(melee.power, 99, "配置里的威力应当进入技能目录");
+        assert_eq!(melee.timing.recovery, 2.5, "配置里的后摇应当进入技能目录");
+
+        // ② 行动实体上真的带着那个节奏。
+        // 这里直接走工厂（不经过 AI 的战术选择：那条路径有距离条件与随机，
+        // 不适合当判据）。**"声明系统读配置"由下面的 ③ 单独钉**。
+        let actor = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        let timing = tweaked.melee.timing();
+        let mut commands = app.world_mut().commands();
+        crate::combat::attack::declare_melee_at(
+            &mut commands,
+            actor,
+            Cell::new(0, 0),
+            Cell::new(1, 0),
+            timing,
+            crate::timeline::ScheduledAction::declared_at(timing, 0.0),
+        );
+        app.update();
+
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&crate::timeline::ActionTiming, With<crate::combat::MeleeAction>>();
+        let timings: Vec<f32> = query.iter(app.world()).map(|t| t.recovery).collect();
+        assert!(
+            timings.contains(&2.5),
+            "行动实体应当带上配置里的后摇 2.5，实际 {timings:?}"
+        );
+
+        // ③ **声明系统**也读配置：玩家按技能键走的是这儿。
+        // 直接在 `Update` 里跑一次声明系统，喂它一条 `MeleeCommand`。
+        let mut app2 = crate::test_support::headless_app();
+        app2.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        app2.update(); // PreStartup：装磁盘配置
+        app2.world_mut().insert_resource(tweaked);
+        let player2 = spawn_player(&mut app2, Cell::new(0, 0), Vec3::ZERO);
+        let _ = player2;
+        app2.world_mut()
+            .write_message(crate::combat::attack::MeleeCommand);
+        for _ in 0..4 {
+            app2.update();
+        }
+        let mut query2 = app2
+            .world_mut()
+            .query_filtered::<&crate::timeline::ActionTiming, With<crate::combat::MeleeAction>>();
+        let declared: Vec<f32> = query2.iter(app2.world()).map(|t| t.recovery).collect();
+        assert!(
+            declared.contains(&2.5),
+            "玩家按近战键声明出来的行动应当带配置里的后摇 2.5，实际 {declared:?}"
         );
     }
 

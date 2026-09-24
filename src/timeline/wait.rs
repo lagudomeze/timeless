@@ -170,10 +170,22 @@ pub struct WaitCommand;
 ///
 /// 定义由 [`WaitConfig`] 派生——配置改了，交上去的节奏跟着改。
 pub fn register_wait_ability_system(
-    config: Res<WaitConfig>,
+    wait: Option<Res<WaitConfig>>,
+    config: Option<Res<crate::config::ActionConfig>>,
     mut registrations: MessageWriter<crate::skills::RegisterAbility>,
 ) {
-    registrations.write(crate::skills::RegisterAbility(config.ability()));
+    let wait = wait.map(|wait| *wait).unwrap_or_default();
+    let config = config.map(|config| *config).unwrap_or_default();
+    // 配置里写了 `wait` 就用配置的，否则退回 `WaitConfig`
+    let def = if config.wait.recovery > 0.0 {
+        crate::skills::AbilityDef {
+            timing: config.wait.timing(),
+            ..wait.ability()
+        }
+    } else {
+        wait.ability()
+    };
+    registrations.write(crate::skills::RegisterAbility(def));
 }
 
 #[cfg(test)]

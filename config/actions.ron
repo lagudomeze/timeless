@@ -1,0 +1,78 @@
+// 动作数值：改这里就能调平衡，不必重编译。
+// 只写想改的字段也行，没写的会自动用内置默认值。
+// 数值含义与当前默认值见 src/config/mod.rs。
+(
+    move_: (
+        windup: 0.15,
+        recovery: 0.1,
+        interrupt_resist: 1,
+        cost: 0,
+        power: 0,
+        frame: 0,
+    ),
+    jump: (
+        windup: 0.1,
+        recovery: 0.6,
+        interrupt_resist: 6,
+        cost: 0,
+        power: 0,
+        frame: 0,
+    ),
+    roll: (
+        windup: 0.05,
+        recovery: 0.3,
+        interrupt_resist: 1,
+        cost: 1,
+        power: 0,
+        frame: 0,
+    ),
+    melee: (
+        windup: 0.2,
+        recovery: 0.35,
+        interrupt_resist: 3,
+        cost: 0,
+        power: 15,
+        frame: 5,
+    ),
+    shoot: (
+        windup: 0.3,
+        recovery: 0.5,
+        interrupt_resist: 2,
+        cost: 0,
+        power: 10,
+        frame: 4,
+    ),
+    fireball: (
+        windup: 0.3,
+        recovery: 0.5,
+        interrupt_resist: 2,
+        cost: 2,
+        power: 12,
+        frame: 7,
+    ),
+    parry: (
+        windup: 0.05,
+        recovery: 0.25,
+        interrupt_resist: 2,
+        cost: 1,
+        power: 0,
+        frame: 0,
+    ),
+    wait: (
+        windup: 0.0,
+        recovery: 1.0,
+        interrupt_resist: 99,
+        cost: 0,
+        power: 0,
+        frame: 0,
+    ),
+    focus: (
+        max: 3,
+        recover_interval: 10.0,
+    ),
+    speeds: (
+        player: 5.0,
+        enemy: 2.0,
+        roll: 8.0,
+    ),
+)

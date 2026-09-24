@@ -26,6 +26,20 @@ use crate::timeline::{
 };
 
 use super::actions::MELEE_TIMING;
+
+/// 从配置取火球节奏（缺省 = 常量）。
+fn fireball_timing(config: Option<&crate::config::ActionConfig>) -> ActionTiming {
+    config
+        .map(|config| config.fireball.timing())
+        .unwrap_or(FIREBALL_TIMING)
+}
+
+/// 从配置取近战节奏（缺省 = 常量）。
+fn melee_timing(config: Option<&crate::config::ActionConfig>) -> ActionTiming {
+    config
+        .map(|config| config.melee.timing())
+        .unwrap_or(MELEE_TIMING)
+}
 use super::events::{FireCommand, MeleeCommand};
 
 /// 火球投射物的飞行参数与爆炸参数（目标格住在 [`TargetCell`] 上）。
@@ -186,6 +200,7 @@ pub fn declare_fireball_system(
     pending_focus: Res<PendingFocus>,
     mut fires: MessageReader<FireCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
+    config: Option<Res<crate::config::ActionConfig>>,
     mut players: FireballPlayer<'_, '_>,
     units: Query<(&Transform, &Faction)>,
 ) {
@@ -221,17 +236,10 @@ pub fn declare_fireball_system(
     });
 
     stamina.try_spend(FIREBALL_COST);
+    let timing = fireball_timing(config.as_deref());
     let now = time.elapsed_secs();
-    let schedule =
-        ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, pending_focus.wants());
-    declare_fireball_at(
-        &mut commands,
-        player,
-        *cell,
-        target_cell,
-        FIREBALL_TIMING,
-        schedule,
-    );
+    let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
+    declare_fireball_at(&mut commands, player, *cell, target_cell, timing, schedule);
 }
 
 /// 声明近战：`MeleeCommand` → 技能域的横扫行动（不消耗精力）。
@@ -254,12 +262,14 @@ type AttackerPlayer<'w, 's> = Query<
     With<InputDriven>,
 >;
 
+#[allow(clippy::too_many_arguments)]
 pub fn declare_melee_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     pending_focus: Res<PendingFocus>,
     mut melees: MessageReader<MeleeCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
+    config: Option<Res<crate::config::ActionConfig>>,
     mut players: AttackerPlayer<'_, '_>,
     units: Query<(&Transform, &Faction)>,
 ) {
@@ -281,17 +291,10 @@ pub fn declare_melee_system(
         })
         .map(|(target, _)| Cell::from_world(target.translation))
         .unwrap_or(*cell);
+    let timing = melee_timing(config.as_deref());
     let now = time.elapsed_secs();
-    let schedule =
-        ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, pending_focus.wants());
-    super::actions::declare_melee_at(
-        &mut commands,
-        player,
-        *cell,
-        target_cell,
-        MELEE_TIMING,
-        schedule,
-    );
+    let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
+    super::actions::declare_melee_at(&mut commands, player, *cell, target_cell, timing, schedule);
 }
 
 /// 声明一次火球（只生成**行动实体**），**不检查精力**。

@@ -199,6 +199,8 @@ dependencies = [
  "bevy",
  "bevy_brp_extras",
  "rand",
+ "ron",
+ "serde",
  "skrifa 0.44.0",
 ]
 
