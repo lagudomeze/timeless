@@ -7,6 +7,7 @@ use super::PresentationSet;
 use super::camera::{
     PanCamera, ZoomCamera, camera_follow_system, camera_pan_system, camera_zoom_system,
 };
+use super::effects::{animate_hit_effects_system, spawn_hit_effects_system};
 use super::hud;
 use super::hud::hint::{HintTimer, PreviewReadout, update_action_hint_system};
 use super::hud::timeline::{
@@ -100,6 +101,8 @@ impl Plugin for PresentationPlugin {
                     billboard_system,
                     shadow_system,
                     battle_log_system,
+                    // 命中特效：读 `DamageEvent`，在被打中的单位身上冒一簇短命粒子
+                    (spawn_hit_effects_system, animate_hit_effects_system).chain(),
                     update_unit_panels_system,
                     update_action_labels_system,
                     update_skill_bar_system,
