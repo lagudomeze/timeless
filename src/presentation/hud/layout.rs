@@ -79,6 +79,9 @@ pub fn setup_hud(mut commands: Commands, assets: Res<AssetServer>, sprites: Res<
     // 时间轴要建一个色块池（循环 spawn），所以不走上面的工厂数组
     let timeline = timeline::spawn_timeline(&mut commands, &font);
     commands.entity(root).add_child(timeline);
+
+    // 悬停时间轴时圈出战场上那个单位（世界空间的一次性指示，默认隐藏）
+    timeline::spawn_timeline_focus_ring(&mut commands);
 }
 
 /// 窗口高度 → `UiScale`：高分屏上整套 HUD 等比放大，窗口再大也不会散架。

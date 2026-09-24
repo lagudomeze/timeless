@@ -81,16 +81,25 @@ pub fn interrupt_label(tags: CombatTags) -> &'static str {
 pub struct HoveredAction {
     /// 这一手是哪个行动实体
     pub action: Entity,
-    /// 这一手的归属方（用来在战场上高亮那个单位）
-    pub faction: Faction,
+    /// 这一手是谁的（战场高亮要圈住的就是他）
+    pub actor: Entity,
 }
 
 /// 本帧鼠标停在哪个色块上（`None` = 没停在时间轴上）。
 ///
 /// **这是本帧的事实快照，不是游戏状态**：它只在表现层内部传递，
 /// 不写回任何领域数据（`docs/insight.md` 第三节）。
+///
+/// ⚠️ **悬停时间轴时鼠标不在战场上**，所以战场高亮有**两个来源**
+/// （鼠标位置 `HoveredCell` / 时间轴 [`TimelineHover`]）。合并的口径按
+/// `docs/insight.md` 第三节：**时间轴压过战场**——玩家的注意力在那里。
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
 pub struct TimelineHover(pub Option<HoveredAction>);
+
+/// 战场上「这一手是谁的」指示圈（开局生成一个，之后只搬位置 / 开关显隐）。
+#[derive(Component, Reflect, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
+pub struct TimelineFocusRing;
 
 /// 读数条的根节点（默认隐藏）。
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]

@@ -17,7 +17,8 @@ use super::super::actions::PayloadQueries;
 use super::super::{HudCache, faction_color_alpha};
 use super::model::{ActionRow, TimelineSlot, build_model, faction_letter};
 use super::readout::{
-    ActionReadout, HoveredAction, TimelineHover, TimelineReadout, TimelineReadoutText, readout_line,
+    ActionReadout, HoveredAction, TimelineFocusRing, TimelineHover, TimelineReadout,
+    TimelineReadoutText, readout_line,
 };
 use super::scene::{
     TimelineBlock, TimelineBlockLabel, TimelineBlockMark, TimelineLane, TimelineLaneLabel,
@@ -305,9 +306,13 @@ pub fn update_timeline_readout_system(
                 .copied()
         });
 
-    hover.0 = hovered.map(|slot| HoveredAction {
-        action: slot.action,
-        faction: slot.faction,
+    // 悬停事实：读数与战场指示圈都读它（"这一手是谁的"由行动实体回答）
+    hover.0 = hovered.and_then(|slot| {
+        let (_, action_of, _, _, _) = actions.get(slot.action).ok()?;
+        Some(HoveredAction {
+            action: slot.action,
+            actor: action_of.actor(),
+        })
     });
 
     let next = hovered.and_then(|slot| {
@@ -351,6 +356,41 @@ pub fn update_timeline_readout_system(
         }
     }
 }
+
+/// 悬停时圈出战场上对应的单位：把时间轴与战场连起来。
+///
+/// **这是"悬停时间轴"与"鼠标在战场上"两条高亮来源的合并点**（`docs/insight.md`
+/// 第三节）：鼠标在战场上时由 `interaction` 的 `HoveredCell` 负责；悬停时间轴时
+/// 鼠标不在战场上，由 [`TimelineHover`] 给出"这一手是谁的"。
+/// 口径是**时间轴压过战场**（玩家的注意力在那里）——所以这里只看 `TimelineHover`，
+/// 没有悬停就隐藏（不与 `HoveredCell` 叠加判断：那两套高亮在画面上是不同的东西，
+/// 一个圈格、一个圈人）。
+pub fn update_timeline_focus_ring_system(
+    hover: Res<TimelineHover>,
+    ground: Res<crate::world::TerrainConfig>,
+    mut rings: Query<(&mut Transform, &mut Visibility), With<TimelineFocusRing>>,
+    actors: Query<&Transform, Without<TimelineFocusRing>>,
+) {
+    let actor = hover
+        .0
+        .and_then(|hovered| actors.get(hovered.actor).ok())
+        .map(|transform| transform.translation);
+
+    for (mut transform, mut visibility) in &mut rings {
+        match actor {
+            // 圈在**脚底的地表高度**上：单位在空中时圈留在地上（高度由阴影表达）
+            Some(position) => {
+                let ground_y = crate::world::ground_position(&ground, position.x, position.z).y;
+                transform.translation = Vec3::new(position.x, ground_y + RING_LIFT, position.z);
+                *visibility = Visibility::Visible;
+            }
+            None => *visibility = Visibility::Hidden,
+        }
+    }
+}
+
+/// 指示圈离地表的微小抬升（世界单位）：避免与体素顶面 z-fighting。
+pub const RING_LIFT: f32 = 0.04;
 
 /// 每帧的时间轴布局（色块 → 行动实体）：悬停读数由它反查。
 ///
@@ -679,12 +719,15 @@ mod tests {
             shown.contains("interruptible"),
             "读数要写清能不能打断：{shown}"
         );
-        assert!(
-            app.world()
-                .resource::<TimelineHover>()
-                .0
-                .is_some_and(|hovered| hovered.action == action),
-            "悬停事实要落进 `TimelineHover`（战场高亮等其他消费者读它）"
+        let hovered = app
+            .world()
+            .resource::<TimelineHover>()
+            .0
+            .expect("悬停事实要落进 `TimelineHover`（战场指示圈等其他消费者读它）");
+        assert_eq!(hovered.action, action, "悬停事实要带着那一条行动");
+        assert_eq!(
+            hovered.actor, enemy,
+            "悬停事实还要带着**归属者**——指示圈靠它知道该圈谁"
         );
 
         // 鼠标移开：读数收起，悬停事实也清掉
@@ -757,6 +800,68 @@ mod tests {
         assert!(
             after < before,
             "虚拟时间前进了，读数里的剩余应当变小：{before} → {after}"
+        );
+    }
+
+    /// **指示圈跟着悬停的那一手走**：圈在**那个单位的脚下**（不是世界原点，
+    /// 也不是别的单位），没悬停就藏起来。
+    ///
+    /// 这条守着"把时间轴与战场连起来"这件事真的成立——只算出一圈位置是不够的，
+    /// 它必须落在**被悬停的那一手的主人**身上。
+    #[test]
+    fn the_focus_ring_circles_the_actor_of_the_hovered_action() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(crate::world::TerrainConfig::default())
+            .init_resource::<TimelineHover>()
+            .add_systems(Update, update_timeline_focus_ring_system);
+
+        let actor = app
+            .world_mut()
+            .spawn(Transform::from_xyz(5.0, 0.0, 3.0))
+            .id();
+        let ring = app
+            .world_mut()
+            .spawn((TimelineFocusRing, Transform::default(), Visibility::Hidden))
+            .id();
+
+        // 没悬停：藏着
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(ring).unwrap(),
+            &Visibility::Hidden,
+            "没悬停时指示圈不该出现"
+        );
+
+        // 悬停到那个单位的一手：圈搬到他脚下
+        app.world_mut().resource_mut::<TimelineHover>().0 = Some(HoveredAction {
+            action: Entity::PLACEHOLDER,
+            actor,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Visibility>(ring).unwrap(),
+            &Visibility::Visible,
+            "悬停时指示圈要出现"
+        );
+        let position = app.world().get::<Transform>(ring).unwrap().translation;
+        assert_eq!(
+            (position.x, position.z),
+            (5.0, 3.0),
+            "圈要落在那条行动的**主人**脚下（不是原点、也不是别人）"
+        );
+
+        // 单位阵亡（实体没了）：圈自己藏起来，不留在场上
+        app.world_mut().resource_mut::<TimelineHover>().0 = Some(HoveredAction {
+            action: Entity::PLACEHOLDER,
+            actor: Entity::PLACEHOLDER,
+        });
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(ring).unwrap(),
+            &Visibility::Hidden,
+            "悬停的那一手没了归属者时，圈不该留在场上"
         );
     }
 }

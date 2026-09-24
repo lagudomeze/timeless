@@ -9,7 +9,10 @@ use super::camera::{
 };
 use super::hud;
 use super::hud::hint::{HintTimer, PreviewReadout, update_action_hint_system};
-use super::hud::timeline::{TimelineHover, TimelineLayout, TimelineReadoutState};
+use super::hud::timeline::{
+    TimelineFocusRing, TimelineHover, TimelineLayout, TimelineReadoutState,
+    update_timeline_focus_ring_system,
+};
 use super::hud::{
     HudCache, ToggleHelp, fit_ui_scale_system, setup_hud, toggle_help_system, toggle_log_system,
     update_action_labels_system, update_log_panel_system, update_skill_bar_system,
@@ -56,6 +59,7 @@ impl Plugin for PresentationPlugin {
             .register_type::<hud::timeline::TimelineReadyLabel>()
             .register_type::<hud::timeline::TimelineReadout>()
             .register_type::<hud::timeline::TimelineReadoutText>()
+            .register_type::<TimelineFocusRing>()
             .register_type::<hud::log_panel::LogPanel>()
             .register_type::<hud::log_panel::LogCollapsed>()
             .register_type::<hud::log_panel::LogHeaderButton>()
@@ -102,6 +106,8 @@ impl Plugin for PresentationPlugin {
                     update_timeline_system,
                     // 悬停读数跑在时间轴之后：它读的就是刚算出来的那份布局
                     update_timeline_readout_system,
+                    // 指示圈读 `TimelineHover`（上面那个系统刚写的），所以排在它之后
+                    update_timeline_focus_ring_system,
                     toggle_log_system,
                     update_log_panel_system,
                     update_action_hint_system,
