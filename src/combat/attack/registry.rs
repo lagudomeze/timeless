@@ -44,7 +44,6 @@ impl SkillKind {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkillDef {
     pub kind: SkillKind,
-    pub label: &'static str,
     /// 精力消耗
     pub cost: u32,
     /// 动作节奏（前摇 / 后摇），HUD 展示用
@@ -57,6 +56,15 @@ pub struct SkillDef {
 }
 
 impl SkillDef {
+    /// 展示用的英文短名。
+    ///
+    /// **不另存一份**：`SkillKind` 已经回答了同一个问题，两处各写一遍只会分叉
+    /// （曾经就是：`SkillDef.label` 字段与 `SkillKind::label()` 逐字相同，
+    /// 而后者没有任何调用者）。
+    pub fn label(&self) -> &'static str {
+        self.kind.label()
+    }
+
     /// 这个菜单项对应目录里的哪一条定义。
     ///
     /// 「攻击」**没有**对应项：它是"贴脸近战、否则火球"的**派发规则**，
@@ -112,7 +120,6 @@ impl SkillDef {
 pub const SKILLS: [SkillDef; 4] = [
     SkillDef {
         kind: SkillKind::Attack,
-        label: "attack",
         cost: FIREBALL_COST,
         timing: FIREBALL_TIMING,
         power: FIREBALL_DAMAGE,
@@ -120,7 +127,6 @@ pub const SKILLS: [SkillDef; 4] = [
     },
     SkillDef {
         kind: SkillKind::Melee,
-        label: "melee",
         cost: 0,
         timing: MELEE_TIMING,
         power: MELEE_DAMAGE,
@@ -128,7 +134,6 @@ pub const SKILLS: [SkillDef; 4] = [
     },
     SkillDef {
         kind: SkillKind::Fireball,
-        label: "fireball",
         cost: FIREBALL_COST,
         timing: FIREBALL_TIMING,
         power: FIREBALL_DAMAGE,
@@ -136,7 +141,6 @@ pub const SKILLS: [SkillDef; 4] = [
     },
     SkillDef {
         kind: SkillKind::Roll,
-        label: "roll",
         cost: ROLL_COST,
         timing: ROLL_TIMING,
         power: 0,
@@ -245,10 +249,37 @@ mod tests {
                 .find(|(candidate, _)| *candidate == id)
                 .map(|(_, entry)| entry)
                 .unwrap_or_else(|| panic!("目录里没有 {:?}", id));
-            assert_eq!(def.cost, entry.cost, "{} 的花费与目录分叉了", def.label);
-            assert_eq!(def.timing, entry.timing, "{} 的节奏与目录分叉了", def.label);
-            assert_eq!(def.power, entry.power, "{} 的威力与目录分叉了", def.label);
+            assert_eq!(def.cost, entry.cost, "{} 的花费与目录分叉了", def.label());
+            assert_eq!(
+                def.timing,
+                entry.timing,
+                "{} 的节奏与目录分叉了",
+                def.label()
+            );
+            assert_eq!(def.power, entry.power, "{} 的威力与目录分叉了", def.label());
         }
+    }
+
+    /// **展示名只有一处**：`SkillDef.label()` 就是 `SkillKind::label()`。
+    ///
+    /// 曾经 `SkillDef` 另存了一个 `label` 字段，与 `SkillKind::label()` 逐字相同——
+    /// 而那个方法**没有任何调用者**。两处各写一份展示名，改一处就会分叉
+    /// （菜单显示 "melee"、日志写 "近战" 这种）。
+    #[test]
+    fn the_display_name_has_a_single_source() {
+        for def in SKILLS {
+            assert_eq!(
+                def.label(),
+                def.kind.label(),
+                "{} 的展示名不该与 `SkillKind` 分叉",
+                def.label()
+            );
+        }
+        // 四个名字互不相同（否则菜单上会出现两个一样的项）
+        let mut names: Vec<&str> = SKILLS.iter().map(|def| def.label()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), SKILLS.len(), "展示名必须两两不同");
     }
 
     /// **速度帧不许分叉**：技能表里的 `frame` 与载荷上挂的 `AttackFrame` 必须一致。

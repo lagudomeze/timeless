@@ -120,7 +120,7 @@ pub fn tooltip_text(index: usize) -> String {
     };
     format!(
         "{}   cost {} EN\nwindup {:.2}s   recovery {:.2}s\npower {:.0}",
-        def.label.to_uppercase(),
+        def.label().to_uppercase(),
         def.cost,
         def.timing.windup,
         def.timing.recovery,
@@ -278,7 +278,7 @@ mod tests {
                 *ok,
                 SKILLS[index].cost == 0,
                 "{} 的可用性应当只取决于它的消耗",
-                SKILLS[index].label
+                SKILLS[index].label()
             );
         }
 
@@ -298,7 +298,7 @@ mod tests {
     fn the_tooltip_carries_cost_timing_and_power() {
         let def = &SKILLS[0];
         let text = tooltip_text(0);
-        assert!(text.contains(&def.label.to_uppercase()), "{text}");
+        assert!(text.contains(&def.label().to_uppercase()), "{text}");
         assert!(text.contains(&format!("cost {} EN", def.cost)), "{text}");
         assert!(
             text.contains(&format!("windup {:.2}s", def.timing.windup)),
