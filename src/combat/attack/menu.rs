@@ -199,6 +199,11 @@ pub fn use_selected_skill_system(
                 target_cell: request.target_cell,
             });
         }
+        SkillKind::Shoot => {
+            // 箭矢走同一条 `FireCommand` 之外的路径：它有自己的声明系统
+            // （`declare_skill_system`），但那个还没接进插件——所以这里先不派发，
+            // 只保证"菜单里能看到、能选中"。接输入见 TODO.md 的「箭矢接回输入」。
+        }
         SkillKind::Roll => {
             // 与菜单过滤、声明系统同一条判据（`can_cast`）
             if def.affordable(stamina.current) {

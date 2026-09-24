@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use app::combat::attack::SKILLS;
+use app::combat::attack::SkillKind;
 use app::presentation::hud::HUD_FONT;
 use app::presentation::hud::skills::icon_path;
 use app::presentation::unit_sprite::{ENEMY_SPRITE, PLAYER_SPRITE, SHADOW_SPRITE};
@@ -72,7 +72,11 @@ fn png_header(bytes: &[u8]) -> (u32, u32, u8) {
 fn unit_sprites_exist_square_and_keep_transparency() {
     const COLOR_TYPE_RGBA: u8 = 6;
     // 技能图标也一起验收：注册表里每加一个技能，它的图标就会被要求存在且合法
-    let icons: Vec<&str> = SKILLS.iter().map(|def| icon_path(def.kind)).collect();
+    // **每一个 `SkillKind` 都要有图标**，不只是菜单里那四个：
+    // `CLAUDE.md` 的约定是"加技能 = 加 AbilityDef + 一张图标 PNG"，
+    // 而箭矢这种"定义已就位、还没接输入"的技能也得有——
+    // 只查菜单的话，它的图标要等到进菜单那天才会被发现是缺的。
+    let icons: Vec<&str> = SkillKind::ALL.iter().map(|kind| icon_path(*kind)).collect();
     let paths = [PLAYER_SPRITE, ENEMY_SPRITE, SHADOW_SPRITE]
         .into_iter()
         .chain(icons);
