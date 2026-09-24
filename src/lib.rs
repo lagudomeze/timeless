@@ -1466,6 +1466,66 @@ mod tests {
         );
     }
 
+    /// **护甲真的在链路上**：装出来的玩家挨近战一刀，掉的血比裸数值少。
+    ///
+    /// 此前 `Armor` 只有公式与单测，**没有任何单位挂它**——第 ④ 关永远减 0。
+    /// 这条从**组装层真造出来的单位**出发，走完整条命中管线，确认护甲生效：
+    /// 15 点近战打在玩家（护甲 1）身上应当只掉 14。
+    #[test]
+    fn the_assembled_player_actually_has_armor() {
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        app.update(); // Startup：组装玩家 + 敌人
+
+        let (player, enemy) = {
+            let mut query = app.world_mut().query::<(Entity, &Faction)>();
+            let units: Vec<(Entity, Faction)> = query
+                .iter(app.world())
+                .map(|(entity, faction)| (entity, *faction))
+                .collect();
+            let find = |wanted: Faction| {
+                units
+                    .iter()
+                    .find(|(_, faction)| *faction == wanted)
+                    .map(|(entity, _)| *entity)
+                    .expect("应当有单位")
+            };
+            (find(Faction::Player), find(Faction::Enemy))
+        };
+
+        assert!(
+            app.world()
+                .get::<Armor>(player)
+                .is_some_and(|armor| armor.0 > 0),
+            "组装出来的玩家应当带护甲，否则第 ④ 关形同不存在"
+        );
+
+        let before = app.world().get::<Health>(player).unwrap().current;
+        let at = app.world().get::<Transform>(player).unwrap().translation;
+        // 一发贴到玩家身上的投射物：走**真实的目标获取**（半径相交），
+        // 不手工塞 `CollisionTarget`——那样测的就不是组装层与管线的接口了
+        app.world_mut().spawn((
+            Faction::Enemy,
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.5),
+            PhysicalDamage(15),
+            Transform::from_translation(at + Vec3::new(0.2, 0.0, 0.0)),
+        ));
+        app.update();
+        app.update();
+
+        let armor = app.world().get::<Armor>(player).unwrap().0;
+        assert_eq!(
+            app.world().get::<Health>(player).unwrap().current,
+            before - (15 - armor),
+            "护甲 {armor} 应当从 15 点里减掉"
+        );
+        let _ = enemy;
+    }
+
     /// 整机推进：玩家一直有活干时，敌人也必须真的在动。
     ///
     /// 这条测的是**没有死锁**：反应系统一旦写错（比如"玩家一表态就解冻"那条规则漏了），

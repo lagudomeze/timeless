@@ -4,12 +4,32 @@ use bevy::prelude::*;
 
 use crate::combat::defense::BlockChance;
 use crate::combat::health::Health;
-use crate::combat::{AttackRange, Collidable, Faction, HitRadius, Stamina};
+use crate::combat::{Armor, AttackRange, Collidable, Faction, HitRadius, Stamina};
 use crate::movement::{Cell, Velocity};
 use crate::presentation::unit_sprite::{
     SHADOW_DIAMETER, SHADOW_OFFSET, SPRITE_SIZE, UnitShadow, UnitSprite, UnitSprites,
 };
 use crate::timeline::{DecisionSlot, Focus, FocusRecoverTimer};
+
+/// ⚠️ **护甲占位值**（设计旋钮，不是平衡结论）。
+///
+/// 参照当前伤害（近战 15 / 火球 12 / 箭矢 10）与 50 血：
+/// - 玩家 1 点：近战 4 刀、火球 5 发才打死（**没有改变任何一击的刀数**，安全值）；
+/// - 敌人 0 点：保持"敌人比玩家脆"的既有手感——玩家先手更有价值。
+///
+/// 这两个数**该由你定**：护甲每加 1 点，箭矢就要多打一发才死。
+/// 等装备系统（M27）落地后，这里换成"基础值 + 装备加成"。
+pub const PLAYER_ARMOR: i32 = 1;
+/// 见 [`PLAYER_ARMOR`]。
+pub const ENEMY_ARMOR: i32 = 0;
+
+/// 这个阵营的护甲（组装层是**唯一**决定单位属性的地方）。
+pub fn armor_for(faction: Faction) -> i32 {
+    match faction {
+        Faction::Player => PLAYER_ARMOR,
+        Faction::Enemy => ENEMY_ARMOR,
+    }
+}
 
 /// 单位骨架：逻辑组件 + 2D 精灵纸片 + 贴地阴影。
 ///
@@ -22,6 +42,7 @@ use crate::timeline::{DecisionSlot, Focus, FocusRecoverTimer};
 /// 缩放保持默认——纸片与阴影是它的子节点，靠这一点用局部坐标直接表达世界偏移
 /// （见 [`crate::presentation::unit_sprite`]）。视觉尺寸在网格上，不在缩放上。
 pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> impl Scene {
+    let armor = armor_for(faction);
     let cell = Cell::from_world(position);
     let stamina = Stamina::default();
     let sprite = sprites.sprite(faction);
@@ -29,6 +50,10 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
     bsn! {
         template_value(faction)
         template_value(Health::new(50))
+        // 护甲（命中管线第 ④ 关：格挡之后再减）：**单位属性**，
+        // 等装备系统（M27）落地后改成"基础值 + 装备加成"。
+        // ⚠️ **数值是占位**：`ARMOR_*` 三个常量是设计旋钮，不是平衡结论。
+        template_value(Armor(armor))
         HitRadius(0.8)
         AttackRange::MELEE
         Collidable
@@ -83,5 +108,33 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
                 }
             ),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **护甲真的挂上了**：公式支持 `Armor` 很久了，但组装层一直没给任何单位挂
+    /// ——于是第 ④ 关永远减 0，等于不存在。这条守住"它真的在链路上"。
+    #[test]
+    fn both_factions_carry_armor() {
+        for faction in [Faction::Player, Faction::Enemy] {
+            let armor = armor_for(faction);
+            assert!(
+                armor >= 0,
+                "{faction:?} 的护甲不该是负数（负护甲会让伤害反而变高）"
+            );
+        }
+    }
+
+    /// 玩家有护甲、敌人没有：**这是刻意的**（参 [`PLAYER_ARMOR`] 的说明），
+    /// 用测试钉住而不是靠注释——数值改了这里会提醒你别忘了同步说明。
+    #[test]
+    fn the_player_is_tougher_than_the_enemy_for_now() {
+        assert!(
+            armor_for(Faction::Player) >= armor_for(Faction::Enemy),
+            "占位设定里玩家不该比敌人脆"
+        );
     }
 }
