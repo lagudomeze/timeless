@@ -22,7 +22,7 @@
 | 单位精灵 | `textures/units/{player,enemy,shadow}.png` | Kenney Tiny Dungeon（CC0） |
 | 技能图标 | `textures/ui/icon_{attack,melee,fireball,roll}.png` | 同上 |
 | 地表装饰 | `models/nature/*.glb`（21 个：树 / 石 / 草 / 花 / 木桩…） | Kenney Nature Kit（CC0） |
-| HUD 字体 | `fonts/NotoSansSC-Regular.otf`（OFL-1.1，8.3 MB） | OFL-1.1 |
+| HUD 字体 | `fonts/NotoSansSC-Regular.otf`（OFL-1.1，**已子集化到 35 KB**） | OFL-1.1 |
 | **故意不引用** | `textures/ground/grass.png` | CC0，但**这张图不该用**——见下 |
 
 `textures/ground/grass.png` 是 Kenney **Prototype Textures** 的灰盒贴图：
@@ -32,8 +32,9 @@
 并连同 `TODO.md` 的「纹理图集 / UV」一起做——网格现在没有 UV 属性，
 而且贪婪网格化之后 UV 还要按矩形尺寸铺开。
 
-字体体积取舍与子集化出路见 `assets/LICENSES.md`。当前 8.3 MB 全覆盖；
-子集化可缩到几十 KB，但要在「加新文案不能缺字」和「仓库体积」之间取舍。
+字体已按**界面上真的会显示的字**子集化：8.3 MB → 35 KB（250 个字符）。
+字符集从源码抽（与 `tests/assets.rs` 的覆盖验收同一条真相源），所以"改文案导致缺字"
+会被测试当场抓住；重新生成的命令见 `assets/LICENSES.md`。
 
 ## 字体：为什么必须自带
 
@@ -43,9 +44,8 @@ Bevy 默认字体**不含 CJK**，而战斗日志正文是中文（`presentation
 
 两条纪律：
 
-1. **改日志文案必须跑 `tests/assets.rs`**——它读真实字节验字体文件是合法 sfnt；
-   逐字查 `cmap` 需要第三方解析库（已移除），字形覆盖目前靠运行时人工确认
-   （见 [../TODO.md](../TODO.md)）。
+1. **改日志文案必须跑 `tests/assets.rs`**——它逐字查 `cmap`，确认新文案的每个字
+   都在这份子集字体里（缺字时转红，否则运行时只会静默变成豆腐块）。
 2. **加技能要加图标**：`SKILLS` 里每加一条，`icon_path(kind)` 指到的 PNG 都会被
    `tests/assets.rs` 要求存在、是带 alpha 的方图。
 
