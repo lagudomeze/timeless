@@ -12,20 +12,27 @@ use bevy::prelude::*;
 
 use crate::world::VoxelType;
 
-use super::resources::{VoxelMaterialRegistry, voxel_color};
+use super::resources::{VoxelMaterialRegistry, voxel_color, voxel_texture};
 
 /// 按 [`VoxelType::ALL`] 注册每种方块的 `StandardMaterial`。
 pub fn setup_voxel_materials(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let mut registry = VoxelMaterialRegistry::default();
     for voxel in VoxelType::ALL {
         let Some(color) = voxel_color(voxel) else {
             continue;
         };
+        // 方块贴图**程序生成**并挂上（`base_color_texture`）：顶点色承载明暗与 AO，
+        // 贴图承载"颗粒感"——两者在 StandardMaterial 里是相乘的。
+        // 每种方块**各一张图、各一个材质**，所以不需要图集（图集是为"一张网格要
+        // 多种贴图"准备的，而这里按类型拆网格，见 `meshing::systems`）。
+        let texture = voxel_texture(voxel).map(|image| images.add(image));
         let material = materials.add(StandardMaterial {
             base_color: color,
+            base_color_texture: texture,
             // 方块表面偏粗糙，避免高光把体素棱角糊掉
             perceptual_roughness: 0.95,
             alpha_mode: if color.alpha() < 1.0 {

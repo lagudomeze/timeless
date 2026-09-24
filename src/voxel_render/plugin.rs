@@ -40,6 +40,8 @@ mod tests {
             .add_plugins(AssetPlugin::default())
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            // 方块贴图是程序生成的 `Image`，材质装配要 `Assets<Image>`
+            .init_asset::<Image>()
             .add_plugins((WorldPlugin, VoxelRenderPlugin));
         app.world_mut()
             .spawn((Transform::default(), ChunkLoader::default()));

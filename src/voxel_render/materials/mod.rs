@@ -5,7 +5,7 @@ pub mod assets;
 pub mod resources;
 
 pub use assets::setup_voxel_materials;
-pub use resources::{VoxelMaterialRegistry, voxel_color};
+pub use resources::{VOXEL_TEXTURE_SIZE, VoxelMaterialRegistry, voxel_color, voxel_texture};
 
 /// 本子域系统链的位置（跨子域先后由父插件编排）。
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
