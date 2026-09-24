@@ -84,11 +84,13 @@ const FACES: [(IVec3, [IVec3; 4]); 6] = [
     ),
 ];
 
-/// 单个方块类型的网格装配器（四个顶点属性 + 索引）。
+/// 单个方块类型的网格装配器（五个顶点属性 + 索引）。
 #[derive(Default)]
 struct MeshBuilder {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
+    /// 贴图坐标（`0..1` 是一张图；贪婪合并出来的面会**跨 N 格**，见 [`MeshBuilder::push_quad`]）
+    uvs: Vec<[f32; 2]>,
     colors: Vec<[f32; 4]>,
     indices: Vec<u32>,
 }
@@ -98,13 +100,28 @@ impl MeshBuilder {
     ///
     /// 顶点色 = [`face_shade`]（面朝向）× 每个角自己的 AO（[`vertex_occlusion`]）
     /// ——于是同一面内也能有明暗过渡（凹角变暗），这正是 AO 想要的观感。
-    fn push_quad(&mut self, corners: &[IVec3; 4], normal: IVec3, ao: [f32; 4]) {
+    ///
+    /// `uv_extent` 是这一面在贴图上要**重复几格**：逐面路径永远是 `(1, 1)`，
+    /// 而**贪婪合并出来的矩形跨 N 格，必须传 `(N_v, N_u)`**——否则一张贴图会被
+    /// 拉伸铺满整片地面（每个方块一格纹理的观感就没有了）。
+    /// 贴图本身因此要是**可平铺**的，采样器用重复（材质侧设 `ImageSampler`）。
+    fn push_quad(
+        &mut self,
+        corners: &[IVec3; 4],
+        normal: IVec3,
+        ao: [f32; 4],
+        uv_extent: (f32, f32),
+    ) {
         let base = self.positions.len() as u32;
         let shade = face_shade(normal);
-        for (corner, occlusion) in corners.iter().zip(ao) {
+        // 四个角按 0 → 1 的顺序对应 (0,0) (1,0) (1,1) (0,1)，与绕序一致
+        let (nu, nv) = uv_extent;
+        let corner_uv = [[0.0, 0.0], [nu, 0.0], [nu, nv], [0.0, nv]];
+        for ((corner, occlusion), uv) in corners.iter().zip(ao).zip(corner_uv) {
             let lit = shade * occlusion;
             self.positions.push(corner.as_vec3().to_array());
             self.normals.push(normal.as_vec3().to_array());
+            self.uvs.push(uv);
             self.colors.push([lit, lit, lit, 1.0]);
         }
         self.indices
@@ -119,6 +136,7 @@ impl MeshBuilder {
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
@@ -235,8 +253,16 @@ fn build_greedy(chunk: &Chunk, builders: &mut [MeshBuilder; VoxelType::COUNT]) {
                         origin + u_axis * iu + v_axis * v_end,
                     ];
                     // 四个角的 AO 取被并格子里**第一个**的：键相等意味着它们本来
-                    // 就一样（AO 在合并键里，见 `MaskCell` 的说明）
-                    builders[cell.kind].push_quad(&corners, normal, cell.ao.map(shade_of_level));
+                    // 就一样（AO 在合并键里，见 `MaskCell` 的说明）。
+                    // UV 按**矩形尺寸**铺开：这一面跨 `(u_end-iu)` × `(v_end-iv)` 格，
+                    // 贴图就重复那么多遍（拉伸铺一张的话每格一格的纹理感就没了）。
+                    let uv_extent = ((u_end - iu) as f32, (v_end - iv) as f32);
+                    builders[cell.kind].push_quad(
+                        &corners,
+                        normal,
+                        cell.ao.map(shade_of_level),
+                        uv_extent,
+                    );
 
                     // 用掉的格子清空，免得被并进第二个矩形
                     for u in iu..u_end {
@@ -303,10 +329,12 @@ fn build_per_face(chunk: &Chunk, builders: &mut [MeshBuilder; VoxelType::COUNT],
                     }
                     // 顶点 = 面角（0..1） + 体素在区块内的偏移，否则所有方块会叠在区块原点
                     let ao = face_corner_levels(chunk, local, normal, &corners);
+                    // 逐面路径一格一个四边形，贴图刚好铺一格
                     builder.push_quad(
                         &corners.map(|corner| corner + local),
                         normal,
                         ao.map(shade_of_level),
+                        (1.0, 1.0),
                     );
                 }
             }
@@ -683,6 +711,68 @@ mod tests {
             assert!(
                 (ao - other).abs() < 1e-6,
                 "{key:?}（位置 + 法线）上的 AO 分叉了：贪婪 {ao} vs 逐面 {other}"
+            );
+        }
+    }
+
+    /// **UV 按矩形尺寸铺开，不是拉伸一张图**。
+    ///
+    /// 贪婪合并把一整片地面并成**一个**矩形；若 UV 一律 `0..1`，那一张方块贴图会被
+    /// 拉满整片（每个方块一格的纹理感就没了）。所以 UV 的跨度 = 这一面跨了几格。
+    /// 判据：实心区块顶面合并成 1 个矩形，而它的 UV 跨度必须是 `32`（= 区块边长）。
+    #[test]
+    fn merged_faces_tile_their_texture_by_the_rectangle_size() {
+        let mut chunk = Chunk::empty();
+        for y in 0..CHUNK_SIZE as u32 {
+            for x in 0..CHUNK_SIZE as u32 {
+                for z in 0..CHUNK_SIZE as u32 {
+                    chunk.set(UVec3::new(x, y, z), VoxelType::Stone);
+                }
+            }
+        }
+        let meshes = build_chunk_meshes(
+            &chunk,
+            MeshingConfig {
+                cull_hidden_faces: true,
+            },
+        );
+        let mesh = &meshes[0].1;
+        let uvs = match mesh.attribute(Mesh::ATTRIBUTE_UV_0).expect("网格必须带 UV") {
+            bevy::mesh::VertexAttributeValues::Float32x2(uvs) => uvs.clone(),
+            other => panic!("UV 格式意外：{other:?}"),
+        };
+        let max_u = uvs.iter().map(|uv| uv[0]).fold(f32::MIN, f32::max);
+        let max_v = uvs.iter().map(|uv| uv[1]).fold(f32::MIN, f32::max);
+        assert_eq!(
+            (max_u, max_v),
+            (CHUNK_SIZE as f32, CHUNK_SIZE as f32),
+            "整片顶面的 UV 跨度应当等于它跨的格数（{CHUNK_SIZE}），而不是 1"
+        );
+    }
+
+    /// 逐面路径的 UV 永远是**一格**（它本来就是一个格子一个四边形）。
+    #[test]
+    fn per_face_quads_use_one_tile_each() {
+        // 逐面那条路要显式跑（`meshes_of` 走的是默认的贪婪路径）
+        let mut chunk = Chunk::empty();
+        chunk.set(UVec3::new(1, 1, 1), VoxelType::Stone);
+        let mut builders = VoxelType::ALL.map(|_| MeshBuilder::default());
+        build_per_face(&chunk, &mut builders, true);
+        // 取**石头那一个**装配器（下标不是 0：`VoxelType::index` 是枚举顺序）
+        let mesh = builders
+            .into_iter()
+            .nth(VoxelType::Stone.index())
+            .filter(|builder| !builder.is_empty())
+            .map(MeshBuilder::build)
+            .expect("那个方块应当产出网格");
+        let uvs = match mesh.attribute(Mesh::ATTRIBUTE_UV_0).expect("网格必须带 UV") {
+            bevy::mesh::VertexAttributeValues::Float32x2(uvs) => uvs.clone(),
+            other => panic!("UV 格式意外：{other:?}"),
+        };
+        for uv in uvs {
+            assert!(
+                (0.0..=1.0).contains(&uv[0]) && (0.0..=1.0).contains(&uv[1]),
+                "逐面路径一个格子铺一张图，UV 该在 0..1 内：{uv:?}"
             );
         }
     }
