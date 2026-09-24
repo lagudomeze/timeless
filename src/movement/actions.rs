@@ -171,6 +171,9 @@ pub fn declare_move_system(
     pending_focus: Res<PendingFocus>,
     terrain: Res<TerrainConfig>,
     config: Option<Res<ActionConfig>>,
+    // 可行走性要看**真实体素**（玩家堆的墙才算墙）
+    chunk_map: Option<Res<crate::world::ChunkMap>>,
+    chunks: Query<&crate::world::Chunk>,
     mut requests: MessageReader<MoveCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
     mut refused: MessageWriter<MoveRefused>,
@@ -190,7 +193,7 @@ pub fn declare_move_system(
 
     let to_cell = Cell::new(cell.x + dx, cell.z + dz);
     // 可行走性：高太多就是墙，走不过去（纯规则见 `super::rules`）
-    if !step_is_walkable(&terrain, *cell, to_cell) {
+    if !step_is_walkable(&terrain, chunk_map.as_deref(), &chunks, *cell, to_cell) {
         refused.write(MoveRefused::BlockedByTerrain);
         return;
     }
@@ -220,6 +223,9 @@ pub fn declare_move_to_system(
     time: Res<Time<Virtual>>,
     pending_focus: Res<PendingFocus>,
     terrain: Res<TerrainConfig>,
+    // 可行走性要看**真实体素**（玩家堆的墙才算墙）
+    chunk_map: Option<Res<crate::world::ChunkMap>>,
+    chunks: Query<&crate::world::Chunk>,
     mut requests: MessageReader<MoveToCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
     mut refused: MessageWriter<MoveRefused>,
@@ -236,7 +242,7 @@ pub fn declare_move_to_system(
     }
     // 点地板是**一格一格走过去**的：沿途每一格的落差都得能迈上去。
     // 不查的话会出现"墙那边也点得动"——单位会直接穿墙停在墙背后。
-    if !path_is_walkable(&terrain, *cell, target) {
+    if !path_is_walkable(&terrain, chunk_map.as_deref(), &chunks, *cell, target) {
         refused.write(MoveRefused::BlockedByTerrain);
         return;
     }
@@ -389,10 +395,25 @@ pub fn jump_motion_system(
 ///
 /// 高度取自 `world::surface_height_at`——**纯函数**，因此不依赖区块是否已加载，
 /// 与"单位贴地"用的是同一份判据。
-fn step_is_walkable(terrain: &TerrainConfig, from: Cell, to: Cell) -> bool {
-    let from_y = surface_height_at(terrain, from.center().x, from.center().y);
-    let to_y = surface_height_at(terrain, to.center().x, to.center().y);
-    can_step(from_y, to_y)
+fn step_is_walkable(
+    terrain: &TerrainConfig,
+    chunk_map: Option<&crate::world::ChunkMap>,
+    chunks: &Query<&crate::world::Chunk>,
+    from: Cell,
+    to: Cell,
+) -> bool {
+    let height = |cell: Cell| -> i32 {
+        let center = cell.center();
+        match chunk_map {
+            // 看真实体素：玩家堆起来的方块因此真的挡路
+            Some(chunk_map) => crate::world::storage::ground::ground_height_at(
+                terrain, chunk_map, chunks, center.x, center.y,
+            ),
+            // 没有世界数据（轻量单测）：退回噪声地表
+            None => surface_height_at(terrain, center.x, center.y),
+        }
+    };
+    can_step(height(from), height(to))
 }
 
 /// 从 `from` 走到 `to` 的**直线路径**上，每一步都迈得过去吗。
@@ -400,10 +421,16 @@ fn step_is_walkable(terrain: &TerrainConfig, from: Cell, to: Cell) -> bool {
 /// 多格移动是**直线**（执行器朝目标格中心设速度），所以沿途经过的格就是
 /// 这条直线覆盖到的格。逐格检查而不是只看终点：只看终点的话，
 /// 墙可以"绕过"——单位会穿墙停在墙后面。
-fn path_is_walkable(terrain: &TerrainConfig, from: Cell, to: Cell) -> bool {
+fn path_is_walkable(
+    terrain: &TerrainConfig,
+    chunk_map: Option<&crate::world::ChunkMap>,
+    chunks: &Query<&crate::world::Chunk>,
+    from: Cell,
+    to: Cell,
+) -> bool {
     let mut previous = from;
     for cell in cells_along_the_line(from, to).into_iter().skip(1) {
-        if !step_is_walkable(terrain, previous, cell) {
+        if !step_is_walkable(terrain, chunk_map, chunks, previous, cell) {
             return false;
         }
         previous = cell;
@@ -481,7 +508,9 @@ mod tests {
             for x in -8..8 {
                 let from = Cell::new(x, z);
                 let to = Cell::new(x + 1, z);
-                if !step_is_walkable(&terrain, from, to) {
+                let walkable =
+                    with_empty_chunks(|chunks| step_is_walkable(&terrain, None, chunks, from, to));
+                if !walkable {
                     found = Some((from, to));
                     break 'outer;
                 }
@@ -531,9 +560,13 @@ mod tests {
             for x in -12..12 {
                 let from = Cell::new(x, z);
                 let to = Cell::new(x + 6, z);
-                let endpoints_ok = step_is_walkable(&terrain, from, Cell::new(x + 1, z))
-                    && step_is_walkable(&terrain, Cell::new(x + 5, z), to);
-                if endpoints_ok && !path_is_walkable(&terrain, from, to) {
+                let endpoints_ok = with_empty_chunks(|chunks| {
+                    step_is_walkable(&terrain, None, chunks, from, Cell::new(x + 1, z))
+                        && step_is_walkable(&terrain, None, chunks, Cell::new(x + 5, z), to)
+                });
+                let blocked =
+                    with_empty_chunks(|chunks| path_is_walkable(&terrain, None, chunks, from, to));
+                if endpoints_ok && !blocked {
                     demonstrated = true;
                     break;
                 }
@@ -546,6 +579,20 @@ mod tests {
             demonstrated,
             "应当存在「两端可走、中间被墙挡住」的直线——这正是逐格检查的意义"
         );
+    }
+
+    /// 一个**真实的空查询**：单测没有世界数据，因此走"退回噪声"那条分支。
+    ///
+    /// `Query` 是系统参数类型，脱离 App 构造不出来——所以借 `SystemState`
+    /// 从一个小 App 里取一个。这不是权宜之计：它证明"没有区块时行为不变"，
+    /// 而那条正是 [`crate::world::storage::ground`] 承诺的兜底。
+    fn with_empty_chunks<R>(f: impl FnOnce(&Query<&crate::world::Chunk>) -> R) -> R {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let mut state =
+            bevy::ecs::system::SystemState::<Query<&crate::world::Chunk>>::new(app.world_mut());
+        let query = state.get(app.world()).unwrap();
+        f(&query)
     }
 
     /// 读行动者的决策槽。

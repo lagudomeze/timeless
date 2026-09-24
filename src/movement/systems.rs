@@ -2,7 +2,8 @@
 
 use bevy::prelude::*;
 
-use crate::world::{TerrainConfig, ground_position};
+use crate::world::storage::ground::ground_position_at;
+use crate::world::{Chunk, ChunkMap, TerrainConfig};
 
 use super::actions::Jumping;
 use super::cell::{Cell, MoveGoal};
@@ -27,6 +28,23 @@ pub struct DodgingOnArrival {
     pub expires_at: f32,
 }
 
+/// 目标格的地面高度：有区块就看真实体素，没有就退回噪声。
+///
+/// 抽出来是因为位移与贴地两处都要这份判断，而"有没有世界数据"这件事不该
+/// 在调用点各写一遍。
+fn move_ground_y(
+    terrain: &TerrainConfig,
+    chunk_map: Option<&ChunkMap>,
+    chunks: &Query<&Chunk>,
+    x: f32,
+    z: f32,
+) -> f32 {
+    match chunk_map {
+        Some(chunk_map) => ground_position_at(terrain, chunk_map, chunks, x, z).y,
+        None => crate::world::ground_position(terrain, x, z).y,
+    }
+}
+
 /// 位移：所有带 [`Velocity`] 的实体按 `速度 × dt` 推进。
 ///
 /// 一个系统同时处理两类实体，避免两个系统争用同一份 `Transform` / `Velocity`：
@@ -39,6 +57,10 @@ pub fn move_entities_system(
     time: Res<Time>,
     now: Res<Time<Virtual>>,
     terrain: Res<TerrainConfig>,
+    // 站立高度要看**真实体素**（含玩家放的方块），所以这里要读区块。
+    // `Option`：只装移动域的轻量单测没有 `WorldPlugin`，那时退回噪声地表
+    chunk_map: Option<Res<ChunkMap>>,
+    chunks: Query<&Chunk>,
     mut movers: Query<(
         Entity,
         &mut Transform,
@@ -68,7 +90,8 @@ pub fn move_entities_system(
         // 到格中心：吸附（含贴地）、停下、更新决策层坐标
         if transform.translation.xz().distance(target) <= 1e-3 {
             // `y` 取目标格的地表高度：停下时一定贴着地，不受冻结时机影响
-            let ground_y = ground_position(&terrain, target.x, target.y).y;
+            let ground_y =
+                move_ground_y(&terrain, chunk_map.as_deref(), &chunks, target.x, target.y);
             transform.translation = Vec3::new(target.x, ground_y, target.y);
             velocity.0 = Vec3::ZERO;
             let mut commands = commands.entity(entity);
@@ -95,12 +118,33 @@ pub fn move_entities_system(
 pub fn follow_terrain_system(
     time: Res<Time>,
     terrain: Res<TerrainConfig>,
+    chunk_map: Option<Res<ChunkMap>>,
+    chunks: Query<&Chunk>,
     mut units: Query<&mut Transform, (With<Cell>, Without<Jumping>)>,
 ) {
     let max_step = TERRAIN_FOLLOW_SPEED * time.delta_secs();
     for mut transform in &mut units {
-        let ground_y =
-            ground_position(&terrain, transform.translation.x, transform.translation.z).y;
+        let ground_y = match chunk_map.as_deref() {
+            Some(chunk_map) => {
+                ground_position_at(
+                    &terrain,
+                    chunk_map,
+                    &chunks,
+                    transform.translation.x,
+                    transform.translation.z,
+                )
+                .y
+            }
+            // 没有世界数据（轻量单测）：退回噪声地表
+            None => {
+                crate::world::ground_position(
+                    &terrain,
+                    transform.translation.x,
+                    transform.translation.z,
+                )
+                .y
+            }
+        };
         let delta = ground_y - transform.translation.y;
         if delta.abs() <= max_step {
             transform.translation.y = ground_y;
@@ -123,6 +167,9 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(TerrainConfig::default())
+            // 贴地要读区块（站立高度看真实体素）；这里没有区块实体，
+            // 于是每一列都退回噪声地表——与改动前的行为一致
+            .init_resource::<crate::world::ChunkMap>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 100,
             )))
@@ -151,9 +198,13 @@ mod tests {
     }
 
     /// 格中心的地表高度（贴地后的期望 y）。
+    ///
+    /// 用**噪声**函数而不是 `ground_position_at`：这些测试不造区块，
+    /// 而"没有区块时站立高度 = 噪声"正是 `world::storage::ground` 保证的行为，
+    /// 所以两边应当给出同一个数。
     fn ground_y(config: &TerrainConfig, cell: Cell) -> f32 {
         let center = cell.center();
-        ground_position(config, center.x, center.y).y
+        crate::world::ground_position(config, center.x, center.y).y
     }
 
     /// 走一格之后，单位站在**目标格**的地表高度上——而不是保持出生高度不变。
