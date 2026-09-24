@@ -26,6 +26,14 @@
         power: 0,
         frame: 0,
     ),
+    dash: (
+        windup: 0.25,
+        recovery: 0.2,
+        interrupt_resist: 2,
+        cost: 1,
+        power: 0,
+        frame: 0,
+    ),
     melee: (
         windup: 0.2,
         recovery: 0.35,
@@ -74,5 +82,6 @@
         player: 5.0,
         enemy: 2.0,
         roll: 8.0,
+        dash: 7.0,
     ),
 )

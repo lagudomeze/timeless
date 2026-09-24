@@ -20,6 +20,8 @@ pub enum AbilityId {
     Jump,
     /// 退一格 + 无敌帧
     Roll,
+    /// 冲刺：朝一个方向**冲两格**（比走一格快，但起手更重）
+    Dash,
     /// 箭矢：朝一个方向射出去
     Shoot,
     /// 近战扇形横扫
@@ -38,10 +40,11 @@ pub enum AbilityId {
 
 impl AbilityId {
     /// 全部技能（注册完整性用它自检）。
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Move,
         Self::Jump,
         Self::Roll,
+        Self::Dash,
         Self::Shoot,
         Self::Melee,
         Self::Fireball,
@@ -55,6 +58,7 @@ impl AbilityId {
             Self::Move => "move",
             Self::Jump => "jump",
             Self::Roll => "roll",
+            Self::Dash => "dash",
             Self::Shoot => "shoot",
             Self::Melee => "melee",
             Self::Fireball => "fireball",

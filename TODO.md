@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 348 通过（345 单元 + 3 资产验收）/ 0 跳过
+cargo test                                  # 350 通过（347 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -814,7 +814,26 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       （与跨帧的 `Dodging` / `Parrying` 不同；曾有过的空组件已删）。
       验收：`blocking_reduces_damage_instead_of_negating_it` /
       `partial_blocking_stacks_with_armor_in_the_documented_order`（挡 50% 得 3 而不是 4）。
-- [ ] **范围攻击排程 / 冲刺（位移 2 格）**。
+- [x] **冲刺（位移 2 格）**（本次）：`X` + 方向键 → 朝该方向**一次冲两格**。
+      **为什么是组合键**：冲刺**需要方向**（"朝哪冲"），而方向本来就由方向键表达；
+      单键冲刺只能在"朝最近敌人 / 朝悬停格"里选，两种都会让"我想往那边冲"落空。
+      `Shift` 已经让给 Focus 了，所以用了 `X`。输入域照旧只翻译：`movement` 收到的是
+      `DashCommand`，**不认识 `KeyCode`**。
+      **分工是数据说的**：走一格 0.15/0.10 前摇后摇但只走一格；冲刺 0.25/0.20 前摇更重
+      却跨两格——**用时间换距离**，追人 / 脱离时用。速度 7.0（走路 5.0），
+      于是"跨两格但用时更短"由**速度**说了算，不需要第二套位移逻辑。
+      **它是一条普通技能**：注册进目录（`AbilityId::Dash`）、走 `can_cast` 校验、
+      节奏与花费从 `config/actions.ron` 读（`dash` 段 + `speeds.dash`）、
+      标签 `COMMITTED`（蹬出去收不回来，与跳跃 / 翻滚同族）。
+      **逐格查可行走性**：跨两格时中间那格也得迈得上去——只查终点的话墙能被跨过去
+      （与点地板走多格同一个坑）。
+      **未做**：`范围攻击排程`（那半条要的是"一次行动打多个落地时刻"，属于 `PendingHit`
+      的范畴，而 `PendingHit` 的审计结论是"现在不建"——两者触发条件相同）。
+      验收：347 测试全绿 / clippy 零警告 / fmt 通过。
+      `dashing_moves_two_cells_in_one_action`（`X`+方向 → 一条 `DashAction`、
+      **不是** `MoveAction`、落到 +2 格）与 `a_dash_through_a_wall_is_refused`；
+      两条都**验过不是空跑**（把 `* DASH_CELLS` 改成走一格 / 拿掉可行走性检查，各自转红）。
+      **实机 A/B**：同一个方向 —— 普通方向键走 **1 格**、`X`+方向键走 **2 格**。
 - [ ] **`ActionTemplate` 资产图**：动作的静态定义（相位 / 消耗 / 效果 / 可取消规则）
       资产化，按边条件在图上转移。当前已落地的最小形态是
       `ActionTiming { windup, recovery }` + 行动实体。

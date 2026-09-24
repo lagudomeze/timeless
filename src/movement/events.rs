@@ -32,3 +32,14 @@ pub struct JumpCommand;
 pub struct MoveToCommand {
     pub cell: Cell,
 }
+
+/// 冲刺指令（`Shift` + 方向键）：朝该方向**冲两格**。
+///
+/// 写：[`crate::input`]；消费：[`declare_dash_system`](super::actions::declare_dash_system)。
+///
+/// **与 [`MoveCommand`] 同一个方向语义**（屏幕方向，由输入域换算成世界平面方向）：
+/// 冲刺只是"同一方向、走两格、更快但也更贵"。
+#[derive(Message, Debug, Clone, Copy)]
+pub struct DashCommand {
+    pub axis: Vec2,
+}

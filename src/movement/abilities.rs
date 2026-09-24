@@ -1,6 +1,6 @@
-//! 移动域的技能定义：移动 / 跳跃 / 翻滚。
+//! 移动域的技能定义：移动 / 跳跃 / 翻滚 / 冲刺。
 //!
-//! **数值就在这里**（[`MOVE_TIMING`] / [`JUMP_TIMING`] / [`ROLL_TIMING`]），
+//! **数值就在这里**（[`MOVE_TIMING`] / [`JUMP_TIMING`] / [`ROLL_TIMING`] / [`DASH_TIMING`]），
 //! 本文件只把它们包成 [`AbilityDef`] 交给技能目录——移动不是特例，
 //! 它和火球、横扫一样只是"一种技能"（见 `docs/skills.md`）。
 
@@ -13,12 +13,12 @@ use crate::skills::{
 
 use crate::config::ActionConfig;
 
-use super::actions::{JUMP_TIMING, MOVE_TIMING, ROLL_TIMING};
+use super::actions::{DASH_COST, DASH_TIMING, JUMP_TIMING, MOVE_TIMING, ROLL_TIMING};
 
-/// 按配置生成三条定义（**数值来自 `.ron`**，缺省时等于下面的常量）。
+/// 按配置生成四条定义（**数值来自 `.ron`**，缺省时等于下面的常量）。
 ///
 /// `AbilityDef` 是 `Copy` 的纯数据，所以"从配置构造"是廉价的一次拷贝。
-pub fn abilities_from(config: &ActionConfig) -> [AbilityDef; 3] {
+pub fn abilities_from(config: &ActionConfig) -> [AbilityDef; 4] {
     [
         AbilityDef {
             timing: config.move_.timing(),
@@ -36,6 +36,11 @@ pub fn abilities_from(config: &ActionConfig) -> [AbilityDef; 3] {
             timing: config.roll.timing(),
             cost: config.roll.cost,
             ..ROLL_ABILITY
+        },
+        AbilityDef {
+            timing: config.dash.timing(),
+            cost: config.dash.cost,
+            ..DASH_ABILITY
         },
     ]
 }
@@ -82,8 +87,26 @@ pub const ROLL_ABILITY: AbilityDef = AbilityDef {
     power: 0,
 };
 
-/// 移动域交给技能目录的三条定义。
-pub const ABILITIES: [AbilityDef; 3] = [MOVE_ABILITY, JUMP_ABILITY, ROLL_ABILITY];
+/// 冲刺：朝一个方向冲两格（`Shift` + 方向键），消耗 1 精力。
+///
+/// **它是"用时间换距离"**：前摇比走一格重（0.25 vs 0.15），但一次跨两格——
+/// 追人 / 脱离时用；贴身缠斗时不如走一格灵便。
+/// 标签是 [`CombatTags::COMMITTED`]：蹬出去就收不回来（与跳跃 / 翻滚同一族）。
+pub const DASH_ABILITY: AbilityDef = AbilityDef {
+    id: AbilityId::Dash,
+    category: AbilityCategory::Movement,
+    timing: DASH_TIMING,
+    targeting: TargetSelector::Direction,
+    cost: DASH_COST,
+    // Movement 类的共享条件已是 EnoughEnergy（见 `AbilityCategory::shared_requirement`）
+    requirements: &[],
+    combat: CombatTags::COMMITTED,
+    counter: None,
+    power: 0,
+};
+
+/// 移动域交给技能目录的四条定义。
+pub const ABILITIES: [AbilityDef; 4] = [MOVE_ABILITY, JUMP_ABILITY, ROLL_ABILITY, DASH_ABILITY];
 
 /// 启动时把自己的定义交上去（写：[`crate::movement`]；消费：[`crate::skills`]）。
 ///
@@ -109,6 +132,7 @@ mod tests {
         assert_eq!(MOVE_ABILITY.timing, MOVE_TIMING);
         assert_eq!(JUMP_ABILITY.timing, JUMP_TIMING);
         assert_eq!(ROLL_ABILITY.timing, ROLL_TIMING);
+        assert_eq!(DASH_ABILITY.timing, DASH_TIMING);
 
         let categories: Vec<AbilityCategory> = ABILITIES.iter().map(|def| def.category).collect();
         assert!(
