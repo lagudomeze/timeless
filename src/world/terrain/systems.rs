@@ -107,6 +107,7 @@ pub fn generate_chunk_terrain(config: &TerrainConfig, pos: ChunkPos, chunk: &mut
 /// 数据生成是纯计算，不涉及网格与材质；跨域只发 [`ChunkDirtyEvent`]。
 pub fn generate_terrain_system(
     config: Res<TerrainConfig>,
+    edits: Option<Res<crate::world::storage::WorldEdits>>,
     mut chunks: Query<(&ChunkPos, &mut Chunk)>,
     mut loads: MessageReader<ChunkLoadEvent>,
     mut dirty: MessageWriter<ChunkDirtyEvent>,
@@ -116,7 +117,44 @@ pub fn generate_terrain_system(
             continue;
         };
         generate_chunk_terrain(&config, *pos, &mut chunk);
+        // 存档里的改动**盖在噪声地形之上**：地形是"算得出来"的那一层，
+        // 改动是"玩家留下的"那一层，两者叠加才是世界该有的样子（见 `storage::save`）。
+        // `Option`：只装地形子域的轻量单测没有存档资源，那时就是"没有改动"。
+        if let Some(edits) = edits.as_deref() {
+            apply_edits_to_chunk(edits, *pos, &mut chunk);
+        }
         dirty.write(ChunkDirtyEvent { chunk: event.chunk });
+    }
+}
+
+/// 把落在 `pos` 这个区块里的改动盖上去（纯函数 + 查询，可单测）。
+///
+/// 逐条判断"这一条在不在这个区块里"：改动条数是个位 / 十位量级，而每帧只在
+/// **区块加载**时跑一次，直扫比建索引简单得多（够用就不加机制）。
+fn apply_edits_to_chunk(
+    edits: &crate::world::storage::WorldEdits,
+    pos: ChunkPos,
+    chunk: &mut Chunk,
+) {
+    let origin = pos.origin();
+    let size = CHUNK_SIZE as i32;
+    for edit in edits.iter() {
+        let world = edit.position();
+        // 落在区块外的改动跳过（世界体素 → 区块坐标由 `ChunkPos` 回答）
+        if ChunkPos::from_voxel(world) != pos {
+            continue;
+        }
+        let local = world - origin;
+        if local.x < 0 || local.y < 0 || local.z < 0 {
+            continue; // 理论上不可达（from_voxel 已经保证），防御性跳过
+        }
+        if local.x >= size || local.y >= size || local.z >= size {
+            continue;
+        }
+        let Some(kind) = edit.kind() else {
+            continue; // 存档里的方块类型不认识（旧档 / 手改坏了）：跳过这一条
+        };
+        chunk.set(local.as_uvec3(), kind);
     }
 }
 
@@ -154,6 +192,106 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// **存档改动真的盖回了地形上**：加载时先按噪声生成、再把改动覆盖上去。
+    ///
+    /// 这是"只存改动"这条路子的**端点验收**（`storage::save` 的模块文档解释了
+    /// 为什么不存整块地形）：单测过 `WorldSave` 的往返、也过 `set_voxel` 的写入，
+    /// 但那是两半；真正要成立的是"**重开一次游戏，那块石头还在**"。
+    #[test]
+    fn saved_edits_are_laid_over_the_generated_terrain() {
+        use crate::world::storage::{VoxelEdit, WorldEdits};
+
+        let config = TerrainConfig::default();
+        let pos = ChunkPos(IVec3::new(0, -1, 0));
+        let origin = pos.origin();
+        // 在区块里挑一格地表（生成出来一定有方块），把它改成石头并记进"存档"
+        let surface = surface_height(&config, origin.x + 5, origin.z + 7);
+        let target = IVec3::new(origin.x + 5, surface - 1, origin.z + 7);
+
+        let mut edits = WorldEdits::default();
+        edits.record(VoxelEdit::new(target, VoxelType::Stone));
+
+        // 1) 没有存档改动时，那一格是生成出来的草 / 土
+        let mut plain = Chunk::empty();
+        generate_chunk_terrain(&config, pos, &mut plain);
+        let generated = plain.get(pos.local(target));
+        assert_ne!(generated, VoxelType::Stone, "先确认这一格本来不是石头");
+
+        // 2) 有改动时，同一格被盖成石头
+        let mut saved = Chunk::empty();
+        generate_chunk_terrain(&config, pos, &mut saved);
+        apply_edits_to_chunk(&edits, pos, &mut saved);
+        assert_eq!(
+            saved.get(pos.local(target)),
+            VoxelType::Stone,
+            "存档里的改动必须盖在噪声地形之上"
+        );
+
+        // 3) 区块**外面**的改动不能污染这一块
+        let elsewhere = WorldEdits::default();
+        let mut untouched = Chunk::empty();
+        generate_chunk_terrain(&config, pos, &mut untouched);
+        apply_edits_to_chunk(&elsewhere, pos, &mut untouched);
+        assert_eq!(
+            untouched.get(pos.local(target)),
+            generated,
+            "别的区块的改动不该动到这一块"
+        );
+    }
+
+    /// 存档里的坐标落在**另一个区块**时，这一块一个格子都不该被动。
+    #[test]
+    fn an_edit_in_another_chunk_is_ignored() {
+        use crate::world::storage::{VoxelEdit, WorldEdits};
+
+        let config = TerrainConfig::default();
+        let pos = ChunkPos(IVec3::new(0, 0, 0));
+        // 一条明确落在别处的改动（区块 (9,9,9) 内部）
+        let far = ChunkPos(IVec3::new(9, 9, 9)).origin() + IVec3::new(1, 1, 1);
+        let mut edits = WorldEdits::default();
+        edits.record(VoxelEdit::new(far, VoxelType::Stone));
+
+        let mut chunk = Chunk::empty();
+        generate_chunk_terrain(&config, pos, &mut chunk);
+        let before = chunk.voxels.clone();
+        apply_edits_to_chunk(&edits, pos, &mut chunk);
+
+        assert_eq!(chunk.voxels, before, "别处的改动不该写进这一块");
+    }
+
+    /// 存档里有一个**不认识的方块名**（旧档 / 手改坏了）时跳过它，不 panic。
+    #[test]
+    fn an_unknown_voxel_name_in_the_save_is_skipped() {
+        use crate::world::storage::{VoxelEdit, WorldEdits, WorldSave};
+
+        let config = TerrainConfig::default();
+        let pos = ChunkPos(IVec3::new(0, -1, 0));
+        let target = pos.origin() + IVec3::new(2, 3, 4);
+        let mut edits = WorldEdits::from_save(WorldSave {
+            seed: 0,
+            edits: vec![VoxelEdit {
+                x: target.x,
+                y: target.y,
+                z: target.z,
+                voxel: "unobtainium".to_string(),
+            }],
+        });
+        // 再叠一条能认的，确认"跳过坏的、保留好的"
+        let good = pos.origin() + IVec3::new(6, 3, 8);
+        edits.record(VoxelEdit::new(good, VoxelType::Wood));
+
+        let mut chunk = Chunk::empty();
+        generate_chunk_terrain(&config, pos, &mut chunk);
+        let generated = chunk.voxels.clone();
+        apply_edits_to_chunk(&edits, pos, &mut chunk);
+
+        assert_eq!(
+            chunk.get(pos.local(target)),
+            generated[Chunk::index(pos.local(target))],
+            "不认识的类型不能改动地形"
+        );
     }
 
     #[test]
