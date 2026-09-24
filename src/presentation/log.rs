@@ -58,12 +58,17 @@ pub fn battle_log_system(
     for damage in damages.read() {
         // 伤害类型不再是一个中心枚举：每种伤害有各自的组件与系统，
         // 日志因此只说"扣了多少"（要写类型就在各自的系统里补一条消息）
-        let text = match damage.source.and_then(side) {
-            Some(attacker) => format!("{attacker} 命中，受到 {} 点伤害", damage.amount),
-            None => format!("受到 {} 点伤害", damage.amount),
-        };
         let who = side(damage.target).unwrap_or("单位");
-        let text = format!("{who}{text}");
+        // **语序是「谁打谁、打多少」**：先说出手方、再说命中谁。
+        // ⚠️ 这里曾经把受击方**直接拼在**出击方那句话前面（`format!("{who}{text}")`），
+        // 而 `text` 本身又以出手方开头——于是同一句里两个阵营标签**贴在一起**，
+        // 读出来是「敌人玩家 命中，受到 16 点伤害」（受击方在前、出手方在后，
+        // 中间连空格都没有）。实机打一场就能看见，四条单测全都漏了它
+        // （它们只断言"两个标签都出现"，不检查语序与分隔）。
+        let text = match damage.source.and_then(side) {
+            Some(attacker) => format!("{attacker} 命中 {who}，造成 {} 点伤害", damage.amount),
+            None => format!("{who} 受到 {} 点伤害", damage.amount),
+        };
         log.push(&text);
         info!("[{text}]");
     }
@@ -115,6 +120,12 @@ mod tests {
     }
 
     /// **写得出"谁打的谁"**：伤害的来源是攻击实体，日志读它的阵营来认出手方。
+    ///
+    /// ⚠️ **判据是整句，不只是"两个标签都出现"**：这条以前只断言 `contains("玩家")`
+    /// 与 `contains("敌人")`，于是漏掉了一个真实的显示 bug——那一版把受击方**直接
+    /// 拼在**出击方那句话前面，读出来是「敌人玩家 命中，受到 16 点伤害」
+    /// （两个标签贴在一起、语序还反了）。**两个标签都在**，所以旧断言全绿。
+    /// 现在钉住**确切的那句**：语序（出手方在前）与分隔（`命中 {who}` 之间有空格）。
     #[test]
     fn a_hit_names_the_side_that_struck() {
         let (mut app, player, attack) = log_app();
@@ -125,10 +136,33 @@ mod tests {
         });
         app.update();
 
+        assert_eq!(
+            last(&app),
+            "敌人 命中 玩家，造成 12 点伤害",
+            "语序 = 出手方 → 受击方 → 数值，且标签之间要有分隔"
+        );
+    }
+
+    /// 受击方与出手方**不能贴在一起**（那种句子读不出是谁打谁）。
+    ///
+    /// 单独一条守着这个形状：两方标签相邻时（"敌人玩家"）必然是漏了分隔。
+    #[test]
+    fn the_two_side_labels_are_never_glued_together() {
+        let (mut app, player, attack) = log_app();
+        app.world_mut().write_message(DamageEvent {
+            source: Some(attack),
+            target: player,
+            amount: 1,
+        });
+        app.update();
+
         let text = last(&app);
-        assert!(text.contains("玩家"), "要点出被打的是谁：{text}");
-        assert!(text.contains("敌人"), "要点出是谁打的：{text}");
-        assert!(text.contains("12"), "伤害数值不能丢：{text}");
+        for glued in ["敌人玩家", "玩家敌人"] {
+            assert!(
+                !text.contains(glued),
+                "两方标签贴在一起了（{glued}）：{text}"
+            );
+        }
     }
 
     /// 环境伤害（`source: None`）没有出手方，照旧只写受击方——不能 panic 也不能写"被未知"。
