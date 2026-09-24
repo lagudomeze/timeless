@@ -10,7 +10,7 @@ edition = "2024"
 hot-reload = ["bevy/file_watcher"]
 
 [dependencies]
-rand = "0.10.2"
+rand = "0.10"
 bevy_brp_extras = "0.22"
 # 动作数值外置（`config/actions.ron`）：serde 做结构，ron 做格式。
 # 两个都在 bevy 的依赖树里，但要用它们的**派生宏**就得直接依赖。
