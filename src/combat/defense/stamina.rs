@@ -9,7 +9,8 @@ use bevy::prelude::*;
 pub const STAMINA_REGEN_PER_DECISION: u32 = 1;
 
 /// 精力槽。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
 pub struct Stamina {
     pub current: u32,
     pub max: u32,

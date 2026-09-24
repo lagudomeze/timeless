@@ -4,13 +4,15 @@
 //! 一旦出现，`AbilityDef` 就不再是可序列化的技能表，`.ron` 那条路当场断掉
 //! （见 `docs/skills.md` 第一节）。
 
+use bevy::prelude::Reflect;
+
 use crate::timeline::ActionTiming;
 
 /// 技能的身份（注册表的键）。
 ///
 /// 它是**静态目录的键**，不是调度表：没有人靠它去派发物化，
 /// 谁声明谁物化（见本域模块文档）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Reflect, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AbilityId {
     /// 走一格
     Move,

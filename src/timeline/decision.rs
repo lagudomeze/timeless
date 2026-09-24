@@ -67,7 +67,7 @@ use super::schedule::{ActionTiming, ScheduledAction, Uncancellable};
 /// 没有全局派发器），所以意图在同一帧里就被行动实体取代了。留着它是因为它是
 /// 「决策」这个词的**形状**——`can_cast`（M24b）与将来的"先声明、后统一提交"
 /// 都要读它。在等到第一个读者之前，`first_ready` 只依赖它的 `Some` / `None`。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Reflect, Debug, Clone, Copy, PartialEq)]
 pub struct Intent {
     /// 这一手是什么（[`crate::skills::AbilityId`]：移动 / 跳跃 / 翻滚 / 横扫 / 火球…）
     pub ability: crate::skills::AbilityId,
@@ -76,7 +76,7 @@ pub struct Intent {
 }
 
 /// 意图的目标（**设计意图**，不是几何：覆盖多大由形状组件回答）。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Reflect, Debug, Clone, Copy, PartialEq)]
 pub enum Target {
     /// 不需要目标（跳跃、招架自己找威胁）
     None,
@@ -90,7 +90,8 @@ pub enum Target {
 ///
 /// 「知道了没有」与「在不在执行」由这一个字段回答；前摇 / 后摇**不在这里**——
 /// 它们在行动实体的 `execute_at` 与槽里的 `until` 上（见本文件文首的表格）。
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq)]
+#[reflect(Component)]
 pub enum DecisionSlot {
     /// 空闲：`intent` 空 = 还没决定；有 = 已决定、但这一手还没排进时间轴
     Idle { intent: Option<Intent> },

@@ -26,7 +26,8 @@ pub const FOCUS_RECOVER_INTERVAL: f32 = 10.0;
 /// 在同一瞬间改手（见 `docs/combat.md` 第五节）。
 ///
 /// **每个单位各有一份**——玩家和敌人都会有，AI 因此能像玩家一样抢先手。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
 pub struct Focus {
     pub current: u32,
     pub max: u32,

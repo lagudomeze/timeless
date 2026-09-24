@@ -526,11 +526,16 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       验收：`the_assembled_player_actually_has_armor`（从**组装层真造出来的单位**出发，
       走完整条命中管线，确认 15 点近战只掉 14）；
       **验过不是空跑**（把 `Armor` 从组装里去掉后转红）。
-- [ ] **BRP 看不到战斗数据**：`Health` / `Stamina` / `Armor` / `DecisionSlot` / `Focus`
-      都**没注册反射**（只有 `Cell` 与 `Faction` 注册了），所以
-      `world.query` 读不到它们——调试时最想看的恰恰是这些。
-      要加 `Reflect` 派生 + `register_type`（与 HUD 标记组件同一做法）。
-      **本次实测因此受阻**：想直接读玩家血量确认护甲生效，读不到。
+- [x] **BRP 看不到战斗数据**（本次修好）：`Health` / `Stamina` / `Armor` /
+      `DecisionSlot` / `Focus` 现在都能在运行时直接读。
+      **纠一处我自己的误判**：我先前写"要加 `Reflect` 派生 + `register_type`"，
+      实测下来**`register_type` 不是必需的**——本项目启用了 bevy 的
+      `reflect_auto_register`，**派生 `#[reflect(Component)]` 即注册**；
+      插件里那几行只起"自文档"作用（留着了）。真正卡住 BRP 的是**没派生**。
+      **实测证据**（运行中的游戏，BRP 查询原始输出）：
+      `Armor` 读到玩家 `1` / 敌人 `0`、`Health` `50/50`、`Stamina` `5/5`、
+      `Focus` `3/3`、`DecisionSlot` `{"Idle":{"intent":null}}`。
+      验收：`the_combat_state_is_visible_over_brp`（把 `Health` 的派生拿掉就转红）。
 - [ ] **接入 `assets/textures/ground/grass.png`**（当前无代码引用）。
 
 ### 渲染优化（`voxel_render`）

@@ -1441,6 +1441,60 @@ mod tests {
         );
     }
 
+    /// **战斗状态必须能被 BRP 读到**：没注册反射的组件在远程协议里等于不存在
+    /// （`world.query` 既不能拿它当过滤器，也取不到数据）。
+    ///
+    /// 这条被真事逼出来：想直接读玩家血量确认护甲生效，`world.query` 返回**空**——
+    /// 而"伤害对不对""为什么放不出技能""他为什么不动"恰恰都要看这几个数。
+    /// 加字段忘了注册时，这里会红，而不是等到下次调试又白跑一趟。
+    #[test]
+    fn the_combat_state_is_visible_over_brp() {
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        app.update(); // Startup：组装玩家 + 敌人
+
+        use bevy::ecs::reflect::{AppTypeRegistry, ReflectComponent};
+
+        let registry = app.world().resource::<AppTypeRegistry>().0.clone();
+        let registry = registry.read();
+        let has = |path: &str| registry.get_with_type_path(path).is_some();
+
+        // 挂在实体上的：必须派生了 `#[reflect(Component)]`，否则 BRP 连过滤器都用不了。
+        // （本项目开了 `reflect_auto_register`，派生即注册；插件里的 `register_type`
+        // 是自文档，不是必需——真正卡住 BRP 的是**没派生**。）
+        for type_path in [
+            "app::combat::health::Health",
+            "app::combat::defense::stamina::Stamina",
+            "app::combat::attributes::components::Armor",
+            "app::timeline::decision::DecisionSlot",
+            "app::timeline::focus::Focus",
+            // 坐标（此前唯一注册过的一个）
+            "app::movement::cell::Cell",
+        ] {
+            assert!(
+                registry
+                    .get_with_type_path(type_path)
+                    .is_some_and(|registration| registration.data::<ReflectComponent>().is_some()),
+                "{type_path} 没有作为**组件**注册进反射表：BRP 读不到它"
+            );
+        }
+
+        // 嵌在组件里的载荷：不必是组件，但**必须能被反射序列化**——
+        // 否则 BRP 读 `DecisionSlot` 只会拿到一个没有内容的变体名
+        for type_path in [
+            "app::timeline::decision::Intent",
+            "app::timeline::decision::Target",
+            "app::skills::defs::AbilityId",
+        ] {
+            assert!(
+                has(type_path),
+                "{type_path} 没进反射表：`DecisionSlot` 读出来会缺内容"
+            );
+        }
+    }
+
     /// 整机装配冒烟：跨领域流水线（含帧末时钟）跑得起来，资源都在位。
     #[test]
     fn the_pipeline_runs_with_every_domain_installed() {
