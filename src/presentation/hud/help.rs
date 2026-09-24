@@ -32,7 +32,9 @@ pub const HELP_LINES: &[&str] = &[
     "  Tab / Shift+Tab cycle affordable skills",
     "  G               use selected skill",
     "  C               jump (cannot be interrupted)",
-    "  Space           wait 1s: hold the slot but let the world run",
+    // 不写具体秒数：等待时长是可配的（`timeline::WaitConfig`），
+    // 写死一个数字只会在配置改掉之后变成错的
+    "  Space           wait: hold the slot but let the world run",
     "  P               pause / resume",
     "  B / V           place / remove a block on the hovered cell",
     "  Shift + a key   spend 1 Focus: no windup on that action",

@@ -86,8 +86,8 @@ pub use ownership::{ActionOf, Actions};
 pub use plugin::TimelinePlugin;
 pub use schedule::{ActionTiming, ScheduledAction, Uncancellable};
 pub use wait::{
-    WAIT_ABILITY, WAIT_SECONDS, WAIT_TIMING, WaitAction, WaitCommand, declare_wait_system,
-    register_wait_ability_system, wait_action_scene, wait_executor_system,
+    WaitAction, WaitCommand, WaitConfig, declare_wait_system, register_wait_ability_system,
+    wait_action_scene, wait_executor_system,
 };
 
 /// 时间线在 `Update` 中的系统集（排在输入之后、AI 与执行器之前）。
