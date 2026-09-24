@@ -53,6 +53,8 @@ pub fn apply_block_command_system(
     mut chunks: Query<&mut Chunk>,
     mut dirty: MessageWriter<ChunkDirtyEvent>,
     mut refused: MessageWriter<BlockRefused>,
+    // 改动要进存档（`saves/world.ron`）：这里只**记一条**，落盘在退出时
+    mut edits: ResMut<crate::world::storage::WorldEdits>,
 ) {
     for command in block_commands.read() {
         // 格 → 世界体素坐标：格中心的地表那一格。
@@ -70,7 +72,7 @@ pub fn apply_block_command_system(
             voxel
         };
         let kind = if command.place { PLACED } else { REMOVED };
-        set_voxel(
+        let changed = set_voxel(
             &chunk_map,
             &mut chunks,
             &mut dirty,
@@ -78,6 +80,11 @@ pub fn apply_block_command_system(
             target,
             kind,
         );
+        // **只在真的变了时记**：写的值与原来相同时 `set_voxel` 返回 false，
+        // 记进存档只会在加载时做一次等价的重复写入（无害但没意义）
+        if changed {
+            edits.record(crate::world::storage::VoxelEdit::new(target, kind));
+        }
     }
 }
 
@@ -133,6 +140,8 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<ChunkMap>()
+            // 改动会记进存档（本子域的资源，加载 / 落盘不在这条测试的射程内）
+            .init_resource::<crate::world::storage::WorldEdits>()
             .add_message::<BlockCommand>()
             .add_message::<ChunkDirtyEvent>()
             .add_message::<BlockRefused>()

@@ -17,7 +17,7 @@ Project Timeless：基于 **Bevy 0.19.1** 的 roguelike 策略游戏原型。pac
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 全部测试（333：330 单元 + 3 资产验收）
+cargo test                                  # 全部测试（342：339 单元 + 3 资产验收）
 cargo test <name>                           # 单个测试，例：cargo test fireball_flies_to_the_locked_cell_and_explodes
 cargo test --lib                            # 只跑单元测试
 cargo test --test assets                    # 只跑资产验收（改日志文案 / 加技能后必跑）
