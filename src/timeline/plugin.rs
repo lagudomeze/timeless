@@ -37,6 +37,9 @@ impl Plugin for TimelinePlugin {
             // 目录必须存在才能把「等待」交上去（与 combat / movement 同一约定）
             .add_systems(Startup, register_wait_ability_system)
             .init_resource::<PendingFocus>()
+            // BRP 诊断锚点：决策槽是"他为什么不动"的第一现场
+            .register_type::<super::DecisionSlot>()
+            .register_type::<super::Focus>()
             // 玩家自己动手：写方是 input / interaction，消费方是本域的撤销系统
             .add_message::<PlayerTakeover>()
             // Focus 换前摇：写方是 input（Shift + 决策键），消费方是本域

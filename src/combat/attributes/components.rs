@@ -14,7 +14,8 @@ use bevy::prelude::*;
 pub struct PhysicalDamage(pub i32);
 
 /// 护甲（目标挂载）：物理伤害先扣它，最低 0。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[reflect(Component)]
 pub struct Armor(pub i32);
 
 /// 命中半径（射弹与目标各有一个；距离 ≤ 两者半径之和即接触）。

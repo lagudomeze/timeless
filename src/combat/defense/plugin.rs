@@ -19,6 +19,8 @@ impl Plugin for DefensePlugin {
             // 输入类消息（写：input；消费：本域）
             .add_message::<RollCommand>()
             .add_message::<ParryCommand>()
+            // BRP 诊断锚点：精力是"为什么放不出技能"第一个要看的数
+            .register_type::<super::Stamina>()
             // 后摇结束回 1 点精力：时间线只宣布"他能决策了"，回多少归本域
             .add_observer(recover_stamina_observer)
             .add_systems(

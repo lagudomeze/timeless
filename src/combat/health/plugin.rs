@@ -13,6 +13,9 @@ impl Plugin for HealthPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<DeathEvent>()
             .add_message::<DamageEvent>()
+            // BRP 诊断锚点：血量是"为什么没死/伤害不对"第一个要看的数
+            .register_type::<super::Health>()
+            // 反射：BRP 要能直接读血量（排查"为什么没死/伤害不对"时最想看的数）
             .add_systems(
                 Update, // 扣血 → 死亡消息；销毁放最后，其他系统这一帧还能读到尸体
                 (apply_damage_system, despawn_dead_system)

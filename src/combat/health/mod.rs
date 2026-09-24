@@ -5,7 +5,12 @@ use bevy::prelude::*;
 /// 当前 / 最大生命值（整数：纯减法，可交换，没有浮点边界）。
 ///
 /// **允许扣到负数**：伤害不提前终止，`is_alive` 只回答"还站着吗"。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+/// **为什么派生 `Reflect`**：BRP（`world.query`）只认反射表里的组件。
+/// 本项目启用了 bevy 的 `reflect_auto_register`，所以**派生即注册**——
+/// 不需要（也不该）在插件里逐个 `register_type`。
+/// 缺了派生的症状是：调试时 `world.query` 静默返回空，查不出为什么。
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
 pub struct Health {
     pub current: i32,
     pub max: i32,
