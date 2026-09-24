@@ -15,6 +15,7 @@ use super::model::{
     BLOCK_POOL_PER_LANE, LANE_GAP, LANE_HEIGHT, LANE_POOL, STAGING_WIDTH, TICK_POOL, TICK_SECONDS,
     WINDOW_SECONDS,
 };
+use super::readout::{TimelineReadout, TimelineReadoutText};
 
 /// 车道底色：比轨道更淡，它只是"行"，不抢色块。
 const LANE_BG: Color = Color::srgba(1.0, 1.0, 1.0, 0.05);
@@ -92,11 +93,31 @@ pub fn spawn_timeline(commands: &mut Commands, font: &Handle<Font>) -> Entity {
                 row_gap: Val::Px(4.0),
                 ..default()
             },
-            children![(
-                Name::new("TimelineState"),
-                hud_text_tinted(font, 12.0, "", Color::srgb(0.80, 0.86, 0.95)),
-                TimelineStateLabel,
-            )],
+            children![
+                (
+                    Name::new("TimelineState"),
+                    hud_text_tinted(font, 12.0, "", Color::srgb(0.80, 0.86, 0.95)),
+                    TimelineStateLabel,
+                ),
+                // 悬停读数：滑到色块上看"谁 · 什么 · 打哪 · 还剩多久 · 能不能打断"。
+                // 默认隐藏，鼠标离开时间轴就收起。
+                (
+                    Name::new("TimelineReadout"),
+                    Node {
+                        padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(4.0)),
+                        display: Display::None,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.06, 0.08, 0.12, 0.92)),
+                    TimelineReadout,
+                    children![(
+                        Name::new("TimelineReadoutText"),
+                        hud_text_tinted(font, 11.0, "", Color::srgb(0.86, 0.92, 1.0)),
+                        TimelineReadoutText,
+                    )],
+                ),
+            ],
         ))
         .id();
 
@@ -274,6 +295,8 @@ fn spawn_lane_block(
         .spawn((
             Name::new(format!("TimelineBlockLane{lane}Slot{slot}")),
             TimelineBlock { lane, slot },
+            // 悬停识别：色块挂 `Interaction` 才能被鼠标读到（读数与高亮的入口）
+            Interaction::default(),
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(0.0),

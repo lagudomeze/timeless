@@ -11,6 +11,7 @@
 //! 设计语义（色块 = 占用、刻线 = 结算、按单位分道、候场区）写在 `model` 的文首。
 
 mod model;
+mod readout;
 mod scene;
 mod system;
 
@@ -18,8 +19,14 @@ pub use model::{
     BLOCK_POOL_PER_LANE, LANE_GAP, LANE_HEIGHT, LANE_POOL, MIN_BLOCK_WIDTH, STAGING_WIDTH,
     TICK_POOL, TICK_SECONDS, TimelineCache, TimelineModel, WINDOW_SECONDS, build_model,
 };
+pub use readout::{
+    ActionReadout, HoveredAction, TimelineHover, TimelineReadout, TimelineReadoutText,
+    interrupt_label, readout_line,
+};
 pub use scene::{
     TimelineBlock, TimelineBlockLabel, TimelineBlockMark, TimelineLane, TimelineLaneLabel,
     TimelineReadyChip, TimelineReadyLabel, TimelineStateLabel, spawn_timeline,
 };
-pub use system::update_timeline_system;
+pub use system::{
+    TimelineLayout, TimelineReadoutState, update_timeline_readout_system, update_timeline_system,
+};

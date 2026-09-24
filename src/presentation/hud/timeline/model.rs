@@ -55,11 +55,20 @@ pub struct TimelineSlot {
     pub mark: f32,
     pub faction: Faction,
     pub draft: bool,
+    /// 这一格画的是哪条**行动实体**。
+    ///
+    /// 色块只有 `lane` / `slot` 两个位置信息，而悬停读数要的是"这一手是什么、
+    /// 打哪儿、还剩多久"——那些都挂在行动实体上。把它带在这里，悬停时才能**反查**，
+    /// 不必再全表扫描"哪个行动属于这条车道的行动者"（那种扫描在悬停系统里
+    /// 每帧都会跑，而且判据会与这里的分道逻辑分叉）。
+    pub action: Entity,
 }
 
 /// 一条待排期的行动：从行动实体上摘下来的几个数（不持有实体引用之外的东西）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ActionRow {
+    /// **这一条行动本身**（悬停读数要回到它上面取载荷 / 落点 / 标签）
+    pub action: Entity,
     /// 行动者
     pub actor: Entity,
     /// 声明时刻（= `execute_at − windup`）
@@ -75,8 +84,8 @@ pub struct ActionRow {
 /// 一帧的时间轴快照：状态行 + 每条车道的色块 + 候场名单。
 ///
 /// 这才是**写进缓存**的东西：与上一帧完全相等就整帧不碰 UI。
-/// [`TimelineModel`] 多带的 `lane_faction` 不进缓存——它只用来写 UI，
-/// 车道内容本身（`lanes` / `ready` / `state`）一变就整批重写。
+/// [`TimelineModel`] 多带的 `lane_faction` / `lane_actor` 不进缓存——它们只用来写 UI
+/// 与反查悬停，车道内容本身（`lanes` / `ready` / `state`）一变就整批重写。
 /// 冻结时这条路径收益最大（虚拟时间冻结、`now` 不变、队列不变），
 /// 每帧的 `Node` 写入全部省掉。
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -99,6 +108,8 @@ pub struct TimelineModel {
     pub ready: Vec<usize>,
     /// 每条车道的阵营（写 UI 的字母与颜色都要它）
     pub lane_faction: Vec<Option<Faction>>,
+    /// 每条车道的行动者（悬停色块时由它反查"这一手是谁的、什么载荷"）
+    pub lane_actor: Vec<Option<Entity>>,
 }
 
 impl TimelineModel {
@@ -216,6 +227,7 @@ pub fn build_model(
             mark: resolve_mark_percent(row.windup, row.total),
             faction,
             draft: row.draft,
+            action: row.action,
         });
     }
     for lane in &mut lanes {
@@ -235,6 +247,7 @@ pub fn build_model(
         lanes,
         ready: ready_lanes,
         lane_faction,
+        lane_actor,
     }
 }
 
@@ -321,6 +334,7 @@ mod tests {
         let roster = [(player, Faction::Player), (enemy, Faction::Enemy)];
         let rows = [
             ActionRow {
+                action: world.spawn_empty().id(),
                 actor: enemy,
                 declared_at: 0.5,
                 total: MOVE_TIMING.total(),
@@ -328,6 +342,7 @@ mod tests {
                 draft: true,
             },
             ActionRow {
+                action: world.spawn_empty().id(),
                 actor: player,
                 declared_at: 2.0,
                 total: MOVE_TIMING.total(),
@@ -336,6 +351,7 @@ mod tests {
             },
             // 完全在视野之外：不该出现
             ActionRow {
+                action: world.spawn_empty().id(),
                 actor: enemy,
                 declared_at: 99.0,
                 total: MOVE_TIMING.total(),
@@ -365,6 +381,7 @@ mod tests {
         let roster = [(idle, Faction::Player), (busy, Faction::Enemy)];
         // busy 虽然决策槽也空着，但已经有一条排期 → 不该站候场
         let rows = [ActionRow {
+            action: world.spawn_empty().id(),
             actor: busy,
             declared_at: 0.0,
             total: MOVE_TIMING.total(),

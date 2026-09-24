@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 311 通过（308 单元 + 3 资产验收）/ 0 跳过
+cargo test                                  # 317 通过（314 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -706,15 +706,23 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ### 信息层（G 层：信息即力量）
 
-- [ ] **洞察力 / 时间轴交互**：**设计稿已出**（[`docs/insight.md`](docs/insight.md)），
-      代码未落地。两件事：① **时间轴悬停读数**——滑到色块上看"谁 · 什么技能 ·
-      打哪一格 · 还剩多久 · 能不能被打断"，并高亮战场上对应的单位；
-      ② **洞察力面板**（建议做成敌人面板展开，列帧 / 射程 / 打断抗性 / 血量 / 会什么）。
-      **关键发现**：这两件事**不需要新数据类型**——要显示的每一个数都已经挂在
-      行动实体或单位上了（`ActionTiming` / `TargetCell` / `Threatens` / `CombatTags` /
-      `AttackRange`），只是**玩家看不见**。尤其 `Threatens.cells`
-      现在同时被反应系统与 AI 读，唯独玩家看不到——画出来就等于"玩家与 AI 用同一张威胁图"。
-      设计里标了 4 个待你拍板项（面板范围 / 悬停优先权 / 提示条位置 / 要不要画威胁格）。
+- [x] **洞察力 / 时间轴悬停读数**（本次，设计稿 ①② 落地）：滑到时间轴的色块上，
+      状态行下方弹出一行 **`ENEMY · fireball → cell (3,1) · 0.4s · interruptible`**
+      ——谁 · 什么 · 打哪 · 还剩多久 · 能不能被打断。
+      **一行新增数据类型都没有**（设计稿的关键发现兑现了）：那五个数本来就挂在
+      行动实体上，只是玩家看不见。做法是让**色块自己带着行动实体的 id**
+      （`TimelineSlot::action`），悬停时反查——比"按车道找那个行动者的行动"稳：
+      后者的判据会与分道逻辑分叉。
+      **对抗标签的读法与打断闸门共用一条口径**（`!interruptible || super_armor`
+      → `super armor`）：读数说能打断、实际断不掉比没有读数更糟，有测试钉住。
+      三层照旧新增 `readout.rs`（`readout_line` 纯函数 + `TimelineHover` 事实 + 两个
+      标记组件），取数写 UI 在 `system.rs`，条子本身在 `scene.rs`。
+      验收：314 测试全绿 / clippy 零警告 / fmt 通过；
+      `hovering_a_block_shows_what_that_action_is`（整条链路：色块 → 反查 → 读数文案 →
+      `TimelineHover`）与 `the_readouts_countdown_follows_the_virtual_clock`；
+      前者**验过不是空跑**（把判据从 `Hovered` 改成只认 `Pressed` 后转红）。
+      **未做**（设计稿 ③④，仍待拍板）：战场单位高亮（`TimelineHover` 已就位、没接）、
+      画威胁格、敌人面板展开式洞察力面板。
 - [x] **战斗日志：谁打的谁**（本次）：日志原本只写"玩家 受到 12 点伤害"，
       **看不出谁出的手**；死亡也只写"敌人 阵亡"，而 `DeathEvent.killer` 一直被忽略。
       现在写得出「玩家命中，受到 12 点伤害」（来源是攻击实体，读它的 `Faction` 认出手方）
