@@ -13,6 +13,7 @@ use bevy::prelude::*;
 pub mod camera;
 pub mod components;
 pub mod decoration;
+pub mod effects;
 pub mod hud;
 pub mod log;
 pub mod plugin;
@@ -21,6 +22,7 @@ pub mod unit_sprite;
 
 pub use camera::{PanCamera, ZoomCamera};
 pub use components::{CameraRig, MainCamera};
+pub use effects::{EffectParticle, animate_hit_effects_system, spawn_hit_effects_system};
 pub use hud::{HudRoot, ToggleHelp, setup_hud, toggle_help_system};
 pub use log::{BattleLog, battle_log_system};
 pub use plugin::PresentationPlugin;
