@@ -134,7 +134,16 @@ pub fn refund_fireball_observer(
 ///
 /// 挂 [`TargetCell`]：飞行中的它同样构成威胁（反应系统据此冻结世界，
 /// 玩家还有机会躲开或者抢先把它打掉）。
-pub fn fireball_scene(origin: Vec3, target_cell: Cell, faction: Faction) -> impl Scene {
+///
+/// `damage` 是**这一发的最终数值**（基础 `FIREBALL_DAMAGE` + 施法者的武器加成）；
+/// [`Fireball::amount`] 会带着它一路走到爆炸结算——爆炸系统读的是那个组件，
+/// 不需要认识"装备"。
+pub fn fireball_scene(
+    origin: Vec3,
+    target_cell: Cell,
+    faction: Faction,
+    damage: i32,
+) -> impl Scene {
     let target = target_cell.center();
     // 落到目标格中心正上方一点，避免贴地穿模
     let destination = Vec3::new(target.x, origin.y, target.y);
@@ -152,10 +161,14 @@ pub fn fireball_scene(origin: Vec3, target_cell: Cell, faction: Faction) -> impl
     bsn! {
         template_value(faction)
         template_value(Velocity(direction * speed))
-        template_value(Fireball::default())
+        Fireball {
+            speed: FIREBALL_SPEED,
+            amount: {damage},
+            radius: FIREBALL_RADIUS,
+        }
         TargetCell(target_cell)
         Projectile { max_hits: 0, current_hits: 0, finished: false }
-        template_value(PhysicalDamage(FIREBALL_DAMAGE))
+        template_value(PhysicalDamage(damage))
         template_value(AttackFrame(FIREBALL_FRAME))
         template_value(InterruptPower(FIREBALL_POWER))
         HitRadius(0.35)
@@ -203,6 +216,8 @@ pub fn declare_fireball_system(
     config: Option<Res<crate::config::ActionConfig>>,
     mut players: FireballPlayer<'_, '_>,
     units: Query<(&Transform, &Faction)>,
+    // 武器改动作节奏（只给偏移，见 `equipment::weapon_timing`）
+    equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
     let Some(request) = fires.read().last().copied() else {
         return;
@@ -236,7 +251,11 @@ pub fn declare_fireball_system(
     });
 
     stamina.try_spend(FIREBALL_COST);
-    let timing = fireball_timing(config.as_deref());
+    // 武器节奏：只有攻击动作吃它（移动 / 翻滚与手上的东西无关）
+    let timing = crate::equipment::weapon_timing(
+        fireball_timing(config.as_deref()),
+        equipment.get(player).ok(),
+    );
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
     declare_fireball_at(&mut commands, player, *cell, target_cell, timing, schedule);
@@ -272,6 +291,8 @@ pub fn declare_melee_system(
     config: Option<Res<crate::config::ActionConfig>>,
     mut players: AttackerPlayer<'_, '_>,
     units: Query<(&Transform, &Faction)>,
+    // 武器改动作节奏（只给偏移，见 `equipment::weapon_timing`）
+    equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
     if melees.read().last().is_none() {
         return;
@@ -291,7 +312,10 @@ pub fn declare_melee_system(
         })
         .map(|(target, _)| Cell::from_world(target.translation))
         .unwrap_or(*cell);
-    let timing = melee_timing(config.as_deref());
+    let timing = crate::equipment::weapon_timing(
+        melee_timing(config.as_deref()),
+        equipment.get(player).ok(),
+    );
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
     super::actions::declare_melee_at(&mut commands, player, *cell, target_cell, timing, schedule);
@@ -349,6 +373,7 @@ pub fn fireball_action_executor_system(
         &ActionOf,
     )>,
     actors: Query<(&Transform, &Faction)>,
+    equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
     let now = time.elapsed_secs();
     for (entity, timing, schedule, action, action_of) in &actions {
@@ -365,7 +390,15 @@ pub fn fireball_action_executor_system(
                 transform.translation.z,
             );
             effect_delay = flight_time(origin, action.target_cell);
-            commands.spawn_scene(fireball_scene(origin, action.target_cell, *faction));
+            // 武器加成在生成时算好：攻击实体自己不认识"装备"（见 `melee_scene`）
+            let damage = crate::equipment::weapon_damage(
+                FIREBALL_DAMAGE,
+                equipment
+                    .get(actor)
+                    .map(|bonus| bonus.damage())
+                    .unwrap_or(0),
+            );
+            commands.spawn_scene(fireball_scene(origin, action.target_cell, *faction, damage));
         }
         let recovery = DecisionSlot::recovering(timing, schedule, effect_delay);
         commands.entity(entity).despawn();

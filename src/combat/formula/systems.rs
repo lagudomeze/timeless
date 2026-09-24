@@ -58,6 +58,8 @@ pub fn apply_physical_hits_system(
     parrying: Query<&Parrying>,
     // 格挡率来自装备 / 姿态；管线只读它，不自己算
     blockers: Query<&BlockChance>,
+    // 装备加成：有效护甲 / 格挡率 = 基础 + 加成（见 `docs/equipment.md` 第五节）
+    equipment: Query<&crate::equipment::EquipmentBonus>,
     mut hit_once: Query<&mut HitOnce>,
     mut projectiles: Query<(&mut Projectile, Option<&mut Velocity>)>,
 ) {
@@ -75,7 +77,10 @@ pub fn apply_physical_hits_system(
             .get(target)
             .ok()
             .map(|parry| parry.target_attack.to_bits());
-        let block_chance = blockers.get(target).map(|c| c.clamped()).unwrap_or(0.0);
+        let block_chance = crate::equipment::block_chance_of(
+            blockers.get(target).map(|c| c.0).unwrap_or(0.0),
+            equipment.get(target).ok(),
+        );
         let outcome = resolve_defense(
             DefenseState {
                 dodging: dodging.get(target).is_ok(),
@@ -88,7 +93,11 @@ pub fn apply_physical_hits_system(
             block_roll(),
         );
 
-        let armor = armors.get(target).map(|armor| armor.0).unwrap_or_default();
+        // 护甲取**有效值**：基础（组装层给的）+ 装备加成（本域之外的唯一来源）
+        let armor = crate::equipment::armor_of(
+            armors.get(target).map(|armor| armor.0).unwrap_or_default(),
+            equipment.get(target).ok(),
+        );
         // 六关的顺序（`docs/combat.md` 第一节）：① 闪避 / ② 招架**拦下**（归零）
         // → ③ 格挡**按格挡率减伤** → ④ 抗性（护甲）再减。
         // **格挡在抗性之前**：减伤发生在"原始伤害"上，与抗性各自独立地削，

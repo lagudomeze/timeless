@@ -209,6 +209,20 @@ pub fn block_edit_input_system(
     }
 }
 
+/// `T` → [`ToggleLoadout`]：把 PC 的装备穿 / 脱一遍。
+///
+/// **只翻译**：本域不认识槽位、物品或数值——它只知道"玩家想换一身装备"。
+/// ⚠️ 这是**调试开关**（这一版还没有装备来源），出现真正的获取途径时
+/// 它该被背包 UI 取代（见 [`ToggleLoadout`] 的说明）。
+pub fn loadout_input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut toggles: MessageWriter<crate::equipment::ToggleLoadout>,
+) {
+    if keys.just_pressed(KeyCode::KeyT) {
+        toggles.write(crate::equipment::ToggleLoadout);
+    }
+}
+
 /// `F5` → [`ResetBattle`]（只翻译，不改状态）。
 ///
 /// 组装车间只负责「清场 + 用同一套工厂重新组装」，**不认识按键**：

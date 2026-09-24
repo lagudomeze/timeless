@@ -13,7 +13,14 @@ use bevy::prelude::*;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PhysicalDamage(pub i32);
 
-/// 护甲（目标挂载）：物理伤害先扣它，最低 0。
+/// 护甲**基础值**（目标挂载）：物理伤害先扣它，最低 0。
+///
+/// **装备不动这个组件**：装备域把自己的加成写在
+/// [`EquipmentBonus`](crate::equipment::EquipmentBonus) 上，有效护甲 = 基础 + 加成
+/// （`equipment::effective_armor`）。于是"没穿装备时我是什么样"永远查得到，
+/// 卸下也不需要记住"上次加了多少"——见 `docs/equipment.md` 第五节。
+///
+/// 命中管线读的是**有效值**（见 [`crate::combat::formula`]），不是这里的裸数字。
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[reflect(Component)]
 pub struct Armor(pub i32);

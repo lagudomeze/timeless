@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use crate::ai::Tactic;
 use crate::combat::defense::{Dodging, Parrying, Stamina};
-use crate::combat::{Faction, Health};
+use crate::combat::{Armor, Faction, Health};
 use crate::movement::{Cell, Jumping};
 use crate::timeline::DecisionSlot;
 
@@ -42,6 +42,8 @@ pub fn update_unit_panels_system(
     parrying: Query<(), With<Parrying>>,
     airborne: Query<(), With<Jumping>>,
     tactics: Query<&Tactic>,
+    // 有效护甲 = 基础 + 装备加成：这里只问"是多少"，结构由 equipment 回答
+    armors: Query<(&Armor, Option<&crate::equipment::EquipmentBonus>)>,
 ) {
     let rows: Vec<UnitRow> = units
         .iter()
@@ -57,6 +59,10 @@ pub fn update_unit_panels_system(
                 parrying: parrying.get(entity).is_ok(),
                 airborne: airborne.get(entity).is_ok(),
                 tactic: tactics.get(entity).ok().copied(),
+                armor: armors
+                    .get(entity)
+                    .ok()
+                    .map(|(base, bonus)| crate::equipment::armor_of(base.0, bonus)),
             },
         )
         .collect();

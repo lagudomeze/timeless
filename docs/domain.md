@@ -19,6 +19,7 @@
 | `movement` | 格子坐标（`Cell`）+ 连续位移（`Velocity`）+ 移动 / 跳跃 / 翻滚载荷与执行器 | `combat`、`ai`、`interaction`、`spawn` |
 | `combat` | 战斗的**全部子域**（见下） | `ai`、`spawn`、`presentation` |
 | `skills` | 技能**静态定义**：`AbilityId` / `AbilityDef` / `CombatTags` / `Requirement` / `can_cast` / 反制代价 ✅；**移动 / 跳跃 / 翻滚也是技能**，不做特殊处理 | 几乎所有域（读目录） |
+| `equipment` | 装备：槽位 / 物品 / `EquippedTo` / 「基础值 + 加成」的加成（M27） | `spawn`（穿起始装备）、`combat::formula`（读有效护甲 / 格挡率）、`presentation`（HUD 读数）、`input`（`T` 开关） |
 | `timeline` | 决策槽 + 行动实体 + 撤销 / 后摇恢复 / Focus | 几乎所有域 |
 | `clock` | **通用冻结设施**（不属于任何领域）：暂停请求 → 原因集合 → `Time<Virtual>` | 各领域（写请求） |
 | `ai` | 敌人决策（填意图） | — |
@@ -94,6 +95,8 @@
 | `ActionBlocked` | 各声明系统 | `presentation` 的提示条 |
 | `BlockCommand` | `input`（`B` / `V`） | `world::apply_block_command_system` |
 | `BlockRefused` | `world`（方块交互被拒） | `presentation` 的提示条 |
+| `ToggleLoadout` | `input`（`T`） | `equipment::toggle_loadout_system` |
+| `EquipmentRefused` | `equipment`（校验 Observer） | `presentation` 的提示条 |
 | `DamageEvent` / `DeathEvent` | `combat::formula` / `combat::health` | `combat::health` / `presentation` 的日志 |
 | `ProjectileArrived` | `combat::attack`（火球到达） | `combat::attack`（爆炸） |
 | `PointerCommand` | `input` | `interaction`（解释成走 / 打 / 撤） |
@@ -133,7 +136,7 @@
 ```text
 Startup:  PreloadSet ─▶ AssemblySet
 Update:   SpawnSet ─▶ InputSet ─▶ InteractionSet ─▶ TimelineSet ─▶ AiSet
-          ─▶ MovementSet ─▶ CombatSet ─▶ VoxelRenderSet ─▶ PresentationSet ─▶ ClockSet
+          ─▶ MovementSet ─▶ EquipmentSet ─▶ CombatSet ─▶ VoxelRenderSet ─▶ PresentationSet ─▶ ClockSet
 WorldSet ──────────────────────▶（必须早于 VoxelRenderSet）
 ClockSet 排在帧末：这一帧所有系统看到同一个冻结状态，唯一的时钟写入点在这里
 ```

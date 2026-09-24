@@ -22,8 +22,8 @@ Project Timeless 是基于 Bevy 0.19 的 roguelike 策略游戏。主线玩法�
 ```
 
 领域：`world`（体素数据，零渲染依赖）· `voxel_render`（网格化 / 材质 / 明暗）·
-`movement` · `combat`（8 个子域）· `skills`（技能**静态定义**）· `timeline` ·
-`clock`（通用冻结设施，不属于任何领域）· `ai` · `input` · `interaction` ·
+`movement` · `combat`（8 个子域）· `skills`（技能**静态定义**）· `equipment`（装备）·
+`timeline` · `clock`（通用冻结设施，不属于任何领域）· `ai` · `input` · `interaction` ·
 `presentation` · `spawn`（组装车间）。纯几何不单独建域——形状是
 **一个形状一个组件**（`HitRadius` / `MeleeShape`），判定紧贴各自的系统。
 完整说明见 [`docs/domain.md`](docs/domain.md)。
@@ -85,7 +85,7 @@ cargo fmt --check                           # 格式校验
   其他领域需要该操作时只写消息，不重复实现。
   **按键本身永远住在 `input/`**（`src/input/keyboard.rs` 是键位的唯一真相，
   玩家看得到的副本是 `presentation::hud::help::HELP_LINES`，两者由测试对账）：
-  空格是等待、`P` 是暂停、`F5` 是重置、`Q/W/E/R` 是技能，
+  空格是等待、`P` 是暂停、`F5` 是重置、`Q/W/E/R` 是技能、`T` 是穿脱装备，
   各领域只收到"等一秒""暂停一下""重置一下"这类意图，不认识 `KeyCode`。
 - 跨模块交互一律走 `MessageWriter` / `MessageReader`；只有需要立即生效、
   针对具体实体时才用 Event + Observer，两者不可混用。

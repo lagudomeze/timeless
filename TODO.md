@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 251 通过（248 单元 + 3 资产验收）/ 0 跳过
+cargo test                                  # 308 通过（305 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -18,7 +18,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ## 当前代码是什么
 
-`src/`（package `app`）= 11 个领域 + 组装车间：
+`src/`（package `app`）= 12 个领域 + 组装车间：
 
 - `world` 32³ 体素区块 / 噪声地形 / 体素读写 / 方块交互（零渲染依赖，`MinimalPlugins` 可单测）
 - `voxel_render` 异步面剔除网格化 / 按类型分组材质 / 面朝向明暗
@@ -26,9 +26,12 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
   移动 / 跳跃 / 翻滚载荷与执行器
 - `combat` 生命 / 护甲公式 / 碰撞与近战扇形 / 攻击实体生命周期 / 箭矢与横扫 /
   火球锁格 + 真实距离 AoE / 精力 / 翻滚无敌帧 / 招架反制 / 格挡 / 反应槽
-  （7 个子域，**每个子域一个 `plugin.rs`**，`CombatPlugin` 只编排顺序）
+  （8 个子域，**每个子域一个 `plugin.rs`**，`CombatPlugin` 只编排顺序）
 - `skills` **静态目录**（顶层域）：`AbilityId` / `AbilityDef` / `SkillRegistry` /
   `RegisterAbility` / `can_cast`；数值仍归各机制域，目录只聚合
+- `equipment` **装备**（顶层域）：槽位（`ChildOf` PC）/ 物品（`EquippedTo` 槽位）/
+  类型校验 Observer / **「基础值 + 加成」**——基础值由组装层写、加成只有它写，
+  有效值走纯函数（`armor_of` / `weapon_damage` / `weapon_timing`）
 - `timeline` **无回合**调度：`DecisionSlot` 两态（`Idle { intent }` / `Executing { until }`，
   见 M23）写在行动者身上；`is_idle()` 问"能不能占槽"、`ready()` 问"要不要等他"；
   行动归行动者所有（`ActionOf` / `Actions`，人没了行动跟着没），`Focus`
@@ -40,12 +43,13 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
   `input` 只发消息
 - `ai` 六种战术（含威胁预判与花钱买前摇的闪避）+ 声明行动
 - `input` 只翻译（`F5` → `ResetBattle`、**空格 → 等待**、`P` → 手动暂停、`B`/`V` 放/挖方块、
-  `PlayerTakeover`）· `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
+  `T` → 穿脱装备、`PlayerTakeover`）· `interaction` 鼠标拾取 / 高亮 / 预演 / 点击解释
 - `presentation` 相机 / 单位纸片与贴地阴影 / 装饰 / 中文日志 / 英文 HUD
 - `spawn` 组装车间（消费 `ResetBattle`，不认识按键）
 
-领域：`world` · `voxel_render` · `movement` · `combat`（7 子域）· `skills`（静态定义）·
-`timeline` · `clock` · `ai` · `input` · `interaction` · `presentation` · `spawn`。
+领域：`world` · `voxel_render` · `movement` · `combat`（8 子域）· `skills`（静态定义）·
+`equipment`（装备）· `timeline` · `clock` · `ai` · `input` · `interaction` ·
+`presentation` · `spawn`。
 
 域地图与跨域契约见 [`docs/domain.md`](docs/domain.md)，文档入口是
 [`docs/index.md`](docs/index.md)。
@@ -393,15 +397,32 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       付不起的也标出来。见 `docs/combat.md` 第四节。
       验收：`a_counter_suggestion_lights_up_the_skill_that_can_answer_it`
       （**验过不是空跑**：把建议查找改成恒返回 `None` 后转红）。
-- [ ] **M27 装备系统（D5）**：**设计稿已出**（[`docs/equipment.md`](docs/equipment.md)），
-      代码未落地。设计把原来的"一句话"拆成了可落地的决定，并**标出 6 个待你拍板项**：
-      ① 槽位集合（建议先 `MainHand` + `Armor`）；② **属性叠加结构**（建议"基础值 + 加成"
-      两个组件，而不是写回原组件）；③ 武器改动作节奏（建议给偏移量，与②同形）；
-      ④ 卸下的物品去哪；⑤ 耐久；⑥ 装备来源。
-      还把与 `config/` 的分工写清了（技能基础值在 `actions.ron`、武器偏移在物品定义里、
-      单位基础属性在组装层——**同一个数值不许放两处**）。
-      **为什么先出设计**：②是"定错了连累 `can_cast` 与命中公式"的那一条，
-      结构得先定；而且它决定 `equipment` 是独立域还是 `combat` 的子域。
+- [x] **M27 装备系统（D5）**（本次）：**设计落地为一个独立顶层域 `src/equipment/`**。
+      七个文件各回答一个问题：`components`（槽位 / 物品 / 加成是什么）·
+      `domain`（"基础 + 加成"怎么算，**零 Bevy**）· `relations`（`EquippedTo`）·
+      `events` · `scene`（BSN 工厂）· `systems` · `plugin`。
+      **六个待拍板项按设计稿的建议全部采纳**：①槽位取 `MainHand` + `OffHand` + `Armor`
+      （`Trinket` 不做，触发条件见 `docs/equipment.md` 第三节）；②**基础值 + 加成**
+      （设计稿候选 B）；③武器**给偏移**（第七节"乙"，且**只作用于攻击动作**——
+      让一把剑改掉翻滚前摇没有道理）；④卸下的物品**落在原地、活着**；⑤⑥不做。
+      **一处与设计稿的偏差**（写进了文档）：加成是**一份聚合组件** `EquipmentBonus`
+      而不是"每个属性两个组件"——没有任何消费者需要"单看某一项加成"，
+      拆开只会多三份写入者与三处清残留的机会。
+      **接线**：`EquipmentSet` 排在 `CombatSet` **之前**（加成要在命中公式读它之前算好）；
+      `spawn` 给 PC 发三格起始装备（`T` 是调试开关，不是玩法）；
+      `presentation` 把**有效护甲**显示在单位面板状态行（`arm: 3`）；
+      三件装备与槽位都派生了 `Reflect`，BRP 可读（`EquipmentBonus` / `EquipmentSlot` / `Item`）。
+      **实机探针抓到两个单测测不到的 bug**（都记进了 `docs/equipment.md` 第七节）：
+      ① 物品挂 `ChildOf(slot)` 却写了世界坐标 → 父级**再叠一次**，PC 在 `(3,-1,1)`、
+      物品落在 `(6,-2,2)`；② 起始装备**每帧都发**（判据只认 `InputDriven`，而玩家身上
+      没有槽位组件）→ 护甲两帧就翻倍。
+      验收：305 单元 + 3 资产全绿 / clippy 零警告 / `cargo fmt --check` 通过；
+      `the_equipment_armor_bonus_reaches_the_hit_formula` **验过不是空跑**
+      （还原成裸 `Armor` 后转红，报掉了 15 而不是 12）、
+      `the_wrong_item_is_refused_and_dropped_from_the_slot` 同（拿掉 Observer 后转红）；
+      **实机**：BRP 读到三件物品 / 三个槽 / 玩家加成 `{armor:2, damage:1, windup:-0.05,
+      block:0.35}`，面板 `PLAYER · arm 3`（基础 1 + 装备 2）vs `ENEMY · arm 0`，
+      按 `T` 后 `arm 1`、三件物品的 `GlobalTransform` 全部等于玩家脚底 `(3,-1,1)`。
 - [x] **M28 每个 mod 出 `plugin.rs`**（已完成）：三个父域
       （`combat` / `world` / `voxel_render`）的子域**都已各自出 `plugin.rs`**，
       父域只编排顺序、不注册系统。做法是每个子域声明自己的 `*Set`，
@@ -551,14 +572,16 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       **未做**：扫描半径 `GROUND_REACH = 8`（堆更高 / 挖更深会按噪声收尾）、
       寻路（仍是直线）、站立容差（贴到相邻格边缘不判定）。
 - [ ] **火球 / 命中特效**：目前只有实体本身，没有粒子或 Gizmos。
-- [x] **护甲接进组装层**（本次）：公式（第 ④ 关）早就支持 `Armor`，但**没有任何单位挂它**
-      ——减伤永远是 0，等于这一关不存在。现在组装层给玩家 1 点、敌人 0 点
-      （`PLAYER_ARMOR` / `ENEMY_ARMOR`，`armor_for(faction)` 是唯一出口）。
+- [x] **护甲接进组装层**（已落地，M27 后为**基础值**）：公式（第 ④ 关）早就支持
+      `Armor`，但**没有任何单位挂它**——减伤永远是 0，等于这一关不存在。组装层给玩家
+      1 点、敌人 0 点（`PLAYER_ARMOR` / `ENEMY_ARMOR`，`armor_for(faction)` 是唯一出口）。
+      M27 之后它是**基础值**：装备域在它之上加 `EquipmentBonus`（一身起始装备 +2），
+      命中公式读两者之和。
       ⚠️ **数值是占位、该由你定**：参照当前数值（近战 15 / 火球 12 / 箭矢 10、50 血），
       玩家 1 点**不改变任何一击的刀数**（安全值），敌人 0 点保持"敌人更脆"的手感。
-      验收：`the_assembled_player_actually_has_armor`（从**组装层真造出来的单位**出发，
-      走完整条命中管线，确认 15 点近战只掉 14）；
-      **验过不是空跑**（把 `Armor` 从组装里去掉后转红）。
+      验收：`the_assembled_player_actually_has_armor` /
+      `the_equipment_armor_bonus_reaches_the_hit_formula`（后者**验过不是空跑**：
+      还原成裸 `Armor` 后转红）。
 - [x] **BRP 看不到战斗数据**（本次修好）：`Health` / `Stamina` / `Armor` /
       `DecisionSlot` / `Focus` 现在都能在运行时直接读。
       **纠一处我自己的误判**：我先前写"要加 `Reflect` 派生 + `register_type`"，
@@ -627,7 +650,8 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [ ] **资源分线**：`AmmoPouch`（重击 / 射击）/ 架势槽 `Poise`（打断抗性 / 格挡）；
       平 A 免费。
 - [x] **格挡减伤**（M25 后半，已落地）：防御链第 ③ 关，与翻滚 / 招架并列。
-      `BlockChance` 是单位属性（**来源本该是装备 / 姿态**，等 M27），
+      `BlockChance` 是单位属性的**基础值**（**来源是装备**，M27 已落地：
+      一面盾给 +0.35，命中管线读"基础 + 装备加成"），
       纯逻辑 `resolve_block` / `blocked_damage` 零 Bevy 零随机。
       顺序按 `docs/combat.md`：① 闪避 ② 招架（拦下）→ ③ 格挡（按率**减伤**）
       → ④ 护甲再减；格挡照常触发打断（减伤不是免伤）。

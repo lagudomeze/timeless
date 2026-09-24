@@ -24,7 +24,8 @@ use crate::timeline::{
     ScheduledAction, Target,
 };
 
-use super::arrow::{ARROW_SPEED, arrow_scene};
+use super::MELEE_DAMAGE;
+use super::arrow::{ARROW_DAMAGE, ARROW_SPEED, arrow_scene};
 use super::events::{FireCommand, MeleeCommand};
 use super::fireball::FIREBALL_TIMING;
 use super::melee::melee_scene;
@@ -245,6 +246,7 @@ pub fn shoot_action_executor_system(
         &ActionOf,
     )>,
     units: Query<(&Transform, &Faction)>,
+    equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
     let now = time.elapsed_secs();
     for (entity, timing, schedule, _, action_of) in &actions {
@@ -261,7 +263,20 @@ pub fn shoot_action_executor_system(
                 let to_target = Vec3::new(destination.x - origin.x, 0.0, destination.y - origin.z);
                 let direction = to_target.normalize_or_zero();
                 effect_delay = to_target.length() / ARROW_SPEED;
-                commands.spawn_scene(arrow_scene(origin + direction * 1.2, direction, faction));
+                // 武器加成在生成时算好：攻击实体自己不认识"装备"
+                let damage = crate::equipment::weapon_damage(
+                    ARROW_DAMAGE,
+                    equipment
+                        .get(actor)
+                        .map(|bonus| bonus.damage())
+                        .unwrap_or(0),
+                );
+                commands.spawn_scene(arrow_scene(
+                    origin + direction * 1.2,
+                    direction,
+                    faction,
+                    damage,
+                ));
             }
         }
         let recovery = DecisionSlot::recovering(timing, schedule, effect_delay);
@@ -284,6 +299,7 @@ pub fn melee_action_executor_system(
         &ActionOf,
     )>,
     units: Query<(&Transform, &Faction)>,
+    equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
     let now = time.elapsed_secs();
     for (entity, timing, schedule, _, action_of) in &actions {
@@ -298,7 +314,20 @@ pub fn melee_action_executor_system(
                 let destination = target.center();
                 let direction = Vec3::new(destination.x - origin.x, 0.0, destination.y - origin.z)
                     .normalize_or_zero();
-                commands.spawn_scene(melee_scene(origin + direction * 0.6, direction, faction));
+                // 武器加成在生成时算好：攻击实体自己不认识"装备"
+                let damage = crate::equipment::weapon_damage(
+                    MELEE_DAMAGE,
+                    equipment
+                        .get(actor)
+                        .map(|bonus| bonus.damage())
+                        .unwrap_or(0),
+                );
+                commands.spawn_scene(melee_scene(
+                    origin + direction * 0.6,
+                    direction,
+                    faction,
+                    damage,
+                ));
             }
         }
         let recovery = DecisionSlot::recovering(timing, schedule, 0.0);
