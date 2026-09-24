@@ -4,7 +4,7 @@
 
 | 路径 | 来源 | 许可证 | 备注 |
 | :--- | :--- | :--- | :--- |
-| `textures/ground/grass.png` | Kenney.nl Prototype Textures（`PNG/Green/texture_01.png`） | CC0 1.0 | https://kenney.nl/assets/prototype-textures |
+| `textures/ground/grass.png` | Kenney.nl Prototype Textures（`PNG/Green/texture_01.png`） | CC0 1.0 | https://kenney.nl/assets/prototype-textures · ⚠️ **不要接进渲染**：这是**灰盒原型贴图**，纯绿底 + 白网格 + 烙在图上的文字「WALL / 1 × 1 meter / 1024 × 1024」，铺开会把说明文字重复到整个地形上。见 TODO.md 的对应条目 |
 | `textures/units/player.png` | Kenney.nl Tiny Dungeon（`Tiles/tile_0097.png`，骑士） | CC0 1.0 | https://kenney.nl/assets/tiny-dungeon · 原件是 16×16 调色板 PNG，**无损转成 RGBA**（见下） |
 | `textures/units/enemy.png` | Kenney.nl Tiny Dungeon（`Tiles/tile_0121.png`，幽灵） | CC0 1.0 | 同上 |
 | `textures/units/shadow.png` | 本仓库程序生成（软边黑圆，128×128 RGBA） | 无（自有素材） | 贴地阴影：64 层同心椭圆叠加 alpha 得到径向渐变 |

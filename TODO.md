@@ -618,7 +618,20 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `Armor` 读到玩家 `1` / 敌人 `0`、`Health` `50/50`、`Stamina` `5/5`、
       `Focus` `3/3`、`DecisionSlot` `{"Idle":{"intent":null}}`。
       验收：`the_combat_state_is_visible_over_brp`（把 `Health` 的派生拿掉就转红）。
-- [ ] **接入 `assets/textures/ground/grass.png`**（当前无代码引用）。
+- [x] **`assets/textures/ground/grass.png`：审计结论 —— 这张图不该接**
+      （本次，**主动不做**）。本条原本是"接入它"，动手前先看了它到底是什么：
+      它是 **Kenney Prototype Textures** 的 `PNG/Green/texture_01.png`——
+      素材名里的 "Prototype" 指的是**灰盒原型贴图**，这张图**正是一个灰盒格子**：
+      纯绿底 + 白色网格线 + **烙在图上的白色文字「WALL / 1 × 1 meter / 1024 × 1024」**
+      （实测：左上 200×130 区域里 9.5% 的像素是近白色）。
+      把它铺到体素表面上，**那段说明文字会跟着重复铺满整个地形**。
+      **为什么当初会入库**：加素材那次（d2e78f5）是按"Kenney 的 CC0 绿贴图"收的，
+      没看内容——`assets/LICENSES.md` 里记的来源没错，是**选品错了**。
+      **处置**：代码里**不加引用**（引用了才是把错误固化进渲染路径）；
+      在 `assets/LICENSES.md` 与 `docs/assets.md` 写明"这是灰盒模板、不要接"。
+      **要做真地表贴图时需要什么**：一张**可平铺**（tileable）的自然纹理，
+      且要连同上面那条"纹理图集 / UV"一起做（网格现在没有 UV 属性，
+      贪婪网格化之后还要按矩形尺寸铺开）。触发条件是那条 UV 待办被做掉。
 
 ### 渲染优化（`voxel_render`）
 
@@ -643,7 +656,17 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       绕序那条**验过不是空跑**（把 `+Y` 的 `u`/`v` 对调后转红，而面积那条照样绿
       ——说明它抓的是面积抓不到的错）。
       **实机**：截图确认地形渲染与改动前一致，无 panic / 资产错误。
-- [ ] **纹理图集 / UV**：`materials/assets.rs` 换图集，网格化代码不动。
+- [ ] **纹理图集 / UV**：`materials/assets.rs` 换图集。
+      ⚠️ **原来这条写着"网格化代码不动"——那句话现在（且一直）是假的**，两处都不成立：
+      ① 网格**根本没有 `ATTRIBUTE_UV_0`**（`MeshBuilder` 只写位置 / 法线 / 顶点色），
+      所以要贴图必须先在网格化里加一条 UV 属性；
+      ② **贪婪网格化之后光加一条 UV 也不够**：合并出来的矩形跨了 N 个格子，
+      而贴图要**每格重复一次**（tiling），所以 UV 得按「矩形尺寸」铺开
+      （`v` 从 `0..width`、`u` 从 `0..height`），不能是 0..1 的两端。
+      实现时改两处：`MeshBuilder::push_quad` 加 UV 参数（逐面传 0..1、
+      贪婪传 0..格子数）、`materials/assets.rs` 换成图集 + `TextureAtlasLayout`。
+      保留 `docs/assets.md` 说的那条纪律：**图集切分只住材质层**，
+      网格化只知道"这一面要铺几格"。
 - [ ] **AO**：`lighting` 从面朝向明暗升级为按顶点的邻域遮挡。
 - [x] **方块交互**（本次）：`B` 在**悬停格**放一块石头、`V` 挖掉一块
       （`BlockCommand { cell, place }` → `world` 的 `apply_block_command_system`
