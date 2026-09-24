@@ -31,16 +31,49 @@ use super::decision::{DecisionSlot, FirstReady, InputDriven, Intent, Target};
 use super::ownership::ActionOf;
 use super::schedule::{ActionTiming, ScheduledAction};
 
-/// 等待多久（虚拟秒）。
+/// 等待多久（虚拟秒）——**可配**，不再是硬编码常量。
+///
+/// 与 `TerrainConfig` / `HotkeyBinds` 同一套做法：数值住在一个 `Resource` 里，
+/// 而**所有**用到它的地方（声明时建的节奏、交上去的技能定义、HUD 的读数）
+/// 都从这一处派生，不在三处各写一遍。
 ///
 /// 选 1s 是手感而非机制：短到不耽误事，长到"我看一眼再决定"够用。
-pub const WAIT_SECONDS: f32 = 1.0;
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct WaitConfig {
+    /// 一次等待占住决策槽多久
+    pub seconds: f32,
+}
 
-/// 等待的节奏：**后摇就是等待时长**，没有前摇。
-///
-/// 「效果"就是等完这一秒，所以落地时刻 = 声明时刻（前摇 0），
-/// 而重新可决策的时刻 = 落地 + 后摇 = 1s 后。
-pub const WAIT_TIMING: ActionTiming = ActionTiming::new(0.0, WAIT_SECONDS, 99);
+impl Default for WaitConfig {
+    fn default() -> Self {
+        Self { seconds: 1.0 }
+    }
+}
+
+impl WaitConfig {
+    /// 等待的节奏：**后摇就是等待时长**，没有前摇。
+    ///
+    /// 「效果」就是等完这一段时间，所以落地时刻 = 声明时刻（前摇 0），
+    /// 而重新可决策的时刻 = 落地 + 后摇。
+    pub fn timing(self) -> ActionTiming {
+        ActionTiming::new(0.0, self.seconds.max(0.0), 99)
+    }
+
+    /// 等待的技能定义（交上去的那一条，数值从这里派生）。
+    pub fn ability(self) -> crate::skills::AbilityDef {
+        crate::skills::AbilityDef {
+            id: AbilityId::Wait,
+            category: crate::skills::AbilityCategory::Posture,
+            timing: self.timing(),
+            targeting: crate::skills::TargetSelector::SelfOnly,
+            cost: 0,
+            requirements: &[],
+            combat: crate::skills::CombatTags::COMMITTED,
+            counter: None,
+            power: 0,
+        }
+    }
+}
 
 /// 等待载荷。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +85,9 @@ pub fn wait_action_scene(
     schedule: ScheduledAction,
     actor: Entity,
 ) -> impl Scene {
-    // 对抗标签（能不能被打断 / 招架 / 格挡）跟着载荷一起挂在行动实体上
-    let tags = WAIT_ABILITY.combat;
+    // 对抗标签（能不能被打断 / 招架 / 格挡）跟着载荷一起挂在行动实体上。
+    // 标签与等待时长无关，所以这里直接取默认配置的那一份
+    let tags = WaitConfig::default().ability().combat;
     bsn! {
         template_value(tags)
         ActionOf({actor})
@@ -63,13 +97,14 @@ pub fn wait_action_scene(
     }
 }
 
-/// 声明等待：占住决策槽 [`WAIT_SECONDS`] 秒。
+/// 声明等待：占住决策槽 `config.seconds` 秒。
 ///
 /// 与其它 9 个声明系统同形（`first_ready` 挑人 → 物化 → 写槽），
 /// 区别只在它不需要目标、也不消耗任何资源。
 pub fn declare_wait_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
+    config: Res<WaitConfig>,
     mut requests: MessageReader<WaitCommand>,
     mut blocked: MessageWriter<super::events::ActionBlocked>,
     players: Query<(Entity, &DecisionSlot), With<InputDriven>>,
@@ -81,10 +116,12 @@ pub fn declare_wait_system(
     let Some((player, _)) = players.iter().first_ready(&mut blocked) else {
         return;
     };
+    // 节奏在这里现算：配置改了，声明出来的等待立刻跟着变
+    let timing = config.timing();
     let now = time.elapsed_secs();
     commands.spawn_scene(wait_action_scene(
-        WAIT_TIMING,
-        ScheduledAction::declared_at(WAIT_TIMING, now),
+        timing,
+        ScheduledAction::declared_at(timing, now),
         player,
     ));
     commands.entity(player).insert(DecisionSlot::declared(
@@ -92,7 +129,7 @@ pub fn declare_wait_system(
             ability: AbilityId::Wait,
             target: Target::None,
         },
-        &WAIT_TIMING,
+        &timing,
         now,
     ));
 }
@@ -129,24 +166,14 @@ pub fn wait_executor_system(
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WaitCommand;
 
-/// 等待域的技能定义（交给 [`crate::skills`] 的目录）。
-pub const WAIT_ABILITY: crate::skills::AbilityDef = crate::skills::AbilityDef {
-    id: AbilityId::Wait,
-    category: crate::skills::AbilityCategory::Posture,
-    timing: WAIT_TIMING,
-    targeting: crate::skills::TargetSelector::SelfOnly,
-    cost: 0,
-    requirements: &[],
-    combat: crate::skills::CombatTags::COMMITTED,
-    counter: None,
-    power: 0,
-};
-
 /// 开局把等待的定义交上去（与 `movement` / `combat` 同一套约定）。
+///
+/// 定义由 [`WaitConfig`] 派生——配置改了，交上去的节奏跟着改。
 pub fn register_wait_ability_system(
+    config: Res<WaitConfig>,
     mut registrations: MessageWriter<crate::skills::RegisterAbility>,
 ) {
-    registrations.write(crate::skills::RegisterAbility(WAIT_ABILITY));
+    registrations.write(crate::skills::RegisterAbility(config.ability()));
 }
 
 #[cfg(test)]
@@ -157,12 +184,11 @@ mod tests {
     /// 等待的节奏：**没有前摇**（声明即落地），忙满 [`WAIT_SECONDS`]。
     #[test]
     fn waiting_costs_only_the_recovery_and_has_no_windup() {
-        assert_eq!(WAIT_TIMING.windup, 0.0, "等待不需要前摇");
-        assert_eq!(
-            WAIT_TIMING.recovery, WAIT_SECONDS,
-            "后摇就是等待时长——落地之后再忙完这一秒"
-        );
-        assert_eq!(WAIT_TIMING.total(), WAIT_SECONDS, "声明到重新可决策正好 1s");
+        let config = WaitConfig::default();
+        let timing = config.timing();
+        assert_eq!(timing.windup, 0.0, "等待不需要前摇");
+        assert_eq!(timing.recovery, config.seconds, "后摇就是等待时长");
+        assert_eq!(timing.total(), config.seconds, "声明到重新可决策正好这么久");
     }
 
     /// 声明等待：行动者**当场**被推进后摇（`until = now + total`），槽不再空闲。
@@ -172,7 +198,8 @@ mod tests {
     #[test]
     fn declaring_a_wait_takes_the_slot_immediately() {
         let mut app = timeline_app();
-        app.add_message::<WaitCommand>()
+        app.init_resource::<WaitConfig>()
+            .add_message::<WaitCommand>()
             .add_message::<crate::timeline::ActionBlocked>()
             .add_systems(Update, (declare_wait_system, wait_executor_system).chain());
         let player = app
@@ -191,11 +218,48 @@ mod tests {
         assert!(slot.ready(), "声明之后就算「已经决定了」");
     }
 
+    /// **时长真的来自配置**：把 `WaitConfig` 调成 3 秒，声明出来的行动就忙 3 秒。
+    ///
+    /// 这条守的是"可配"这件事本身——如果实现里还留着常量，改配置不会有任何反应。
+    #[test]
+    fn the_wait_duration_comes_from_the_config() {
+        let mut app = timeline_app();
+        app.insert_resource(WaitConfig { seconds: 3.0 })
+            .add_message::<WaitCommand>()
+            .add_message::<crate::timeline::ActionBlocked>()
+            .add_systems(Update, declare_wait_system);
+        let player = app
+            .world_mut()
+            .spawn((InputDriven, DecisionSlot::Idle { intent: None }))
+            .id();
+
+        app.world_mut().write_message(WaitCommand);
+        app.update();
+
+        // 行动实体上的节奏就是配置派生出来的那一份
+        let timing = {
+            let mut query = app.world_mut().query::<&ActionTiming>();
+            query.iter(app.world()).next().copied()
+        };
+        assert_eq!(
+            timing.map(|timing| timing.recovery),
+            Some(3.0),
+            "改配置必须真的改变等待时长"
+        );
+        // 槽忙到 now + 3.0（首帧虚拟时间为 0）
+        assert_eq!(
+            *app.world().get::<DecisionSlot>(player).unwrap(),
+            DecisionSlot::Executing { until: 3.0 },
+            "占槽时长应当跟着配置走"
+        );
+    }
+
     /// 忙的人按空格声明不了（`first_ready` 会替他记一条原因）。
     #[test]
     fn a_busy_actor_cannot_wait() {
         let mut app = timeline_app();
-        app.add_message::<WaitCommand>()
+        app.init_resource::<WaitConfig>()
+            .add_message::<WaitCommand>()
             .add_message::<crate::timeline::ActionBlocked>()
             .add_systems(Update, declare_wait_system);
         let player = app
@@ -211,5 +275,19 @@ mod tests {
             DecisionSlot::Executing { until: 999.0 },
             "忙的时候不该被等待顶掉"
         );
+    }
+
+    /// 交上去的技能定义也来自配置：三种读数（节奏 / 定义 / 声明）不许分叉。
+    #[test]
+    fn the_registered_definition_tracks_the_config() {
+        let config = WaitConfig { seconds: 2.5 };
+        let ability = config.ability();
+        assert_eq!(ability.id, AbilityId::Wait);
+        assert_eq!(
+            ability.timing,
+            config.timing(),
+            "交上去的节奏必须与声明时用的一致"
+        );
+        assert_eq!(ability.timing.recovery, 2.5);
     }
 }

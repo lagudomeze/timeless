@@ -312,8 +312,14 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       8 个执行器全部改过。验收：1s 的等待实测 `until = 1.0`（之前 1.1），
       第 11 帧（0.1s×11）回到 `Idle`；
       `the_recovery_window_does_not_depend_on_when_the_executor_notices` 钉住基准。
-- [ ] **等待时长要可配**：现在是 `timeline::WAIT_SECONDS = 1.0` 常量；
-      等动作数值外置（`.ron`）之后应进技能表。
+- [x] **等待时长要可配**（本次）：`WAIT_SECONDS` / `WAIT_TIMING` / `WAIT_ABILITY`
+      三个常量收成一个 **`WaitConfig` 资源**（默认 1.0s）——声明时现算节奏、
+      交上去的技能定义从它派生、帮助面板不再写死秒数。
+      **只此一处真相**：三个消费者（声明 / 目录 / HUD）都从配置读，改一处全都跟着变。
+      验收：`the_wait_duration_comes_from_the_config`（把配置调成 3s，声明出来的
+      行动就忙 3s）与 `the_registered_definition_tracks_the_config`；
+      前者**验过不是空跑**（改回硬编码 1.0 后转红）。
+      等动作数值整体外置（`.ron`）时，这个资源就是要序列化的对象。
 - [x] **暂停：情形 A 已由「等待」动作解决**（`feat/wait-action`，已合并）：玩家空闲时按空格
       生成一条占槽 1s 的等待行动 → `awaiting` 消失 → 世界继续跑。
       **`ManualPause` 因此只服务"忙碌 + 运行"那一种情形**（他没有槽可占）。
