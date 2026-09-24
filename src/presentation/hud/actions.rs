@@ -126,8 +126,11 @@ fn action_text(
 }
 
 /// 行动实体 → 载荷名（找不到就退回 `action`）。
+///
+/// **公开**：时间轴的悬停读数要用同一套判据（`presentation::hud::timeline`），
+/// 否则同一个动作在面板上叫 `fireball`、在时间轴上叫别的名字。
 #[allow(clippy::too_many_arguments)]
-fn payload_name(
+pub fn payload_name(
     action: Entity,
     movements: &Query<&MoveAction>,
     jumps: &Query<&JumpAction>,
@@ -153,6 +156,38 @@ fn payload_name(
         "melee"
     } else {
         "action"
+    }
+}
+
+/// 载荷查询组：`payload_name` 要的那七个查询绑在一起。
+///
+/// 它们全是只读的标记查询，`SystemParam` 派生把它们收成一个参数——
+/// 否则 `payload_name` 的调用方（面板行 / 时间轴悬停读数）都要在签名里
+/// 照抄七行同样的 `Query`。
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PayloadQueries<'w, 's> {
+    pub movements: Query<'w, 's, &'static MoveAction>,
+    pub jumps: Query<'w, 's, &'static JumpAction>,
+    pub rolls: Query<'w, 's, &'static RollAction>,
+    pub parries: Query<'w, 's, &'static ParryAction>,
+    pub shoots: Query<'w, 's, &'static ShootAction>,
+    pub fireballs: Query<'w, 's, &'static FireballAction>,
+    pub melees: Query<'w, 's, &'static MeleeAction>,
+}
+
+impl PayloadQueries<'_, '_> {
+    /// 见 [`payload_name`]。
+    pub fn name_of(&self, action: Entity) -> &'static str {
+        payload_name(
+            action,
+            &self.movements,
+            &self.jumps,
+            &self.rolls,
+            &self.parries,
+            &self.shoots,
+            &self.fireballs,
+            &self.melees,
+        )
     }
 }
 

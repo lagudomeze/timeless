@@ -53,7 +53,10 @@ pub use layout::{HudRoot, fit_ui_scale_system, setup_hud};
 pub use log_panel::{toggle_log_system, update_log_panel_system};
 pub use panels::update_unit_panels_system;
 pub use skills::{SkillTooltip, update_skill_bar_system};
-pub use timeline::{TimelineStateLabel, update_timeline_system};
+pub use timeline::{
+    TimelineReadout, TimelineReadoutText, TimelineStateLabel, update_timeline_readout_system,
+    update_timeline_system,
+};
 
 /// HUD 写入缓存：**只有内容真的变了才碰 UI 节点**。
 ///

@@ -9,10 +9,11 @@ use super::camera::{
 };
 use super::hud;
 use super::hud::hint::{HintTimer, PreviewReadout, update_action_hint_system};
+use super::hud::timeline::{TimelineHover, TimelineLayout, TimelineReadoutState};
 use super::hud::{
     HudCache, ToggleHelp, fit_ui_scale_system, setup_hud, toggle_help_system, toggle_log_system,
     update_action_labels_system, update_log_panel_system, update_skill_bar_system,
-    update_timeline_system, update_unit_panels_system,
+    update_timeline_readout_system, update_timeline_system, update_unit_panels_system,
 };
 use super::log::{BattleLog, battle_log_system};
 use super::preload::preload;
@@ -53,6 +54,8 @@ impl Plugin for PresentationPlugin {
             .register_type::<hud::timeline::TimelineBlockMark>()
             .register_type::<hud::timeline::TimelineReadyChip>()
             .register_type::<hud::timeline::TimelineReadyLabel>()
+            .register_type::<hud::timeline::TimelineReadout>()
+            .register_type::<hud::timeline::TimelineReadoutText>()
             .register_type::<hud::log_panel::LogPanel>()
             .register_type::<hud::log_panel::LogCollapsed>()
             .register_type::<hud::log_panel::LogHeaderButton>()
@@ -64,6 +67,10 @@ impl Plugin for PresentationPlugin {
             .register_type::<hud::help::HelpPanel>()
             // 「无法操作」提示的计时器：走真实时间，冻结时也要能自己消失
             .init_resource::<HintTimer>()
+            // 时间轴悬停：布局（色块 → 行动实体）与读数快照都是本域内部资源
+            .init_resource::<TimelineLayout>()
+            .init_resource::<TimelineReadoutState>()
+            .init_resource::<TimelineHover>()
             // 预演读数：写方是 interaction，消费方是本域
             .add_message::<PreviewReadout>()
             // 方块交互被拒：写方是 world（纯数据域，不认识时间线的 ActionBlocked），
@@ -93,6 +100,8 @@ impl Plugin for PresentationPlugin {
                     update_action_labels_system,
                     update_skill_bar_system,
                     update_timeline_system,
+                    // 悬停读数跑在时间轴之后：它读的就是刚算出来的那份布局
+                    update_timeline_readout_system,
                     toggle_log_system,
                     update_log_panel_system,
                     update_action_hint_system,
