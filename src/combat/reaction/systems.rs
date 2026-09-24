@@ -490,6 +490,64 @@ mod tests {
         );
     }
 
+    /// **多个威胁 = 多次表态**：窗口一次只问一个，但下一个会接着问。
+    ///
+    /// 这条钉住"多段攻击只会问一次"这个**曾经的担心并不成立**：威胁源是**实体**，
+    /// 每个来源各自开窗。三刀同时压过来时，玩家答一刀、那一刀落地，
+    /// 下一刀立刻开新窗重新冻住——不会漏问，也不会一次问三遍。
+    ///
+    /// （真实的多段技能——一条行动打三下——目前还不存在：那需要行动自己声明
+    /// 三个落地时刻，属于 `PendingHit` / `ActionTemplate` 的范畴。）
+    #[test]
+    fn each_of_several_threats_gets_its_own_ask() {
+        let mut app = threat_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0));
+        let enemy = spawn_enemy(&mut app);
+        let threat = |app: &mut App, at: f32| {
+            app.world_mut()
+                .spawn((
+                    ActionOf(enemy),
+                    ScheduledAction::declared_at(TEST_TIMING, at),
+                    Threatens {
+                        cells: vec![Cell::new(0, 0)],
+                    },
+                ))
+                .id()
+        };
+        let first = threat(&mut app, 10.0);
+        let second = threat(&mut app, 20.0);
+
+        // 第一个开窗
+        app.update();
+        assert_eq!(
+            slot_of(&app, player).map(|s| s.threat),
+            Some(first),
+            "先问最先落地的那个"
+        );
+
+        // 玩家表态 → 不再断言（世界可以动）
+        app.world_mut()
+            .write_message(ReactionAnswer::Counter(AbilityId::Roll));
+        app.update();
+        app.world_mut().resource_mut::<Captured>().0.clear();
+
+        // 第一个落地（被销毁）→ 窗口该交给**下一个**，并且重新冻住
+        app.world_mut().entity_mut(first).despawn();
+        app.update(); // 这一帧关旧窗（命令延迟落地）
+        app.update(); // 下一帧的新窗口
+
+        assert_eq!(
+            slot_of(&app, player).map(|s| s.threat),
+            Some(second),
+            "还有威胁没处理，就该开新窗——不能因为问过一次就放过它"
+        );
+        assert!(
+            capture_of(&app).contains(&PauseRequest::Pause(THREAT)),
+            "新的威胁要重新冻住世界，实际 {:?}",
+            capture_of(&app)
+        );
+    }
+
     /// 没瞄到玩家脚下的格就不算威胁（同一发火球打向别处）。
     #[test]
     fn a_threat_elsewhere_does_not_freeze_the_world() {
