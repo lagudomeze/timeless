@@ -9,6 +9,7 @@
 
 use bevy::prelude::*;
 
+use crate::movement::MoveRefused;
 use crate::timeline::{ActionBlocked, BlockReason};
 use crate::world::BlockRefused;
 
@@ -69,19 +70,27 @@ pub fn hint_panel(font: &Handle<Font>) -> impl Bundle {
 /// 也消费 [`BlockRefused`]（`world` 域自己的拒绝原因）：方块交互被拒时同样要走
 /// 这条提示——`world` 是纯数据域，不认识时间线的 `ActionBlocked`，所以它的话由
 /// 表现层翻译成同一条提示条上的文案。
+#[allow(clippy::too_many_arguments)]
 pub fn update_action_hint_system(
     time: Res<Time<Real>>,
     mut timer: ResMut<HintTimer>,
     mut blocked: MessageReader<ActionBlocked>,
     mut refused: MessageReader<BlockRefused>,
+    mut moves_refused: MessageReader<MoveRefused>,
     mut readouts: MessageReader<PreviewReadout>,
     mut nodes: Query<&mut Node, With<ActionHint>>,
     mut texts: Query<(&mut Text, &mut TextColor, &mut BackgroundColor), With<ActionHintText>>,
 ) {
+    // 三种"不让做"的原因汇到同一条提示条：地形没加载 / 方块交互被拒 / 走不过去
+    let move_refused = moves_refused
+        .read()
+        .last()
+        .map(|MoveRefused::BlockedByTerrain| "BLOCKED · too high to step up");
     let refused_message = refused
         .read()
         .last()
-        .map(|BlockRefused::TerrainNotLoaded| "NO GROUND HERE · chunk not loaded");
+        .map(|BlockRefused::TerrainNotLoaded| "NO GROUND HERE · chunk not loaded")
+        .or(move_refused);
     let blocked_message = blocked.read().last().map(|last| match last.reason {
         BlockReason::Busy => "CAN'T ACT YET · still busy",
         BlockReason::NotEnoughEnergy => "NOT ENOUGH ENERGY",
@@ -154,6 +163,7 @@ mod tests {
             .init_resource::<HintTimer>()
             .add_message::<ActionBlocked>()
             .add_message::<BlockRefused>()
+            .add_message::<MoveRefused>()
             .add_message::<PreviewReadout>()
             .add_systems(Update, update_action_hint_system);
         let node = app
@@ -219,6 +229,25 @@ mod tests {
         assert!(
             shown.contains("GROUND"),
             "文案要说清楚是「这里没有地」而不是别的：{shown}"
+        );
+    }
+
+    /// 走不过去也走同一条提示条：地形很高时玩家该看得见"为什么不动"。
+    #[test]
+    fn a_refused_step_reaches_the_same_hint_bar() {
+        let (mut app, node, text) = hint_app();
+        app.world_mut().write_message(MoveRefused::BlockedByTerrain);
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Node>(node).unwrap().display,
+            Display::Flex,
+            "走不过去也应当看得见"
+        );
+        let shown = app.world().get::<Text>(text).unwrap().0.clone();
+        assert!(
+            shown.contains("BLOCKED"),
+            "文案要说清楚是「过不去」而不是别的：{shown}"
         );
     }
 
