@@ -22,7 +22,7 @@
 | 单位精灵 | `textures/units/{player,enemy,shadow}.png` | Kenney Tiny Dungeon（CC0） |
 | 技能图标 | `textures/ui/icon_{attack,melee,fireball,roll}.png` | 同上 |
 | 地表装饰 | `models/nature/*.glb`（21 个：树 / 石 / 草 / 花 / 木桩…） | Kenney Nature Kit（CC0） |
-| HUD 字体 | `fonts/NotoSansSC-Regular.otf`（OFL-1.1，**已子集化到 35 KB**） | OFL-1.1 |
+| HUD 字体 | `fonts/NotoSansSC-Regular.otf`（OFL-1.1，**已子集化到 12 KB**） | OFL-1.1 |
 | **故意不引用** | `textures/ground/grass.png` | CC0，但**这张图不该用**——见下 |
 
 `textures/ground/grass.png` 是 Kenney **Prototype Textures** 的灰盒贴图：
@@ -32,7 +32,7 @@
 并连同 `TODO.md` 的「纹理图集 / UV」一起做——网格现在没有 UV 属性，
 而且贪婪网格化之后 UV 还要按矩形尺寸铺开。
 
-字体已按**界面上真的会显示的字**子集化：8.3 MB → 36 KB（258 个字符）。
+字体已按**界面上真的会显示的字**子集化：8.3 MB → 12 KB（131 个字形）。
 字符集从源码抽（与 `tests/assets.rs` 的覆盖验收同一条真相源），所以"改文案导致缺字"
 会被测试当场抓住；重新生成的命令见 `assets/LICENSES.md`。
 

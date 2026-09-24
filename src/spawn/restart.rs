@@ -12,7 +12,7 @@ use crate::combat::{Collidable, Faction, Projectile};
 use crate::presentation::UnitSprites;
 use crate::world::TerrainConfig;
 
-use super::enemy::enemy_scene;
+use super::enemy::{ENEMY_SPAWNS, enemy_scene};
 use super::player::player_scene;
 
 /// 请求重置战斗（写：[`crate::input`] 的 F5；消费：[`reset_battle_system`]）。
@@ -45,7 +45,9 @@ pub fn reset_battle_system(
         commands.entity(entity).despawn();
     }
     commands.spawn_scene(player_scene(&terrain, &sprites));
-    commands.spawn_scene(enemy_scene(&terrain, &sprites));
+    for spawn in ENEMY_SPAWNS {
+        commands.spawn_scene(enemy_scene(&terrain, &sprites, spawn));
+    }
     info!("🔄 战斗已重置");
 }
 
@@ -65,16 +67,23 @@ mod tests {
         let mut app = headless_app();
         app.update(); // Startup 组装：玩家 + 敌人
 
-        assert_eq!(units(&mut app).len(), 2, "开局应组装出玩家与敌人");
+        assert_eq!(
+            units(&mut app).len(),
+            3,
+            "开局应组装出玩家与**两个**敌人（见 `spawn::enemy::ENEMY_SPAWNS`）"
+        );
 
-        // 模拟敌方阵亡：清掉敌人后场上只剩玩家
-        let enemy = app
+        // 模拟敌方阵亡：清掉**两个**敌人后场上只剩玩家
+        let enemies: Vec<Entity> = app
             .world_mut()
             .query_filtered::<Entity, With<Faction>>()
             .iter(app.world())
-            .find(|entity| matches!(app.world().get::<Faction>(*entity), Some(Faction::Enemy)))
-            .unwrap();
-        app.world_mut().entity_mut(enemy).despawn();
+            .filter(|entity| matches!(app.world().get::<Faction>(*entity), Some(Faction::Enemy)))
+            .collect();
+        assert_eq!(enemies.len(), 2, "开局应当有两个敌人");
+        for enemy in enemies {
+            app.world_mut().entity_mut(enemy).despawn();
+        }
         app.update();
         assert_eq!(units(&mut app).len(), 1);
 
@@ -84,7 +93,7 @@ mod tests {
         app.update();
 
         let rebuilt = units(&mut app);
-        assert_eq!(rebuilt.len(), 2, "重置后应重新组装出玩家与敌人");
+        assert_eq!(rebuilt.len(), 3, "重置后应重新组装出玩家与两个敌人");
         assert!(rebuilt.contains(&Faction::Player) && rebuilt.contains(&Faction::Enemy));
     }
 }

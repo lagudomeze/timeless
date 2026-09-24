@@ -10,6 +10,7 @@ use super::super::actions::ActionLabel;
 use super::super::{
     EN_COLOR, HP_COLOR, PANEL_BG, TRACK_BG, faction_color, hud_text, hud_text_tinted,
 };
+use super::model::PanelSlot;
 
 /// 面板整体尺寸（像素，还会被 `UiScale` 缩放）。
 pub const PANEL_WIDTH: f32 = 340.0;
@@ -18,50 +19,46 @@ pub const PANEL_HEIGHT: f32 = 104.0;
 /// 头像边长。
 pub const PORTRAIT_SIZE: f32 = 64.0;
 
-/// 面板根标记。
+/// 面板根标记（玩家一格；敌人**每行一格**，见 [`unit_row`]）。
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 #[reflect(Component)]
 pub struct UnitPanel {
-    pub faction: Faction,
+    pub slot: PanelSlot,
 }
 
 /// 条本体（改宽度）。
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 #[reflect(Component)]
 pub enum PanelBar {
-    Hp(Faction),
-    En(Faction),
+    Hp(PanelSlot),
+    En(PanelSlot),
 }
 
 /// 面板文本：血量 / 精力 / 状态行。
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 #[reflect(Component)]
 pub enum PanelText {
-    Hp(Faction),
-    En(Faction),
-    State(Faction),
+    Hp(PanelSlot),
+    En(PanelSlot),
+    State(PanelSlot),
 }
 
-/// 阵营 → 实体名前缀（`PlayerPanel` / `EnemyPanel`）。
-pub fn faction_prefix(faction: Faction) -> &'static str {
-    match faction {
-        Faction::Player => "Player",
-        Faction::Enemy => "Enemy",
+/// 一格的实体名前缀（`PlayerPanel` / `Enemy1Panel`）。
+///
+/// 名字里带名次：BRP 排查"第二个敌人那一行为什么是空的"时要能一眼找到节点。
+pub fn slot_prefix(slot: PanelSlot) -> String {
+    match slot {
+        PanelSlot::Player => "Player".to_string(),
+        PanelSlot::Enemy(index) => format!("Enemy{}", index + 1),
     }
 }
 
 /// 一格条（轨道 + 填充 + 居中文本）。
 pub fn status_bar(font: &Handle<Font>, bar: PanelBar, color: Color) -> impl Bundle {
-    // `PlayerHp` / `EnemyEn`：轨道、填充、文本三种节点共用这个前缀
+    // `PlayerHp` / `Enemy1En`：轨道、填充、文本三种节点共用这个前缀
     let (label, name) = match bar {
-        PanelBar::Hp(faction) => (
-            PanelText::Hp(faction),
-            format!("{}Hp", faction_prefix(faction)),
-        ),
-        PanelBar::En(faction) => (
-            PanelText::En(faction),
-            format!("{}En", faction_prefix(faction)),
-        ),
+        PanelBar::Hp(slot) => (PanelText::Hp(slot), format!("{}Hp", slot_prefix(slot))),
+        PanelBar::En(slot) => (PanelText::En(slot), format!("{}En", slot_prefix(slot))),
     };
     (
         Name::new(format!("{name}Bar")),
@@ -102,36 +99,54 @@ pub fn status_bar(font: &Handle<Font>, bar: PanelBar, color: Color) -> impl Bund
     )
 }
 
-/// 一个单位面板：头像 + 名字 / 状态行 + HP / EN 条。
-pub fn unit_panel(font: &Handle<Font>, faction: Faction, portrait: Handle<Image>) -> impl Bundle {
-    let color = faction_color(faction);
-    let title = match faction {
-        Faction::Player => "PLAYER",
-        Faction::Enemy => "ENEMY",
-    };
-    // 敌人面板镜像：头像贴右边
-    let direction = match faction {
-        Faction::Player => FlexDirection::Row,
-        Faction::Enemy => FlexDirection::RowReverse,
-    };
-    let (left, right) = match faction {
-        Faction::Player => (Val::Px(14.0), Val::Auto),
-        Faction::Enemy => (Val::Auto, Val::Px(14.0)),
-    };
-    let prefix = faction_prefix(faction);
+/// 一格的「状态行 + HP / EN 条 + 当前行动」——**三种面板共用**这一个内容块。
+///
+/// 玩家面板与敌人行**内容完全一样**，只是摆放位置与头像有无不同；抽成一处
+/// 就不会出现"玩家面板加了护甲读数、敌人行忘了加"这种漂移。
+fn slot_content(font: &Handle<Font>, slot: PanelSlot) -> impl Bundle {
+    let prefix = slot_prefix(slot);
+    let faction = slot.faction();
     (
-        Name::new(format!("{prefix}Panel")),
-        UnitPanel { faction },
+        Name::new(format!("{prefix}Info")),
+        Node {
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            min_width: Val::Px(0.0),
+            row_gap: Val::Px(2.0),
+            ..default()
+        },
+        children![
+            (
+                Name::new(format!("{prefix}StateLine")),
+                hud_text(font, 13.0, "…"),
+                PanelText::State(slot),
+            ),
+            status_bar(font, PanelBar::Hp(slot), HP_COLOR),
+            status_bar(font, PanelBar::En(slot), EN_COLOR),
+            (
+                Name::new(format!("{prefix}Action")),
+                hud_text(font, 11.0, "act: -"),
+                ActionLabel { faction },
+            ),
+        ],
+    )
+}
+
+/// 玩家面板：头像 + 内容块，常驻左下。
+pub fn unit_panel(font: &Handle<Font>, portrait: Handle<Image>) -> impl Bundle {
+    let slot = PanelSlot::Player;
+    let color = faction_color(Faction::Player);
+    (
+        Name::new("PlayerPanel"),
+        UnitPanel { slot },
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(14.0),
-            left,
-            right,
+            left: Val::Px(14.0),
             width: Val::Px(PANEL_WIDTH),
             height: Val::Px(PANEL_HEIGHT),
             padding: UiRect::all(Val::Px(8.0)),
             column_gap: Val::Px(10.0),
-            flex_direction: direction,
             align_items: AlignItems::Center,
             border_radius: BorderRadius::all(Val::Px(10.0)),
             ..default()
@@ -140,7 +155,7 @@ pub fn unit_panel(font: &Handle<Font>, faction: Faction, portrait: Handle<Image>
         BorderColor::all(color),
         children![
             (
-                Name::new(format!("{prefix}Portrait")),
+                Name::new("PlayerPortrait"),
                 Node {
                     width: Val::Px(PORTRAIT_SIZE),
                     height: Val::Px(PORTRAIT_SIZE),
@@ -156,29 +171,50 @@ pub fn unit_panel(font: &Handle<Font>, faction: Faction, portrait: Handle<Image>
                     ..default()
                 },
             ),
-            (
-                Name::new(format!("{prefix}Info")),
-                Node {
-                    flex_grow: 1.0,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(3.0),
-                    ..default()
-                },
-                children![
-                    (
-                        Name::new(format!("{prefix}StateLine")),
-                        hud_text(font, 13.0, format!("{title} · …")),
-                        PanelText::State(faction),
-                    ),
-                    status_bar(font, PanelBar::Hp(faction), HP_COLOR),
-                    status_bar(font, PanelBar::En(faction), EN_COLOR),
-                    (
-                        Name::new(format!("{prefix}Action")),
-                        hud_text(font, 11.0, "act: -"),
-                        ActionLabel { faction },
-                    ),
-                ],
-            ),
+            slot_content(font, slot),
         ],
     )
 }
+
+/// **一个敌人的一行**：只有内容块（没有头像——N 行时头像会把面板撑得过高，
+/// 而行首的名字已经能分清是谁）。
+///
+/// `index` 是**名次**（0 = 离玩家最近）：行池按下标建好，每帧只改内容与显隐，
+/// 所以敌人数量变化不会增删实体（与时间轴色块池同一个做法）。
+pub fn enemy_row(font: &Handle<Font>, index: usize) -> impl Bundle {
+    let slot = PanelSlot::Enemy(index);
+    let color = faction_color(Faction::Enemy);
+    (
+        Name::new(format!("Enemy{}Row", index + 1)),
+        UnitPanel { slot },
+        Node {
+            // 行是**绝对定位**的（面板本身也是）：用 `bottom` 逐行往上错开，
+            // 第 0 行（最近的那个）永远在最下面
+            position_type: PositionType::Absolute,
+            right: Val::Px(14.0),
+            bottom: row_bottom(index),
+            width: Val::Px(PANEL_WIDTH),
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+            flex_direction: FlexDirection::Column,
+            border_radius: BorderRadius::all(Val::Px(10.0)),
+            display: Display::None,
+            ..default()
+        },
+        BackgroundColor(PANEL_BG),
+        BorderColor::all(color),
+        children![slot_content(font, slot)],
+    )
+}
+
+/// 第 `index` 行离屏幕底边的距离。
+///
+/// 敌人列在右下角、**从下往上长**：第 0 行（离玩家最近的）在最下面，
+/// 越远的越往上——这样"最近的那个"位置固定，不会因为敌人数量变化而整列乱跳。
+pub fn row_bottom(index: usize) -> Val {
+    Val::Px(14.0 + index as f32 * (ENEMY_ROW_HEIGHT + ENEMY_ROW_GAP))
+}
+
+/// 一行敌人的高度（像素）。
+pub const ENEMY_ROW_HEIGHT: f32 = 76.0;
+/// 相邻两行之间的间隙（像素）。
+pub const ENEMY_ROW_GAP: f32 = 6.0;

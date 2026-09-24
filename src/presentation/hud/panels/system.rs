@@ -13,7 +13,7 @@ use crate::timeline::DecisionSlot;
 
 use super::super::HudCache;
 use super::model::{UnitPanels, UnitRow};
-use super::scene::{PanelBar, PanelText};
+use super::scene::{PanelBar, PanelText, UnitPanel};
 
 /// 单位快照查询（实体 + 阵营 + 血量 + 格 + 位姿 + 精力）。
 type UnitQuery<'w, 's> = Query<
@@ -29,13 +29,19 @@ type UnitQuery<'w, 's> = Query<
     ),
 >;
 
-/// 把 HP / EN / 状态行写进面板。
+/// 把 HP / EN / 状态行写进面板（玩家一格 + 敌人 **N** 行）。
+///
+/// 敌人那一列是**行池**：每帧按"离玩家最近"的名次把前几行填满，
+/// 用不到的行藏起来（`Display::None`）——敌人数量变化因此**不增删实体**
+/// （与时间轴色块池同一个做法）。
 #[allow(clippy::too_many_arguments)]
 pub fn update_unit_panels_system(
     units: UnitQuery<'_, '_>,
     mut cache: ResMut<HudCache>,
-    mut bars: Query<(&PanelBar, &mut Node)>,
+    // 三个查询都碰 `Node` / `Text`，用标记组件两两互斥（否则 Bevy 报 B0001）
+    mut bars: Query<(&PanelBar, &mut Node), Without<UnitPanel>>,
     mut texts: Query<(&PanelText, &mut Text)>,
+    mut rows: Query<(&UnitPanel, &mut Node), Without<PanelBar>>,
     // 决策槽：面板只读它，不写
     slots: Query<&DecisionSlot>,
     dodging: Query<(), With<Dodging>>,
@@ -45,7 +51,7 @@ pub fn update_unit_panels_system(
     // 有效护甲 = 基础 + 装备加成：这里只问"是多少"，结构由 equipment 回答
     armors: Query<(&Armor, Option<&crate::equipment::EquipmentBonus>)>,
 ) {
-    let rows: Vec<UnitRow> = units
+    let rows_data: Vec<UnitRow> = units
         .iter()
         .map(
             |(entity, faction, health, cell, transform, stamina)| UnitRow {
@@ -66,26 +72,37 @@ pub fn update_unit_panels_system(
             },
         )
         .collect();
-    let panels = UnitPanels::from_rows(&rows);
+    let panels = UnitPanels::from_rows(&rows_data);
 
     // 快照比对：这一帧与上一帧一模一样，就一个 UI 组件都不碰
-    if cache.units.rows == panels.rows {
+    if cache.units.player == panels.player && cache.units.enemies == panels.enemies {
         return;
     }
-    cache.units.rows = panels.rows;
+    cache.units.player = panels.player;
+    cache.units.enemies.clone_from(&panels.enemies);
+
+    // 行池的显隐：有数据的行画出来，多余的行藏起来
+    for (panel, mut node) in &mut rows {
+        let occupied = panels.of(panel.slot).is_some();
+        node.display = if occupied {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
 
     for (bar, mut node) in &mut bars {
         node.width = match bar {
-            PanelBar::Hp(faction) => panels.hp_percent(*faction),
-            PanelBar::En(faction) => panels.stamina_percent(*faction),
+            PanelBar::Hp(slot) => panels.hp_percent(*slot),
+            PanelBar::En(slot) => panels.stamina_percent(*slot),
         };
     }
 
     for (label, mut text) in &mut texts {
         **text = match label {
-            PanelText::Hp(faction) => panels.hp_text(*faction),
-            PanelText::En(faction) => panels.stamina_text(*faction),
-            PanelText::State(faction) => panels.state_line(*faction),
+            PanelText::Hp(slot) => panels.hp_text(*slot),
+            PanelText::En(slot) => panels.stamina_text(*slot),
+            PanelText::State(slot) => panels.state_line(*slot),
         };
     }
 }
@@ -93,6 +110,7 @@ pub fn update_unit_panels_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::presentation::hud::panels::PanelSlot;
 
     /// 数据没变时面板整帧不写；数值一变就必须跟着变。
     #[test]
@@ -113,11 +131,11 @@ mod tests {
             .id();
         let hp_text = app
             .world_mut()
-            .spawn((PanelText::Hp(Faction::Player), Text::new("")))
+            .spawn((PanelText::Hp(PanelSlot::Player), Text::new("")))
             .id();
         let hp_bar = app
             .world_mut()
-            .spawn((PanelBar::Hp(Faction::Player), Node::default()))
+            .spawn((PanelBar::Hp(PanelSlot::Player), Node::default()))
             .id();
 
         app.update();

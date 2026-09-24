@@ -51,103 +51,131 @@ pub struct UnitRow {
 /// 面板快照缓存：与上一帧完全相同就整帧不碰 UI。
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct UnitPanelCache {
-    pub rows: [Option<UnitRow>; 2],
+    pub player: Option<UnitRow>,
+    pub enemies: Vec<UnitRow>,
 }
 
-/// 阵营 → 快照下标（玩家在前）。
-pub fn slot(faction: Faction) -> usize {
-    match faction {
-        Faction::Player => 0,
-        Faction::Enemy => 1,
+/// 面板上的一格：**玩家独占一格，敌人各占一格**。
+///
+/// 敌人那格带**名次**（按"离玩家最近"排序），因为面板要画的不再是"那一方"，
+/// 而是"第几个敌人"——这正是"多敌人面板"要解决的问题。
+#[derive(Reflect, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PanelSlot {
+    Player,
+    /// 第 `index` 个敌人（`0` = 离玩家最近的那个）
+    Enemy(usize),
+}
+
+impl PanelSlot {
+    /// 这一格属于哪个阵营（颜色与"要不要显示距离"都看它）。
+    pub fn faction(self) -> Faction {
+        match self {
+            Self::Player => Faction::Player,
+            Self::Enemy(_) => Faction::Enemy,
+        }
     }
 }
 
-/// 两个敌人之间，哪个更该显示在面板上。
+/// 敌人面板最多画几行。
 ///
-/// 规则：**离玩家更近的优先**；一样近时取格坐标更小的（`Cell` 的序不影响数值，
-/// 只用来把并列打散，保证结果与遍历顺序无关）。没有玩家可参照时按格坐标。
-fn enemy_rank(candidate: &UnitRow, current: &UnitRow, player: Option<&UnitRow>) -> bool {
+/// **一处真相**：场景按它建行池、模型按它截断，两边不会分叉
+/// （有测试钉住"行池大小 = 这个常量"）。
+pub const MAX_ENEMY_ROWS: usize = 3;
+
+/// 敌人之间的顺序：**离玩家更近的在前**；一样近时取格坐标更小的。
+///
+/// `Cell` 的序不影响任何数值，只用来把并列打散——保证结果**与遍历顺序无关**。
+/// 没有玩家可参照时（还没组装出来）全按格坐标。
+fn enemy_order(a: &UnitRow, b: &UnitRow, player: Option<&UnitRow>) -> std::cmp::Ordering {
     let by_player = |row: &UnitRow| {
         player
             .map(|player| row.position.distance(player.position))
             .unwrap_or(f32::INFINITY)
     };
-    let (candidate_distance, current_distance) = (by_player(candidate), by_player(current));
-    if candidate_distance != current_distance {
-        return candidate_distance < current_distance;
-    }
-    (candidate.cell.x, candidate.cell.z) < (current.cell.x, current.cell.z)
+    by_player(a)
+        .total_cmp(&by_player(b))
+        .then_with(|| (a.cell.x, a.cell.z).cmp(&(b.cell.x, b.cell.z)))
 }
 
-/// 一帧的面板快照（两条面板各自的读数）。
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+/// 一帧的面板快照：玩家一格 + **敌人 N 格**。
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct UnitPanels {
-    pub rows: [Option<UnitRow>; 2],
+    pub player: Option<UnitRow>,
+    /// 按"离玩家最近"排好序的敌人，最多 [`MAX_ENEMY_ROWS`] 个
+    pub enemies: Vec<UnitRow>,
 }
 
 impl UnitPanels {
-    /// 按阵营把读数摆进两个槽位。
+    /// 把这一帧的单位读数整理成面板要画的那几格。
     ///
-    /// **玩家只有一个**；敌人可能有很多，而面板只画得下一个——所以定一条明确的规则：
-    /// **显示离玩家最近的那个敌人**，距离相同时取格坐标小的那个。
-    /// 判据完全由数据决定（不含遍历顺序），所以同一份战场状态永远得到同一个面板。
-    ///
-    /// 之前这里是"后遍历到的覆盖前面"，而 **ECS 查询顺序不保证**——
+    /// 规则只有一条：**敌人按"离玩家最近"排序**，取前 [`MAX_ENEMY_ROWS`] 个。
+    /// 判据完全由数据决定（不含遍历顺序），所以同一份战场状态永远得到同一个面板
+    /// ——之前这里是"后遍历到的覆盖前面"，而 **ECS 查询顺序不保证**，
     /// 两个敌人时显示谁全凭运气，看上去像血条自己在跳。
+    ///
+    /// 排序规则与旧的"两个敌人取更近的那个"**完全一致**，只是从"挑一个"变成
+    /// "排全部"——所以只出一个敌人时，显示谁这件事没有变化。
     pub fn from_rows(rows: &[UnitRow]) -> Self {
-        let mut snapshot: [Option<UnitRow>; 2] = [None, None];
-        let player = rows.iter().find(|row| row.faction == Faction::Player);
-        for row in rows {
-            let index = slot(row.faction);
-            if row.faction == Faction::Player {
-                snapshot[index] = Some(*row);
-                continue;
-            }
-            let wins = match snapshot[index] {
-                None => true,
-                Some(current) => enemy_rank(row, &current, player),
-            };
-            if wins {
-                snapshot[index] = Some(*row);
-            }
-        }
-        Self { rows: snapshot }
-    }
-    /// 玩家位置（敌人面板要拿它算距离）。
-    pub fn player_position(&self) -> Option<Vec3> {
-        self.of(Faction::Player).map(|row| row.position)
+        let player = rows
+            .iter()
+            .find(|row| row.faction == Faction::Player)
+            .copied();
+        let mut enemies: Vec<UnitRow> = rows
+            .iter()
+            .filter(|row| row.faction == Faction::Enemy)
+            .copied()
+            .collect();
+        enemies.sort_by(|a, b| enemy_order(a, b, player.as_ref()));
+        enemies.truncate(MAX_ENEMY_ROWS);
+        Self { player, enemies }
     }
 
-    /// 取某一方的读数。
-    pub fn of(&self, faction: Faction) -> Option<&UnitRow> {
-        self.rows[slot(faction)].as_ref()
+    /// 玩家位置（敌人行要拿它算距离）。
+    pub fn player_position(&self) -> Option<Vec3> {
+        self.player.as_ref().map(|row| row.position)
+    }
+
+    /// 取某一格的读数。
+    pub fn of(&self, slot: PanelSlot) -> Option<&UnitRow> {
+        match slot {
+            PanelSlot::Player => self.player.as_ref(),
+            PanelSlot::Enemy(index) => self.enemies.get(index),
+        }
+    }
+
+    /// 这一格显示的名字（`PLAYER` / `ENEMY 1`）——多个敌人时得能分清是哪一个。
+    pub fn name(&self, slot: PanelSlot) -> String {
+        match slot {
+            PanelSlot::Player => "PLAYER".to_string(),
+            PanelSlot::Enemy(index) => format!("ENEMY {}", index + 1),
+        }
     }
 
     /// HP 条宽。
-    pub fn hp_percent(&self, faction: Faction) -> Val {
-        self.of(faction)
+    pub fn hp_percent(&self, slot: PanelSlot) -> Val {
+        self.of(slot)
             .map(|row| bar_percent(row.health.current as f32, row.health.max as f32))
             .unwrap_or(Val::Percent(0.0))
     }
 
     /// 精力条宽（没有精力组件的单位显示空条）。
-    pub fn stamina_percent(&self, faction: Faction) -> Val {
-        self.of(faction)
+    pub fn stamina_percent(&self, slot: PanelSlot) -> Val {
+        self.of(slot)
             .and_then(|row| row.stamina)
             .map(|stamina| bar_percent(stamina.current as f32, stamina.max as f32))
             .unwrap_or(Val::Percent(0.0))
     }
 
     /// HP 文本。
-    pub fn hp_text(&self, faction: Faction) -> String {
-        self.of(faction)
+    pub fn hp_text(&self, slot: PanelSlot) -> String {
+        self.of(slot)
             .map(|row| format!("HP {} / {}", row.health.current, row.health.max))
             .unwrap_or_default()
     }
 
     /// 精力文本。
-    pub fn stamina_text(&self, faction: Faction) -> String {
-        self.of(faction)
+    pub fn stamina_text(&self, slot: PanelSlot) -> String {
+        self.of(slot)
             .map(|row| match row.stamina {
                 Some(stamina) => format!("EN {} / {}", stamina.current, stamina.max),
                 None => "EN -".to_string(),
@@ -156,27 +184,26 @@ impl UnitPanels {
     }
 
     /// 状态行文本（只有敌人行会带上到玩家的距离）。
-    pub fn state_line(&self, faction: Faction) -> String {
-        let Some(row) = self.of(faction) else {
+    pub fn state_line(&self, slot: PanelSlot) -> String {
+        let Some(row) = self.of(slot) else {
             return String::new();
         };
-        let distance = (faction == Faction::Enemy)
+        let distance = (slot.faction() == Faction::Enemy)
             .then(|| {
                 self.player_position()
                     .map(|player| row.position.distance(player))
             })
             .flatten();
-        row.state_line(distance)
+        row.state_line(&self.name(slot), distance)
     }
 }
 
 impl UnitRow {
     /// 状态行：`PLAYER · ready · cell (1,1) · arm 3`。
-    pub fn state_line(&self, to_player: Option<f32>) -> String {
-        let name = match self.faction {
-            Faction::Player => "PLAYER",
-            Faction::Enemy => "ENEMY",
-        };
+    ///
+    /// `name` 由调用方给（面板知道这是"玩家"还是"第几个敌人"）；
+    /// 本方法只负责把**这一行自己的数**排成一行字。
+    pub fn state_line(&self, name: &str, to_player: Option<f32>) -> String {
         // 跳跃是「谁都别想插队」的状态，值得单独标出来
         let defense = if self.airborne {
             format!("{} · air", self.defense_label())
@@ -265,8 +292,8 @@ mod tests {
         enemy.dodging = true;
         enemy.tactic = Some(Tactic::Approach);
 
-        let line = enemy.state_line(Some(7.12));
-        assert!(line.contains("ENEMY"), "{line}");
+        let line = enemy.state_line("ENEMY 1", Some(7.12));
+        assert!(line.contains("ENEMY 1"), "名字由调用方给：{line}");
         assert!(
             line.contains("dodging"),
             "防御标记优先于 ready/busy：{line}"
@@ -284,15 +311,18 @@ mod tests {
         let mut unit = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
         unit.armor = Some(3);
         assert!(
-            unit.state_line(None).contains("arm 3"),
+            unit.state_line("PLAYER", None).contains("arm 3"),
             "面板要显示有效护甲：{}",
-            unit.state_line(None)
+            unit.state_line("PLAYER", None)
         );
 
         // 没有护甲组件的单位不显示这一段（而不是显示 arm 0）
         let mut without = row(Faction::Enemy, Cell::new(0, 0), Vec3::ZERO);
         without.armor = None;
-        assert!(!without.state_line(None).contains("arm"), "缺组件就不显示");
+        assert!(
+            !without.state_line("ENEMY 1", None).contains("arm"),
+            "缺组件就不显示"
+        );
     }
 
     /// 只有敌人那一行带距离——玩家面板不需要"离自己多远"。
@@ -306,22 +336,25 @@ mod tests {
             row(Faction::Enemy, Cell::new(3, 0), Vec3::new(6.0, 0.0, 0.0)),
         ]);
 
-        let player_line = panels.state_line(Faction::Player);
-        let enemy_line = panels.state_line(Faction::Enemy);
+        let player_line = panels.state_line(PanelSlot::Player);
+        let enemy_line = panels.state_line(PanelSlot::Enemy(0));
         assert!(!player_line.contains("dist"), "{player_line}");
         assert!(enemy_line.contains("dist 6.0"), "{enemy_line}");
     }
 
-    /// 某一方不在场时读数退回空值，而不是上一帧的残留。
+    /// 某一格不在场时读数退回空值，而不是上一帧的残留。
     #[test]
-    fn a_missing_faction_reads_as_empty() {
+    fn a_missing_slot_reads_as_empty() {
         let panels = UnitPanels::from_rows(&[row(Faction::Player, Cell::new(0, 0), Vec3::ZERO)]);
 
-        assert_eq!(panels.state_line(Faction::Enemy), "");
-        assert_eq!(panels.hp_text(Faction::Enemy), "");
-        assert_eq!(panels.stamina_text(Faction::Enemy), "");
-        assert_eq!(panels.hp_percent(Faction::Enemy), Val::Percent(0.0));
-        assert_eq!(panels.stamina_percent(Faction::Enemy), Val::Percent(0.0));
+        let empty = PanelSlot::Enemy(0);
+        assert_eq!(panels.state_line(empty), "");
+        assert_eq!(panels.hp_text(empty), "");
+        assert_eq!(panels.stamina_text(empty), "");
+        assert_eq!(panels.hp_percent(empty), Val::Percent(0.0));
+        assert_eq!(panels.stamina_percent(empty), Val::Percent(0.0));
+        // 越界的名次同样退回空值，不 panic
+        assert_eq!(panels.state_line(PanelSlot::Enemy(99)), "");
     }
 
     /// 没有精力组件的单位（例如场景里的纯装饰靶子）显示 `EN -` 而不是 0/0。
@@ -331,16 +364,17 @@ mod tests {
         without.stamina = None;
         let panels = UnitPanels::from_rows(&[without]);
 
-        assert_eq!(panels.stamina_text(Faction::Player), "EN -");
-        assert_eq!(panels.stamina_percent(Faction::Player), Val::Percent(0.0));
+        assert_eq!(panels.stamina_text(PanelSlot::Player), "EN -");
+        assert_eq!(panels.stamina_percent(PanelSlot::Player), Val::Percent(0.0));
     }
 
-    /// 两个敌人时面板显示**离玩家最近的那个**，与遍历顺序无关。
+    /// **每个敌人各占一行，最近的在最前**，与遍历顺序无关。
     ///
-    /// 这条守着一个真实的症状：以前是"后遍历到的覆盖前面"，而 ECS 查询顺序不保证，
-    /// 于是两个敌人时血条看起来自己在跳。
+    /// 这条取代了旧的"两个敌人只显示最近的那个"：现在两个敌人**都有行**，
+    /// 而且**顺序由数据决定**（离玩家近的在前）——以前是"后遍历到的覆盖前面"，
+    /// 而 ECS 查询顺序不保证，于是血条看起来自己在跳。
     #[test]
-    fn the_enemy_panel_shows_the_nearest_one_whatever_the_iteration_order() {
+    fn every_enemy_gets_a_row_ordered_by_distance_whatever_the_iteration_order() {
         let player = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
         let near = row(Faction::Enemy, Cell::new(1, 0), Vec3::new(2.0, 0.0, 0.0));
         let far = row(Faction::Enemy, Cell::new(5, 0), Vec3::new(10.0, 0.0, 0.0));
@@ -351,12 +385,16 @@ mod tests {
             vec![far, near, player],
         ] {
             let panels = UnitPanels::from_rows(&order);
-            let shown = panels.of(Faction::Enemy).expect("应当有敌人在面板上");
+            assert_eq!(panels.enemies.len(), 2, "两个敌人都该有行");
             assert_eq!(
-                shown.cell,
+                panels.enemies[0].cell,
                 Cell::new(1, 0),
-                "无论遍历顺序如何，显示的都该是更近的那个"
+                "第 0 行必须是离玩家**最近**的那个（与遍历顺序无关）"
             );
+            assert_eq!(panels.enemies[1].cell, Cell::new(5, 0), "远的那行在后");
+            // 行名带名次：多个敌人时得能分清是哪一个
+            assert_eq!(panels.name(PanelSlot::Enemy(0)), "ENEMY 1");
+            assert_eq!(panels.name(PanelSlot::Enemy(1)), "ENEMY 2");
         }
     }
 
@@ -370,9 +408,9 @@ mod tests {
         let a = UnitPanels::from_rows(&[player, east, west]);
         let b = UnitPanels::from_rows(&[player, west, east]);
         assert_eq!(
-            a.of(Faction::Enemy).map(|row| row.cell),
-            b.of(Faction::Enemy).map(|row| row.cell),
-            "并列时两种顺序必须给出同一个答案"
+            a.enemies.iter().map(|row| row.cell).collect::<Vec<_>>(),
+            b.enemies.iter().map(|row| row.cell).collect::<Vec<_>>(),
+            "并列时两种顺序必须给出同一个次序"
         );
     }
 
@@ -383,9 +421,44 @@ mod tests {
             row(Faction::Player, Cell::new(0, 0), Vec3::ZERO),
             row(Faction::Enemy, Cell::new(3, 0), Vec3::new(6.0, 0.0, 0.0)),
         ]);
+        assert_eq!(panels.enemies.len(), 1);
         assert_eq!(
-            panels.of(Faction::Enemy).map(|row| row.cell),
+            panels.of(PanelSlot::Enemy(0)).map(|row| row.cell),
             Some(Cell::new(3, 0))
         );
+    }
+
+    /// **敌人多于行数时只画前 N 个**（名次靠前的那些）。
+    ///
+    /// 行池大小是 [`MAX_ENEMY_ROWS`]：模型必须**按同一个数截断**，
+    /// 否则多出来的敌人没有行可画（静默丢掉），而面板上看起来"敌人少了"。
+    #[test]
+    fn enemies_beyond_the_row_pool_are_dropped_by_rank() {
+        let player = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        let mut rows = vec![player];
+        // 造 MAX+2 个敌人，距离依次递增
+        for index in 0..MAX_ENEMY_ROWS + 2 {
+            let distance = (index + 1) as f32 * 2.0;
+            rows.push(row(
+                Faction::Enemy,
+                Cell::new(index as i32 + 1, 0),
+                Vec3::new(distance, 0.0, 0.0),
+            ));
+        }
+
+        let panels = UnitPanels::from_rows(&rows);
+        assert_eq!(
+            panels.enemies.len(),
+            MAX_ENEMY_ROWS,
+            "最多画 {MAX_ENEMY_ROWS} 行"
+        );
+        // 留下的必须是**最近的那几个**
+        for (index, enemy) in panels.enemies.iter().enumerate() {
+            assert_eq!(
+                enemy.position.x,
+                (index + 1) as f32 * 2.0,
+                "第 {index} 行应当是按距离排的第 {index} 个敌人"
+            );
+        }
     }
 }

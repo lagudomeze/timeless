@@ -102,6 +102,11 @@ fn unit_sprites_exist_square_and_keep_transparency() {
 /// 手抄一份字表迟早会和代码脱节（刚发生过：日志加了"命中/被击杀"，
 /// 字表没跟上，豆腐块就没被拦住）。这里改成从**真相源**里抽：
 /// 战斗日志与提示条是中文正文的产处，它们的字符串字面量就是要覆盖的字。
+///
+/// ⚠️ **跳过 `#[cfg(test)]` 模块**：断言消息里的中文（"语序应当是…"）
+/// 只在测试失败时出现在终端，**永远不会渲染**——把它们算进来会让字体
+/// 被迫多带几十个用不到的字（实测：多悄悄要求了 12 个）。
+/// 测试模块由**花括号配平**识别，所以 `mod tests { … }` 里嵌套的块也被整段跳过。
 fn chinese_in_source() -> String {
     let sources = [
         include_str!("../src/presentation/log.rs"),
@@ -111,16 +116,40 @@ fn chinese_in_source() -> String {
     ];
     let mut chars = String::new();
     for source in sources {
+        let mut depth: i32 = 0;
+        // Some(depth) = 正在跳过这个测试模块（记下它的层级，配平后跳出）
+        let mut skipping_test: Option<i32> = None;
+        let mut previous_was_cfg_test = false;
+
         for line in source.lines() {
-            // 跳过注释行：注释里的中文不会被渲染出来
             let code = line.trim_start();
-            if code.starts_with("//") || code.starts_with("*") {
-                continue;
+            let is_comment = code.starts_with("//") || code.starts_with("*");
+            let opens_test = code.starts_with("#[cfg(test)]");
+
+            if !is_comment && skipping_test.is_none() && !previous_was_cfg_test && !opens_test {
+                for literal in line.split('"').skip(1).step_by(2) {
+                    chars.extend(literal.chars().filter(|c| is_cjk(*c)));
+                }
             }
-            // 抓 `"..."` 字面量里的中文
-            for literal in line.split('"').skip(1).step_by(2) {
-                chars.extend(literal.chars().filter(|c| is_cjk(*c)));
+
+            // 花括号配平（字符串里的括号会干扰，但代码里极少见——够用即可）
+            for ch in line.chars() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if skipping_test == Some(depth + 1) {
+                            skipping_test = None;
+                        }
+                    }
+                    _ => {}
+                }
             }
+            // `#[cfg(test)] mod tests {` —— 属性行本身不带 `{`，所以下一行才开块
+            if opens_test && skipping_test.is_none() {
+                skipping_test = Some(depth + 1);
+            }
+            previous_was_cfg_test = opens_test;
         }
     }
     chars
@@ -151,7 +180,7 @@ fn the_font_covers_every_character_the_ui_can_show() {
     // HUD 英文 + 数字与符号（这些是代码里写死的展示文案）
     let ui_text = [
         "PLAYER ENEMY HP EN TIMELINE FROZEN RUNNING SKILL COST WINDUP RECOVERY POWER",
-        "attack melee fireball roll parry move jump shoot wait",
+        "attack melee fireball roll parry move jump shoot wait dash",
         "0123456789:/.-+%()[]·",
         // 全角标点与常用符号
         "，。：、；！？（）【】「」…—·",
