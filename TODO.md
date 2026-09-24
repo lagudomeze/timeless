@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 317 通过（314 单元 + 3 资产验收）/ 0 跳过
+cargo test                                  # 318 通过（315 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -706,23 +706,32 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ### 信息层（G 层：信息即力量）
 
-- [x] **洞察力 / 时间轴悬停读数**（本次，设计稿 ①② 落地）：滑到时间轴的色块上，
+- [x] **洞察力 / 时间轴悬停读数**（设计稿 ①②③ 落地）：滑到时间轴的色块上，
       状态行下方弹出一行 **`ENEMY · fireball → cell (3,1) · 0.4s · interruptible`**
-      ——谁 · 什么 · 打哪 · 还剩多久 · 能不能被打断。
+      ——谁 · 什么 · 打哪 · 还剩多久 · 能不能被打断；
+      同时**战场上圈出那一手的主人**（脚边一个琥珀色圆环，`TimelineFocusRing`），
+      时间轴与战场就这样连起来了。
       **一行新增数据类型都没有**（设计稿的关键发现兑现了）：那五个数本来就挂在
       行动实体上，只是玩家看不见。做法是让**色块自己带着行动实体的 id**
       （`TimelineSlot::action`），悬停时反查——比"按车道找那个行动者的行动"稳：
       后者的判据会与分道逻辑分叉。
       **对抗标签的读法与打断闸门共用一条口径**（`!interruptible || super_armor`
       → `super armor`）：读数说能打断、实际断不掉比没有读数更糟，有测试钉住。
-      三层照旧新增 `readout.rs`（`readout_line` 纯函数 + `TimelineHover` 事实 + 两个
-      标记组件），取数写 UI 在 `system.rs`，条子本身在 `scene.rs`。
-      验收：314 测试全绿 / clippy 零警告 / fmt 通过；
+      三层照旧新增 `readout.rs`（`readout_line` 纯函数 + `TimelineHover` 事实 + 三个
+      标记组件），取数写 UI 在 `system.rs`，条子与指示圈本身在 `scene.rs`。
+      **两处与设计稿的偏差**（都写进了 `docs/insight.md`）：读数显示的是**前摇剩余秒数**
+      （不是前摇/后摇两个数——总时长在色块宽度里已看得见）；指示圈圈的是**行动者**，
+      不是"威胁格"，因为格子高亮要与 `HoveredCell` 抢通道，留到下一轮。
+      验收：315 测试全绿 / clippy 零警告 / fmt 通过；
       `hovering_a_block_shows_what_that_action_is`（整条链路：色块 → 反查 → 读数文案 →
-      `TimelineHover`）与 `the_readouts_countdown_follows_the_virtual_clock`；
-      前者**验过不是空跑**（把判据从 `Hovered` 改成只认 `Pressed` 后转红）。
-      **未做**（设计稿 ③④，仍待拍板）：战场单位高亮（`TimelineHover` 已就位、没接）、
-      画威胁格、敌人面板展开式洞察力面板。
+      `TimelineHover` 带 action + actor）、`the_readouts_countdown_follows_the_virtual_clock`、
+      `the_focus_ring_circles_the_actor_of_the_hovered_action`；
+      前两条**验过不是空跑**（判据从 `Hovered` 改成只认 `Pressed` 后转红）。
+      **实机**：指示圈实体在运行中可查、默认 `Hidden`、平铺旋转正确，无运行时错误。
+      ⚠️ **实机限制**：BRP 的合成光标驱动不了 `Interaction`（Bevy 每帧重算它），
+      所以"鼠标真的悬停上去"这一步只能靠测试守，实机只验到接线与默认隐藏。
+      **未做**：画威胁格（设计稿第四节，与格子高亮同一套合并逻辑）、
+      敌人面板展开式洞察力面板。
 - [x] **战斗日志：谁打的谁**（本次）：日志原本只写"玩家 受到 12 点伤害"，
       **看不出谁出的手**；死亡也只写"敌人 阵亡"，而 `DeathEvent.killer` 一直被忽略。
       现在写得出「玩家命中，受到 12 点伤害」（来源是攻击实体，读它的 `Faction` 认出手方）

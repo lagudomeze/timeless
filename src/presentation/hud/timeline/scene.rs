@@ -9,13 +9,22 @@
 //! 三条竖列天然对齐：第 N 行的方块 / 色块 / 候场块永远在同一水平线上。
 
 use bevy::prelude::*;
+// 指示圈不该投影：它只是一层指示，投出影子反而像实体
+use bevy::light::NotShadowCaster;
 
 use super::super::hud_text_tinted;
 use super::model::{
     BLOCK_POOL_PER_LANE, LANE_GAP, LANE_HEIGHT, LANE_POOL, STAGING_WIDTH, TICK_POOL, TICK_SECONDS,
     WINDOW_SECONDS,
 };
-use super::readout::{TimelineReadout, TimelineReadoutText};
+use super::readout::{TimelineFocusRing, TimelineReadout, TimelineReadoutText};
+
+/// 指示圈的内 / 外半径（世界单位）：比单位纸片略大，圈在脚边。
+pub const RING_INNER: f32 = 0.55;
+/// 见 [`RING_INNER`]。
+pub const RING_OUTER: f32 = 0.75;
+/// 指示圈的琥珀色（与技能栏"选中"色同族，一眼看出是"我正在看这一手"）。
+pub const RING_COLOR: Color = Color::srgba(0.95, 0.84, 0.42, 0.85);
 
 /// 车道底色：比轨道更淡，它只是"行"，不抢色块。
 const LANE_BG: Color = Color::srgba(1.0, 1.0, 1.0, 0.05);
@@ -330,6 +339,33 @@ fn spawn_lane_block(
             ],
         ))
         .id()
+}
+
+/// 战场上「这一手是谁的」指示圈：脚边一个扁平圆环，默认隐藏。
+///
+/// 世界空间（不是 UI）：它要跟着单位在世界里移动。它**不是单位的子实体**
+/// （`ChildOf`）——它是表现层的一次性指示，单位销毁时它自己会隐藏，
+/// 不需要跟着销毁再重建。
+pub fn spawn_timeline_focus_ring(commands: &mut Commands) {
+    commands.spawn_scene(bsn! {
+        Name("TimelineFocusRing")
+        TimelineFocusRing
+        Mesh3d(asset_value(Annulus::new(RING_INNER, RING_OUTER)))
+        MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
+            base_color: {RING_COLOR},
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            double_sided: true,
+            ..default()
+        }))
+        // 平铺在地面上（和单位阴影同一套做法）
+        Transform {
+            rotation: {Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)},
+        }
+        Visibility::Hidden
+        // 指示圈不该投影：它只是一层指示，投出影子反而像实体
+        NotShadowCaster
+    });
 }
 
 #[cfg(test)]
