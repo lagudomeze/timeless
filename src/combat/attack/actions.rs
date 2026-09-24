@@ -152,6 +152,7 @@ pub fn declare_skill_system(
     mut fires: MessageReader<FireCommand>,
     mut melees: MessageReader<MeleeCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
+    config: Option<Res<crate::config::ActionConfig>>,
     mut players: AttackerPlayer<'_, '_>,
     units: Query<(&Transform, &Faction)>,
 ) {
@@ -171,15 +172,19 @@ pub fn declare_skill_system(
         .and_then(|request| request.target_cell)
         .or_else(|| nearest_enemy_cell(&units, transform.translation, *faction))
         .unwrap_or(*cell);
+    let (melee_timing, fireball_timing) = match config.as_deref() {
+        Some(config) => (config.melee.timing(), config.fireball.timing()),
+        None => (MELEE_TIMING, FIREBALL_TIMING),
+    };
     if melee {
         let schedule =
-            ScheduledAction::with_focus(MELEE_TIMING, now, &mut focus, pending_focus.wants());
+            ScheduledAction::with_focus(melee_timing, now, &mut focus, pending_focus.wants());
         declare_melee_at(
             &mut commands,
             player,
             *cell,
             target_cell,
-            MELEE_TIMING,
+            melee_timing,
             schedule,
         );
     } else {
@@ -188,8 +193,8 @@ pub fn declare_skill_system(
             player,
             *cell,
             target_cell,
-            FIREBALL_TIMING,
-            ScheduledAction::with_focus(FIREBALL_TIMING, now, &mut focus, pending_focus.wants()),
+            fireball_timing,
+            ScheduledAction::with_focus(fireball_timing, now, &mut focus, pending_focus.wants()),
         );
     }
 }

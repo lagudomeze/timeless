@@ -9,6 +9,7 @@
 
 use bevy::prelude::*;
 
+use crate::config::ActionConfig;
 use crate::skills::AbilityId;
 use crate::timeline::{
     ActionBlocked, ActionOf, ActionTiming, DecisionSlot, FirstReady, Focus, InputDriven, Intent,
@@ -54,6 +55,22 @@ pub fn step_from_axis(axis: Vec2) -> (i32, i32) {
     } else {
         (0, axis.y.signum() as i32)
     }
+}
+
+/// 从配置取节奏（没装 `ConfigPlugin` 的轻量 App 用内置常量）。
+///
+/// 每个声明系统都要问一遍"这一手的节奏是多少"——**只有这一处答案**，
+/// 所以配置改了、目录改了、声明出来的行动三者不会分叉。
+fn move_timing(config: Option<&ActionConfig>) -> ActionTiming {
+    config
+        .map(|config| config.move_.timing())
+        .unwrap_or(MOVE_TIMING)
+}
+
+fn jump_timing(config: Option<&ActionConfig>) -> ActionTiming {
+    config
+        .map(|config| config.jump.timing())
+        .unwrap_or(JUMP_TIMING)
 }
 
 /// 移动行动工厂：载荷 + 节奏 + 调度数据（移动随时可以改主意，撤销免费）。
@@ -153,6 +170,7 @@ pub fn declare_move_system(
     time: Res<Time<Virtual>>,
     pending_focus: Res<PendingFocus>,
     terrain: Res<TerrainConfig>,
+    config: Option<Res<ActionConfig>>,
     mut requests: MessageReader<MoveCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
     mut refused: MessageWriter<MoveRefused>,
@@ -176,22 +194,17 @@ pub fn declare_move_system(
         refused.write(MoveRefused::BlockedByTerrain);
         return;
     }
+    let timing = move_timing(config.as_deref());
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, pending_focus.wants());
-    commands.spawn_scene(move_action_scene(
-        *cell,
-        to_cell,
-        MOVE_TIMING,
-        schedule,
-        player,
-    ));
+    let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
+    commands.spawn_scene(move_action_scene(*cell, to_cell, timing, schedule, player));
     // 填意图 + 当场物化：无回合模型里没有「提交」这一步，所以声明即排期
     commands.entity(player).insert(DecisionSlot::declared(
         Intent {
             ability: AbilityId::Move,
             target: Target::Cell(to_cell),
         },
-        &MOVE_TIMING,
+        &timing,
         now,
     ));
 }
@@ -294,6 +307,7 @@ pub fn declare_jump_system(
     pending_focus: Res<PendingFocus>,
     mut requests: MessageReader<JumpCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
+    config: Option<Res<ActionConfig>>,
     mut players: Query<(Entity, &mut Focus, &DecisionSlot), With<InputDriven>>,
 ) {
     if requests.read().last().is_none() {
@@ -302,16 +316,17 @@ pub fn declare_jump_system(
     let Some((player, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
         return; // 忙（前摇 / 后摇 / 位移中）或没有玩家
     };
+    let timing = jump_timing(config.as_deref());
     let now = time.elapsed_secs();
-    let schedule = ScheduledAction::with_focus(JUMP_TIMING, now, &mut focus, pending_focus.wants());
-    commands.spawn_scene(jump_action_scene(JUMP_TIMING, schedule, player));
+    let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
+    commands.spawn_scene(jump_action_scene(timing, schedule, player));
     // 原地起跳：不需要目标
     commands.entity(player).insert(DecisionSlot::declared(
         Intent {
             ability: AbilityId::Jump,
             target: Target::None,
         },
-        &JUMP_TIMING,
+        &timing,
         now,
     ));
 }

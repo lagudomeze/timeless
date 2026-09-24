@@ -30,6 +30,7 @@
 | 装备 | [equipment.md](equipment.md) 🚧 | 装备槽位、穿脱与类型校验（整篇未落地） |
 | 游戏设计总纲 | [game-design.md](game-design.md) | 想知道「为什么做这个机制」 |
 | 素材与字体 | [assets.md](assets.md) | 选素材、换贴图、动 HUD 文案 |
+| 数值配置 | [config.md](config.md) | 调前摇 / 后摇 / 消耗 / 威力——**改 `config/actions.ron` 不必重编译** |
 | Bevy 0.19 速查 | [bevy-019.md](bevy-019.md) | 写任何 Bevy 代码之前 |
 | 进度与 backlog | [../TODO.md](../TODO.md) | 想知道「现在做到哪了」「下一步做什么」 |
 | 仓库指南 | [../AGENTS.md](../AGENTS.md) | 命令、编码风格、提交规范 |

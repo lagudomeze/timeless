@@ -11,7 +11,34 @@ use crate::skills::{
     TargetSelector,
 };
 
+use crate::config::ActionConfig;
+
 use super::actions::{JUMP_TIMING, MOVE_TIMING, ROLL_TIMING};
+
+/// 按配置生成三条定义（**数值来自 `.ron`**，缺省时等于下面的常量）。
+///
+/// `AbilityDef` 是 `Copy` 的纯数据，所以"从配置构造"是廉价的一次拷贝。
+pub fn abilities_from(config: &ActionConfig) -> [AbilityDef; 3] {
+    [
+        AbilityDef {
+            timing: config.move_.timing(),
+            cost: config.move_.cost,
+            power: config.move_.power,
+            ..MOVE_ABILITY
+        },
+        AbilityDef {
+            timing: config.jump.timing(),
+            cost: config.jump.cost,
+            power: config.jump.power,
+            ..JUMP_ABILITY
+        },
+        AbilityDef {
+            timing: config.roll.timing(),
+            cost: config.roll.cost,
+            ..ROLL_ABILITY
+        },
+    ]
+}
 
 /// 走一格：**没有消耗、几乎不设防**（走得快就容易被打断）。
 pub const MOVE_ABILITY: AbilityDef = AbilityDef {
@@ -59,8 +86,15 @@ pub const ROLL_ABILITY: AbilityDef = AbilityDef {
 pub const ABILITIES: [AbilityDef; 3] = [MOVE_ABILITY, JUMP_ABILITY, ROLL_ABILITY];
 
 /// 启动时把自己的定义交上去（写：[`crate::movement`]；消费：[`crate::skills`]）。
-pub fn register_abilities_system(mut registrations: MessageWriter<RegisterAbility>) {
-    for def in ABILITIES {
+///
+/// **从配置构造**：`config/actions.ron` 里的数值经此进入技能目录。
+pub fn register_abilities_system(
+    // 轻量测试 App 可能没装 `ConfigPlugin`：那时用内置默认值（= 各域常量）
+    config: Option<Res<ActionConfig>>,
+    mut registrations: MessageWriter<RegisterAbility>,
+) {
+    let config = config.map(|config| *config).unwrap_or_default();
+    for def in abilities_from(&config) {
         registrations.write(RegisterAbility(def));
     }
 }

@@ -6,6 +6,10 @@ use crate::combat::attributes::{AttackFrame, HitRadius, InterruptPower, Physical
 
 /// 箭矢的速度帧（**信息层读数**；越小越快——箭最快）。
 pub const ARROW_FRAME: u32 = 4;
+/// 箭矢伤害（**单体**：与火球的 AoE 12 点相对——单体更高，这是两种投射物的分工）。
+pub const ARROW_DAMAGE: i32 = 10;
+/// 箭矢的打断力度：轻，但快（见 `ARROW_FRAME`）。
+pub const ARROW_POWER: i32 = 1;
 use crate::combat::components::Faction;
 use crate::combat::lifecycle::Projectile;
 use crate::movement::Velocity;
@@ -28,9 +32,9 @@ pub fn arrow_scene(position: Vec3, direction: Vec3, faction: Faction) -> impl Sc
         template_value(faction)
         template_value(Velocity(direction * ARROW_SPEED))
         Projectile { max_hits: 1, current_hits: 0, finished: false }
-        template_value(PhysicalDamage(10))
+        template_value(PhysicalDamage(ARROW_DAMAGE))
         template_value(AttackFrame(ARROW_FRAME))
-        template_value(InterruptPower(1))
+        template_value(InterruptPower(ARROW_POWER))
         HitRadius(0.2)
         Transform {
             translation: {position},
