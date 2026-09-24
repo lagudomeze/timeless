@@ -27,7 +27,7 @@ pub struct HelpPanel;
 pub const HELP_LINES: &[&str] = &[
     "KEYBOARD",
     "  arrows          move one cell (screen-relative)",
-    "  1-4             use skill slot 1-4 directly",
+    "  1-5             use skill slot 1-5 directly",
     "  Q / W / E / R   hotkeys: fireball / melee / roll / parry",
     "  Tab / Shift+Tab cycle affordable skills",
     "  G               use selected skill",
@@ -159,15 +159,16 @@ mod tests {
     fn the_help_lists_every_key_the_input_domain_reads() {
         let help = HELP_LINES.join("\n");
         // `input` 域真正读的按键（名字 → 玩家看到的写法）
-        let keys: [(&str, &str); 15] = [
+        let keys: [(&str, &str); 16] = [
             ("ArrowUp", "arrows"),
             ("ArrowDown", "arrows"),
             ("ArrowLeft", "arrows"),
             ("ArrowRight", "arrows"),
-            ("Digit1", "1-4"),
-            ("Digit2", "1-4"),
-            ("Digit3", "1-4"),
-            ("Digit4", "1-4"),
+            ("Digit1", "1-5"),
+            ("Digit2", "1-5"),
+            ("Digit3", "1-5"),
+            ("Digit4", "1-5"),
+            ("Digit5", "1-5"),
             ("Tab", "Tab"),
             ("KeyG", "G"),
             ("KeyC", "C"),
@@ -205,9 +206,9 @@ mod tests {
         }
         assert!(!known.is_empty(), "没从输入域源码里解析出任何按键");
 
-        // 面板首列写的每个键（`arrows` 与 `1-4` 是多个物理键的写法，单独认）
+        // 面板首列写的每个键（`arrows` 与 `1-5` 是多个物理键的写法，单独认）
         let spellings = [
-            "arrows", "1-4", "Q", "W", "E", "R", "Tab", "G", "C", "Space", "P", "B", "V", "T",
+            "arrows", "1-5", "Q", "W", "E", "R", "Tab", "G", "C", "Space", "P", "B", "V", "T",
             "F5", "F1",
         ];
         for spelling in spellings {

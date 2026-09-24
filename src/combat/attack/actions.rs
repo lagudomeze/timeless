@@ -6,11 +6,10 @@
 //! 执行器**自己收尾**：`now >= execute_at` 才动手，然后销毁行动实体、
 //! 把行动者忙到效果真的发生为止（箭矢要忙到落地，否则箭会冻在半空）。
 //!
-//! ⚠️ **箭矢当前未被玩家输入触发**：玩家的远程手段是火球
-//! （[`super::fireball`]，锁格 + AoE）。这里保留箭矢作为**单体碰撞投射物**的
-//! 参考实现与测试夹具（`shoot_action_executor_system` / `arrow_scene`），
-//! 计划用于将来的「单体狙击」技能；`declare_skill_system` 因此没有注册进插件
-//! （避免和 `declare_fireball_system` 抢同一条 `FireCommand`）。
+//! **两种远程手段的分工**：火球（[`super::fireball`]）锁格 + 半径 AoE，
+//! 箭矢（本文件的射击一族）是**单体狙击**——伤害略低、出手更快、追踪一个目标。
+//! 玩家按 `SkillKind::Shoot` 那一格（或将来绑热键）走 [`declare_shoot_system`]，
+//! 与火球各走各的声明系统（它们的落点语义不同：锁格 vs 追踪）。
 
 use bevy::prelude::*;
 
@@ -26,14 +25,31 @@ use crate::timeline::{
 
 use super::MELEE_DAMAGE;
 use super::arrow::{ARROW_DAMAGE, ARROW_SPEED, arrow_scene};
-use super::events::{FireCommand, MeleeCommand};
-use super::fireball::FIREBALL_TIMING;
+use super::events::ShootCommand;
 use super::melee::melee_scene;
 
 /// 射击（箭矢）的节奏：出手慢、后摇长，但在手里的时候最怕被打断。
 pub const ARROW_TIMING: ActionTiming = ActionTiming::new(0.30, 0.50, 2);
 /// 近战的节奏：出手快、硬直长、抗打断中等。
 pub const MELEE_TIMING: ActionTiming = ActionTiming::new(0.20, 0.35, 3);
+
+/// 「声明攻击时要查的玩家」：身份 + 位置 + 阵营 + Focus + 决策槽。
+///
+/// 抽成类型别名是因为元组变长了（`Focus` 变成每单位一份的组件之后），
+/// 直接写在签名里会触发 `clippy::type_complexity`。
+type AttackerPlayer<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Cell,
+        &'static Transform,
+        &'static Faction,
+        &'static mut Focus,
+        &'static DecisionSlot,
+    ),
+    With<InputDriven>,
+>;
 
 /// 射击载荷：朝最近敌人放一支箭。
 #[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -121,83 +137,68 @@ fn nearest_enemy_cell(
         .map(|(transform, _)| Cell::from_world(transform.translation))
 }
 
-/// 声明技能：`FireCommand` / `MeleeCommand` → 玩家的一条技能行动。
+/// 声明射击：`ShootCommand` → 一条射击行动（弓，单体狙击）。
 ///
-/// **未注册**：玩家路径由 `fireball::declare_fireball_system` 与
-/// `fireball::declare_melee_system` 承担（它们按各自的技能配置扣费）。
-/// 这里保留的是"同一条声明流程、不同触发源"的参考实现。
-#[allow(clippy::too_many_arguments)]
-/// 「声明攻击时要查的玩家」：身份 + 位置 + 阵营 + Focus + 决策槽。
+/// 与 [`declare_fireball_system`](super::fireball::declare_fireball_system) 同形：
+/// **条件校验只有一份**（`can_cast`）、节奏从配置读、武器偏移经
+/// [`weapon_timing`](crate::equipment::weapon_timing) 加上。
 ///
-/// 抽成类型别名是因为元组变长了（`Focus` 变成每单位一份的组件之后），
-/// 直接写在签名里会触发 `clippy::type_complexity`。
-type AttackerPlayer<'w, 's> = Query<
-    'w,
-    's,
-    (
-        Entity,
-        &'static Cell,
-        &'static Transform,
-        &'static Faction,
-        &'static mut Focus,
-        &'static DecisionSlot,
-    ),
-    With<InputDriven>,
->;
-
+/// **不接目标格**：箭矢的落点是"射手到最近敌人的那条线"，
+/// 由执行器在**执行那一帧**决定（见 [`shoot_action_executor_system`]）——
+/// 声明与落地之间敌人还能走开，所以在声明时锁格与"追踪"的语义不符。
+///
+/// **精力在声明时扣吗**：不。箭矢当前 `cost = 0`（`config/actions.ron` 里可调），
+/// 所以这里没有扣费这一步；哪天给它写上了消耗，就照火球那条路在声明时扣。
 #[allow(clippy::too_many_arguments)]
-pub fn declare_skill_system(
+pub fn declare_shoot_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     pending_focus: Res<PendingFocus>,
-    mut fires: MessageReader<FireCommand>,
-    mut melees: MessageReader<MeleeCommand>,
+    mut shoots: MessageReader<ShootCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     config: Option<Res<crate::config::ActionConfig>>,
+    // 武器改动作节奏（只给偏移，见 `equipment::weapon_timing`）
+    equipment: Query<&crate::equipment::EquipmentBonus>,
     mut players: AttackerPlayer<'_, '_>,
-    units: Query<(&Transform, &Faction)>,
 ) {
-    let request = fires.read().last().copied();
-    let melee = melees.read().last().is_some();
-    if request.is_none() && !melee {
+    if shoots.read().last().is_none() {
         return;
     }
-    let Some((player, cell, transform, faction, mut focus, _)) =
-        players.iter_mut().first_ready(&mut blocked)
-    else {
-        return;
+    let Some((player, _, _, _, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
+        return; // 忙或没有玩家
     };
-
+    let base = match config.as_deref() {
+        Some(config) => config.shoot.timing(),
+        None => ARROW_TIMING,
+    };
+    let timing = crate::equipment::weapon_timing(base, equipment.get(player).ok());
     let now = time.elapsed_secs();
-    let target_cell = request
-        .and_then(|request| request.target_cell)
-        .or_else(|| nearest_enemy_cell(&units, transform.translation, *faction))
-        .unwrap_or(*cell);
-    let (melee_timing, fireball_timing) = match config.as_deref() {
-        Some(config) => (config.melee.timing(), config.fireball.timing()),
-        None => (MELEE_TIMING, FIREBALL_TIMING),
-    };
-    if melee {
-        let schedule =
-            ScheduledAction::with_focus(melee_timing, now, &mut focus, pending_focus.wants());
-        declare_melee_at(
-            &mut commands,
-            player,
-            *cell,
-            target_cell,
-            melee_timing,
-            schedule,
-        );
-    } else {
-        crate::combat::attack::declare_fireball_at(
-            &mut commands,
-            player,
-            *cell,
-            target_cell,
-            fireball_timing,
-            ScheduledAction::with_focus(fireball_timing, now, &mut focus, pending_focus.wants()),
-        );
-    }
+    let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
+    declare_shoot_at(&mut commands, player, timing, schedule);
+}
+
+/// 声明一次射击（只生成行动实体）：扣费与触发源由调用方负责。
+pub fn declare_shoot_at(
+    commands: &mut Commands,
+    actor: Entity,
+    timing: ActionTiming,
+    schedule: ScheduledAction,
+) -> Entity {
+    let action = commands
+        .spawn_scene(shoot_action_scene(timing, schedule, actor))
+        .id();
+    // 这个工厂只有 `schedule`：声明时刻就是 `execute_at − windup`（前摇的定义）
+    let declared_at = schedule.execute_at - timing.windup;
+    commands.entity(actor).insert(DecisionSlot::declared(
+        Intent {
+            ability: AbilityId::Shoot,
+            // 单体射击：目标在**执行那一帧**才确定（敌人会走开），所以这里不锁格
+            target: Target::None,
+        },
+        &timing,
+        declared_at,
+    ));
+    action
 }
 
 /// 声明一次近战横扫（只生成行动实体）：扣费与触发源由调用方负责。

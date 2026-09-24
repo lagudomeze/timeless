@@ -5,7 +5,8 @@
 //! [TODO.md](../../../TODO.md) 的「动作数值外置」）。
 
 use crate::combat::attack::FIREBALL_DAMAGE;
-use crate::combat::attack::actions::MELEE_TIMING;
+use crate::combat::attack::actions::{ARROW_TIMING, MELEE_TIMING};
+use crate::combat::attack::arrow::{ARROW_DAMAGE, ARROW_FRAME};
 use crate::combat::attack::fireball::{FIREBALL_COST, FIREBALL_FRAME, FIREBALL_TIMING};
 use crate::combat::attack::melee::{MELEE_DAMAGE, MELEE_FRAME};
 use crate::combat::defense::{PARRY_COST, ROLL_COST};
@@ -132,7 +133,7 @@ impl SkillDef {
 }
 
 /// 技能表（顺序 = 菜单顺序 = 数字键 `1`~`5`）。
-pub const SKILLS: [SkillDef; 4] = [
+pub const SKILLS: [SkillDef; 5] = [
     SkillDef {
         kind: SkillKind::Attack,
         cost: FIREBALL_COST,
@@ -161,6 +162,15 @@ pub const SKILLS: [SkillDef; 4] = [
         power: 0,
         // 翻滚不产生攻击实体，因此没有速度帧可言
         frame: 0,
+    },
+    SkillDef {
+        kind: SkillKind::Shoot,
+        // 箭矢免费（`config/actions.ron` 的 `shoot.cost` 可调）——它靠"单体 + 更快出手"
+        // 与火球分工，不靠资源取舍
+        cost: 0,
+        timing: ARROW_TIMING,
+        power: ARROW_DAMAGE,
+        frame: ARROW_FRAME,
     },
 ];
 
@@ -212,12 +222,20 @@ mod tests {
 
     #[test]
     fn affordability_filters_by_cost() {
-        assert_eq!(affordable_indices(0), vec![1], "0 精力时只有免费的近战可选");
-        assert_eq!(affordable_indices(1), vec![1, 3], "1 点精力够翻滚");
+        assert_eq!(
+            affordable_indices(0),
+            vec![1, 4],
+            "0 精力时只有免费的两手：近战与箭矢"
+        );
+        assert_eq!(
+            affordable_indices(1),
+            vec![1, 3, 4],
+            "1 点精力够翻滚（近战 / 箭矢免费，照旧可选）"
+        );
         assert_eq!(
             affordable_indices(5),
-            vec![0, 1, 2, 3],
-            "满精力四个技能全开"
+            vec![0, 1, 2, 3, 4],
+            "满精力五个技能全开"
         );
     }
 

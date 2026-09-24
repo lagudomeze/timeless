@@ -11,7 +11,7 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::combat::attack::events::{FireCommand, MeleeCommand};
+use crate::combat::attack::events::{FireCommand, MeleeCommand, ShootCommand};
 use crate::combat::defense::{RollCommand, Stamina};
 use crate::movement::CELL_SIZE;
 use crate::movement::Cell;
@@ -64,7 +64,7 @@ impl MenuSelection {
     }
 }
 
-/// 选中第 `index` 个技能（数字键 `1`~`4`）。
+/// 选中第 `index` 个技能（数字键 `1`~`5`）。
 ///
 /// 写：[`crate::input`]；消费：[`select_skill_system`]。
 #[derive(Message, Debug, Clone, Copy)]
@@ -135,6 +135,7 @@ pub fn use_selected_skill_system(
     bodies: Query<(&Transform, &Faction)>,
     mut fire_commands: MessageWriter<FireCommand>,
     mut melee_commands: MessageWriter<MeleeCommand>,
+    mut shoot_commands: MessageWriter<ShootCommand>,
     mut roll_commands: MessageWriter<RollCommand>,
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     // 玩家用技能 = 对当前反应窗口的表态（没有窗口时自然被忽略）
@@ -200,9 +201,8 @@ pub fn use_selected_skill_system(
             });
         }
         SkillKind::Shoot => {
-            // 箭矢走同一条 `FireCommand` 之外的路径：它有自己的声明系统
-            // （`declare_skill_system`），但那个还没接进插件——所以这里先不派发，
-            // 只保证"菜单里能看到、能选中"。接输入见 TODO.md 的「箭矢接回输入」。
+            // 单体狙击：自己的声明系统（落点是"到最近敌人的那条线"，不锁格）
+            shoot_commands.write(ShootCommand);
         }
         SkillKind::Roll => {
             // 与菜单过滤、声明系统同一条判据（`can_cast`）

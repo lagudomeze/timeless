@@ -82,7 +82,7 @@
 | 消息 | 谁写 | 谁消费 |
 | :--- | :--- | :--- |
 | `MoveCommand` / `MoveToCommand` / `JumpCommand` | `input` / `interaction` | `movement` 的声明系统 |
-| `FireCommand` / `MeleeCommand` | `input` / `combat::attack` 的菜单派发 | `combat::attack` 的声明系统 |
+| `FireCommand` / `MeleeCommand` / `ShootCommand` | `input` / `combat::attack` 的菜单派发 | `combat::attack` 的声明系统（`declare_fireball_system` / `declare_melee_system` / `declare_shoot_system`） |
 | `RollCommand` / `ParryCommand` | `input` | `combat::defense` 的声明系统 |
 | `WaitCommand` | `input`（空格） | `timeline::declare_wait_system` |
 | `SelectSkill` / `CycleSkill` / `UseSelectedSkill` | `input` | `combat::attack` 的菜单 |

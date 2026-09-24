@@ -274,6 +274,7 @@ pub fn focus_intent_input_system(
         KeyCode::Digit2,
         KeyCode::Digit3,
         KeyCode::Digit4,
+        KeyCode::Digit5,
     ]
     .into_iter()
     .chain(binds.entries.iter().map(|(key, _)| *key))
@@ -283,7 +284,7 @@ pub fn focus_intent_input_system(
     }
 }
 
-/// 技能栏：`1`~`4` **直接执行**那一格 · `Tab`/`Shift+Tab` 循环（只选，不执行）。
+/// 技能栏：`1`~`5` **直接执行**那一格 · `Tab`/`Shift+Tab` 循环（只选，不执行）。
 ///
 /// 与其它输入一样**只翻译**：选择与释放都是消息，落地由技能域负责。
 /// 「直接执行」= 选中 + 用一次（同一条路径），所以键盘和鼠标点击行为一致。
@@ -300,6 +301,7 @@ pub fn skill_menu_input_system(
         (KeyCode::Digit2, 1),
         (KeyCode::Digit3, 2),
         (KeyCode::Digit4, 3),
+        (KeyCode::Digit5, 4),
     ];
     for (key, index) in direct {
         if keys.just_pressed(key) {
