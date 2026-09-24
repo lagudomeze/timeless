@@ -151,7 +151,7 @@ pub fn use_selected_skill_system(
         return;
     };
     if !def.affordable(stamina.current) {
-        debug!("技能 {} 精力不足（需要 {}）", def.label, def.cost);
+        debug!("技能 {} 精力不足（需要 {}）", def.label(), def.cost);
         blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
         return;
     }
@@ -212,7 +212,7 @@ pub fn use_selected_skill_system(
 pub fn skill_line(index: usize, selected: usize) -> String {
     let def = &SKILLS[index];
     let marker = if index == selected { ">" } else { " " };
-    format!("{marker}{}:{} ({})", index + 1, def.label, def.cost)
+    format!("{marker}{}:{} ({})", index + 1, def.label(), def.cost)
 }
 
 #[cfg(test)]

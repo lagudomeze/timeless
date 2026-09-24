@@ -332,9 +332,20 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       `ReactionAnswer::{Counter, Abandon}`——比"改属性"更直接地解决了同一个问题：
       同一个 `threat` 实体只开一次窗，表过态就 `resolved`，**不再靠全局记账**。
       验收：`combat::reaction` 的用例（表态后再冻结必然是**新威胁**）。
-- [ ] **M24c 菜单改读目录**：`SKILLS`（4 项，其中"攻击"是**派发规则**不是技能）与目录
-      （7 项）不是一一对应，迁移要先定 `MenuSelection` 存什么（`SkillKind` 还是 `AbilityId`）。
-      现状已由 `menu_matches_the_catalogue` 兜住，不急。
+- [x] **M24c 菜单改读目录 —— 审计结论：不做整体迁移，只清掉一处真重复**（本次）：
+      先说**为什么不做**：`SKILLS` 是"菜单栏"（4 格、有顺序、数字键绑定、HUD 按
+      **定长数组**存快照 `[bool; SKILLS.len()]`、`[CounterHint; …]`），目录是"技能本体"
+      （7 条）。按 `AbilityId` 重建菜单会涉及 **35 处**引用，且要解决"哪些技能进栏、
+      什么顺序"（现在由数组顺序隐式决定），**换不来任何可观察的差异**——
+      对账已由 `menu_matches_the_catalogue` 钉住，有测试兜底就不值得动。
+      **真正的重复清掉了一处**：`SkillDef.label` 字段与 `SkillKind::label()`
+      **逐字相同**，而那个方法**没有任何调用者**——现在字段删掉、方法成为唯一出口
+      （新测试 `the_display_name_has_a_single_source` 钉住）。
+      **顺带核实了"攻击"那条派发规则是自洽的**（探针实测）：它 `cost = FIREBALL_COST`，
+      `as_ability()` 借 `Melee` 的 id 只为走同一套校验，`can_cast` 会拿**类别 + 自己的
+      cost** 判——例：2 点精力时 `Ok`、1 点时 `NotEnoughEnergy`，与火球一致，没有漏洞。
+      **将来的触发条件**：菜单若真要支持"用户自己配技能栏"（拖拽 / 排序 / 多页），
+      就得改成读目录 + 一份显式的"栏位布局"数据；那时 `AbilityId` 才是对的键。
 - [x] **M23 意图式决策槽**（本次）：槽换形状（`Idle { intent }` / `Executing { until }`）、
       声明系统改成**填意图 + 当场物化**（**各域自己物化，不做全局派发器**）、
       `"slot_empty"` 改名 `"awaiting"`。
