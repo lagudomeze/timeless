@@ -62,7 +62,7 @@ pub struct RegisterAbility(pub AbilityDef);
 ```
 
 - **注册表只有一个**（住 `skills`），**每个域定义自己的技能**：`movement` 交
-  `Move` / `Jump` / `Roll`，`combat` 交 `Melee` / `Shoot` / `Fireball` / `Parry`。
+  `Move` / `Jump` / `Roll` / `Dash`，`combat` 交 `Melee` / `Shoot` / `Fireball` / `Parry`。
   数值因此仍然归各域（`MOVE_TIMING` 在 `movement`、`FIREBALL_TIMING` 在 `combat`），
   注册表只是**聚合**：技能栏、HUD、`can_cast`、反制建议都从这一份读，
   不在三个地方各写一遍花费与条件。

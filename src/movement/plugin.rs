@@ -5,10 +5,11 @@ use bevy::prelude::*;
 use super::MovementSet;
 use super::abilities::register_abilities_system;
 use super::actions::{
-    declare_jump_system, declare_move_system, declare_move_to_system, jump_action_executor_system,
-    jump_motion_system, move_action_executor_system,
+    dash_action_executor_system, declare_dash_system, declare_jump_system, declare_move_system,
+    declare_move_to_system, jump_action_executor_system, jump_motion_system,
+    move_action_executor_system,
 };
-use super::events::{JumpCommand, MoveCommand, MoveToCommand};
+use super::events::{DashCommand, JumpCommand, MoveCommand, MoveToCommand};
 use super::systems::{follow_terrain_system, move_entities_system};
 
 /// 移动领域插件。
@@ -24,6 +25,7 @@ impl Plugin for MovementPlugin {
         }
         app.add_message::<MoveCommand>()
             .add_message::<MoveToCommand>()
+            .add_message::<DashCommand>()
             .add_message::<JumpCommand>()
             // 可行走性被拒：写方是本域的声明系统，消费方是 presentation 的提示条
             .add_message::<super::MoveRefused>()
@@ -37,9 +39,14 @@ impl Plugin for MovementPlugin {
                     (
                         declare_move_system,
                         declare_move_to_system,
+                        declare_dash_system,
                         declare_jump_system,
                     ),
-                    (move_action_executor_system, jump_action_executor_system),
+                    (
+                        move_action_executor_system,
+                        dash_action_executor_system,
+                        jump_action_executor_system,
+                    ),
                     // 先按速度位移，再贴地：贴地要在位移之后看到本帧的新位置
                     (move_entities_system, follow_terrain_system),
                     jump_motion_system,

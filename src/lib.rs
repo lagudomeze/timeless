@@ -636,6 +636,136 @@ mod tests {
         );
     }
 
+    /// **冲刺一次跨两格**（`X` + 方向键），而且比走一格**快**（前摇重、速度快）。
+    ///
+    /// 形状与 `pressing_walks_exactly_one_cell_and_stops_at_its_center` 对照：
+    /// 同一个输入方向，走路落在一格、冲刺落在两格。
+    #[test]
+    fn dashing_moves_two_cells_in_one_action() {
+        use crate::movement::{DASH_CELLS, DashAction};
+
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+
+        press(&mut app, KeyCode::KeyX);
+        press(&mut app, KeyCode::ArrowUp);
+        app.update();
+        assert_eq!(
+            actions::<DashAction>(&mut app),
+            1,
+            "`X` + 方向键应当产生一条**冲刺**，而不是走一格"
+        );
+        assert_eq!(
+            actions::<MoveAction>(&mut app),
+            0,
+            "冲刺不该同时产生一条普通移动"
+        );
+        assert_eq!(
+            slot_of(&app, player),
+            DecisionSlot::Executing {
+                until: crate::movement::DASH_TIMING.total()
+            },
+            "声明的节奏取冲刺的 `DASH_TIMING`"
+        );
+
+        // 前摇 0.25 + 冲两格(4.0 / 7.0 ≈ 0.57s) + 余量
+        for _ in 0..16 {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world().get::<Cell>(player).copied(),
+            Some(Cell::new(0, DASH_CELLS)),
+            "冲刺应当落在起点 +{DASH_CELLS} 格（不是 +1）"
+        );
+        assert_eq!(
+            velocity_of(&mut app, player),
+            Vec3::ZERO,
+            "到格中心应当停下"
+        );
+    }
+
+    /// **冲刺也逐格查可行走性**：中间那一格迈不上去时整条冲刺被拒。
+    ///
+    /// 这条守住"跨两格不能穿墙"——只查终点的话，墙可以被跨过去
+    /// （与点地板走多格是同一个坑）。
+    #[test]
+    fn a_dash_through_a_wall_is_refused() {
+        use crate::movement::{DASH_CELLS, DashAction};
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                100,
+            )))
+            // 幅度拉大：制造相邻 2 级以上的落差（墙）
+            .insert_resource(TerrainConfig {
+                amplitude: 8,
+                base_height: 0,
+                scale: 3.0,
+                ..TerrainConfig::default()
+            })
+            .init_resource::<crate::timeline::PendingFocus>()
+            .add_message::<crate::movement::DashCommand>()
+            .add_message::<crate::timeline::ActionBlocked>()
+            .add_message::<crate::movement::MoveRefused>()
+            .add_systems(Update, crate::movement::declare_dash_system);
+
+        // 找一对"第一格能迈、第二格迈不上去"的起点（冲刺的前半段合法、后半段是墙）
+        let terrain = *app.world().resource::<TerrainConfig>();
+        let walkable = |from: Cell, to: Cell| terrain_delta_allows(&terrain, from, to);
+        let mut found = None;
+        'outer: for z in -8..8 {
+            for x in -8..8 {
+                let start = Cell::new(x, z);
+                let mid = Cell::new(x, z + 1);
+                let end = Cell::new(x, z + 2);
+                if walkable(start, mid) && !walkable(mid, end) {
+                    found = Some(start);
+                    break 'outer;
+                }
+            }
+        }
+        let start = found.expect("放大起伏后应当存在「第一格能过、第二格是墙」的起点");
+
+        let player = app
+            .world_mut()
+            .spawn((
+                InputDriven,
+                start,
+                Stamina::default(),
+                Focus::default(),
+                DecisionSlot::Idle { intent: None },
+                Transform::from_translation(Vec3::new(start.center().x, 0.0, start.center().y)),
+            ))
+            .id();
+        app.world_mut().write_message(crate::movement::DashCommand {
+            axis: Vec2::new(0.0, 1.0), // 朝 +Z（世界方向）
+        });
+        app.update();
+
+        assert_eq!(
+            slot_of(&app, player),
+            DecisionSlot::Idle { intent: None },
+            "冲刺撞墙就该不占用决策（槽必须还是空的）"
+        );
+        assert_eq!(
+            actions::<DashAction>(&mut app),
+            0,
+            "被拒的冲刺不该产生行动实体"
+        );
+        let _ = DASH_CELLS;
+    }
+
+    /// 相邻两格能不能迈上去（纯规则，与 `movement::rules::can_step` 同一判据）。
+    fn terrain_delta_allows(terrain: &TerrainConfig, from: Cell, to: Cell) -> bool {
+        let height = |cell: Cell| {
+            let center = cell.center();
+            crate::world::surface_height_at(terrain, center.x, center.y)
+        };
+        crate::movement::can_step(height(from), height(to))
+    }
+
     /// **没有「确认」这一步**：声明即生效，不需要按 Enter。
     #[test]
     fn fast_mode_applies_input_without_enter() {

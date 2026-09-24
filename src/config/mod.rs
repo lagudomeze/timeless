@@ -106,6 +106,7 @@ pub struct ActionConfig {
     pub move_: ActionNumbers,
     pub jump: ActionNumbers,
     pub roll: ActionNumbers,
+    pub dash: ActionNumbers,
     pub melee: ActionNumbers,
     pub shoot: ActionNumbers,
     pub fireball: ActionNumbers,
@@ -146,6 +147,8 @@ pub struct SpeedNumbers {
     pub enemy: f32,
     /// 翻滚速度
     pub roll: f32,
+    /// 冲刺速度（比走路快、与翻滚同量级）
+    pub dash: f32,
 }
 
 impl Default for SpeedNumbers {
@@ -154,6 +157,7 @@ impl Default for SpeedNumbers {
             player: 5.0,
             enemy: 2.0,
             roll: crate::combat::defense::ROLL_SPEED,
+            dash: crate::movement::DASH_SPEED,
         }
     }
 }
@@ -170,6 +174,12 @@ impl Default for ActionConfig {
             move_: ActionNumbers::from_timing(crate::movement::MOVE_TIMING, 0, 0, 0),
             jump: ActionNumbers::from_timing(crate::movement::JUMP_TIMING, 0, 0, 0),
             roll: ActionNumbers::from_timing(ROLL_TIMING, ROLL_COST, 0, 0),
+            dash: ActionNumbers::from_timing(
+                crate::movement::DASH_TIMING,
+                crate::movement::DASH_COST,
+                0,
+                0,
+            ),
             melee: ActionNumbers::from_timing(
                 crate::combat::attack::MELEE_TIMING,
                 0,
@@ -281,6 +291,9 @@ mod tests {
         let config = ActionConfig::default();
         assert_eq!(config.move_.timing(), crate::movement::MOVE_TIMING);
         assert_eq!(config.roll.timing(), crate::movement::ROLL_TIMING);
+        assert_eq!(config.dash.timing(), crate::movement::DASH_TIMING);
+        assert_eq!(config.dash.cost, crate::movement::DASH_COST);
+        assert_eq!(config.speeds.dash, crate::movement::DASH_SPEED);
         assert_eq!(
             config.fireball.timing(),
             crate::combat::attack::FIREBALL_TIMING

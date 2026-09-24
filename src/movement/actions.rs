@@ -20,7 +20,7 @@ use crate::world::{TerrainConfig, surface_height_at};
 
 use super::cell::{CELL_SIZE, Cell, MoveGoal};
 use super::components::{MoveSpeed, Velocity};
-use super::events::{JumpCommand, MoveCommand, MoveToCommand};
+use super::events::{DashCommand, JumpCommand, MoveCommand, MoveToCommand};
 use super::rules::{MoveRefused, can_step};
 
 /// 移动的节奏：一格一步，几乎不设防（走得快就容易被打断）。
@@ -73,6 +73,12 @@ fn jump_timing(config: Option<&ActionConfig>) -> ActionTiming {
         .unwrap_or(JUMP_TIMING)
 }
 
+fn dash_timing(config: Option<&ActionConfig>) -> ActionTiming {
+    config
+        .map(|config| config.dash.timing())
+        .unwrap_or(DASH_TIMING)
+}
+
 /// 移动行动工厂：载荷 + 节奏 + 调度数据（移动随时可以改主意，撤销免费）。
 pub fn move_action_scene(
     from_cell: Cell,
@@ -101,6 +107,48 @@ pub struct JumpAction;
 
 /// 翻滚的节奏：防御性动作，几乎立即生效。
 pub const ROLL_TIMING: ActionTiming = ActionTiming::new(0.05, 0.30, 1);
+
+/// 冲刺的节奏：起手比走一格重（要蹬地），后摇短（冲出去就自由了）。
+///
+/// **和走路的分工**：走一格的后摇短、前摇也短（0.15/0.10），但它只走一格；
+/// 冲刺**一次跨两格**，前摇更重（0.25）——所以它是"用时间换距离"，
+/// 追人 / 脱离时用，贴身缠斗时不如走一格灵便。
+pub const DASH_TIMING: ActionTiming = ActionTiming::new(0.25, 0.20, 2);
+/// 冲刺消耗的精力：比翻滚贵一点（换两格距离）。
+pub const DASH_COST: u32 = 1;
+/// 冲刺的位移速度（世界单位 / 秒）：比走路快，与翻滚同量级。
+pub const DASH_SPEED: f32 = 7.0;
+/// 冲刺一次跨几格。
+pub const DASH_CELLS: i32 = 2;
+
+/// 冲刺载荷：朝一个方向**冲两格**的行动实体。
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct DashAction {
+    /// 起点格（HUD 箭头 / 诊断用）
+    pub from_cell: Cell,
+    /// 目标格（决策锁定）
+    pub to_cell: Cell,
+}
+
+/// 冲刺行动工厂：精力在**执行时**扣（与翻滚同一条约定，见
+/// [`roll_action_scene`]——所以撤销不退款，因为还没花）。
+pub fn dash_action_scene(
+    from_cell: Cell,
+    to_cell: Cell,
+    timing: ActionTiming,
+    schedule: ScheduledAction,
+    actor: Entity,
+) -> impl Scene {
+    // 对抗标签：冲刺是**起手就赌**的动作（蹬出去收不回来），与跳跃 / 翻滚同为 COMMITTED
+    let tags = super::abilities::DASH_ABILITY.combat;
+    bsn! {
+        template_value(tags)
+        ActionOf({actor})
+        DashAction { from_cell: {from_cell}, to_cell: {to_cell} }
+        template_value(timing)
+        template_value(schedule)
+    }
+}
 
 /// 翻滚载荷：退一格的行动实体（落地效果与无敌帧归 [`crate::combat::defense`]）。
 ///
@@ -294,6 +342,128 @@ pub fn move_action_executor_system(
             let to_goal = action.to_cell.center() - transform.translation.xz();
             velocity.0 = ground_direction(to_goal) * speed.0;
             effect_delay = to_goal.length() / speed.0.max(f32::EPSILON);
+            commands.entity(actor).insert(MoveGoal {
+                cell: action.to_cell,
+            });
+        }
+        let recovery = DecisionSlot::recovering(timing, schedule, effect_delay);
+        commands.entity(entity).despawn();
+        if let Ok(mut actor_commands) = commands.get_entity(actor) {
+            actor_commands.insert(recovery);
+        }
+    }
+}
+
+/// 声明冲刺：`DashCommand` → 朝该方向冲**两格**的行动。
+///
+/// 与走一格（[`declare_move_system`]）共用同一套「可行走性」判据，但**沿途逐格都要过**：
+/// 冲刺是"一次跨两格"，中间那一格迈不上去的话人会直接穿墙停在墙后
+/// （与点地板走多格是同一个坑，见 [`path_is_walkable`]）。
+///
+/// 精力与翻滚一样**在执行时**扣（所以撤销不退款）。
+#[allow(clippy::too_many_arguments)]
+pub fn declare_dash_system(
+    mut commands: Commands,
+    time: Res<Time<Virtual>>,
+    pending_focus: Res<PendingFocus>,
+    terrain: Res<TerrainConfig>,
+    config: Option<Res<ActionConfig>>,
+    stamina_players: Query<&crate::combat::defense::Stamina>,
+    chunk_map: Option<Res<crate::world::ChunkMap>>,
+    chunks: Query<&crate::world::Chunk>,
+    mut requests: MessageReader<DashCommand>,
+    mut blocked: MessageWriter<ActionBlocked>,
+    mut refused: MessageWriter<MoveRefused>,
+    mut players: Query<(Entity, &Cell, &mut Focus, &DecisionSlot), With<InputDriven>>,
+) {
+    let Some(axis) = requests.read().last().map(|command| command.axis) else {
+        return;
+    };
+    let (dx, dz) = step_from_axis(axis);
+    if (dx, dz) == (0, 0) {
+        return;
+    }
+    let Some((player, cell, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
+        return;
+    };
+    let timing = dash_timing(config.as_deref());
+    let cost = config
+        .as_deref()
+        .map(|config| config.dash.cost)
+        .unwrap_or(DASH_COST);
+    // 条件校验与其它技能同一条入口（`can_cast`）
+    let def = crate::skills::AbilityDef {
+        timing,
+        cost,
+        ..super::abilities::DASH_ABILITY
+    };
+    let stamina = stamina_players
+        .get(player)
+        .map(|stamina| stamina.current)
+        .unwrap_or(0);
+    if let Err(reason) = crate::skills::can_cast(&def, stamina) {
+        blocked.write(ActionBlocked { reason });
+        return;
+    }
+
+    let to_cell = Cell::new(cell.x + dx * DASH_CELLS, cell.z + dz * DASH_CELLS);
+    // **沿途逐格**检查：冲刺跨两格，中间那格也得迈得上去
+    if !path_is_walkable(&terrain, chunk_map.as_deref(), &chunks, *cell, to_cell) {
+        refused.write(MoveRefused::BlockedByTerrain);
+        return;
+    }
+    let now = time.elapsed_secs();
+    let schedule = ScheduledAction::with_focus(timing, now, &mut focus, pending_focus.wants());
+    commands.spawn_scene(dash_action_scene(*cell, to_cell, timing, schedule, player));
+    commands.entity(player).insert(DecisionSlot::declared(
+        Intent {
+            ability: AbilityId::Dash,
+            target: Target::Cell(to_cell),
+        },
+        &timing,
+        now,
+    ));
+}
+
+/// 执行冲刺：朝目标格设一个**冲刺速度**，到位后由 `move_entities_system` 吸附停下。
+///
+/// 与走一格（[`move_action_executor_system`]）唯一的区别是速度取 [`DASH_SPEED`] 而不是
+/// 单位自己的 `MoveSpeed`——于是"跨两格但用时更短"这件事是**速度**说了算，
+/// 不需要另一套位移逻辑（忙多久同样按 `距离 / 速度` 自动算）。
+pub fn dash_action_executor_system(
+    mut commands: Commands,
+    time: Res<Time<Virtual>>,
+    config: Option<Res<ActionConfig>>,
+    actions: Query<(
+        Entity,
+        &DashAction,
+        &ActionTiming,
+        &ScheduledAction,
+        &ActionOf,
+    )>,
+    mut actors: Query<(
+        &Transform,
+        &mut Velocity,
+        &mut crate::combat::defense::Stamina,
+    )>,
+) {
+    let now = time.elapsed_secs();
+    let speed = config
+        .as_deref()
+        .map(|config| config.speeds.dash)
+        .unwrap_or(DASH_SPEED);
+    for (entity, action, timing, schedule, action_of) in &actions {
+        if !schedule.due(now) {
+            continue;
+        }
+        let actor = action_of.actor();
+        let mut effect_delay = 0.0;
+        if let Ok((transform, mut velocity, mut stamina)) = actors.get_mut(actor) {
+            // 执行时才扣：撤销不退款（还没花），与翻滚同一条约定
+            stamina.try_spend(DASH_COST);
+            let to_goal = action.to_cell.center() - transform.translation.xz();
+            velocity.0 = ground_direction(to_goal) * speed;
+            effect_delay = to_goal.length() / speed.max(f32::EPSILON);
             commands.entity(actor).insert(MoveGoal {
                 cell: action.to_cell,
             });

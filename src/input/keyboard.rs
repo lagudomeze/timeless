@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use crate::clock::PauseRequest;
 use crate::combat::attack::{CycleSkill, SelectSkill, SkillKind, UseSelectedSkill};
 use crate::combat::defense::ParryCommand;
-use crate::movement::{JumpCommand, MoveCommand};
+use crate::movement::{DashCommand, JumpCommand, MoveCommand};
 use crate::presentation::{CameraRig, ToggleHelp};
 use crate::spawn::ResetBattle;
 use crate::timeline::{PlayerTakeover, UseFocus, WaitCommand};
@@ -52,10 +52,19 @@ impl Default for HotkeyBinds {
 /// 只在**方向发生变化**时发消息（`Local` 记住上一次的方向）：
 /// 无回合模型里「按一次 = 走一格」，若每帧都发，「按住 W」会不停顶掉
 /// 玩家刚声明的技能；同时按下两个方向键时以 Shift 一侧为准。
+/// `X` 压着 = 这一次方向输入是**冲刺**而不是走一格。
+///
+/// 为什么用组合键而不是单键：冲刺**需要方向**（"朝哪冲"），而方向本来就是
+/// 方向键在表达。单键冲刺只能在"朝最近敌人 / 朝悬停格"里选一个，两种都会让
+/// "我想往那边冲"落空——所以让方向键继续管方向，`X` 只改这一次的**量**。
+///
+/// 它住在输入域这一处翻译里：`movement` 收到的是 `DashCommand`（"朝这个方向冲两格"），
+/// **不认识 `KeyCode`**（与所有其它按键同一条纪律）。
 pub fn player_move_input_system(
     keys: Res<ButtonInput<KeyCode>>,
     cameras: Query<&Transform, With<CameraRig>>,
     mut moves: MessageWriter<MoveCommand>,
+    mut dashes: MessageWriter<DashCommand>,
     mut takeovers: MessageWriter<PlayerTakeover>,
     mut last_axis: Local<Vec2>,
 ) {
@@ -86,9 +95,12 @@ pub fn player_move_input_system(
         .next()
         .map(|transform| GroundBasis::from_rotation(transform.rotation))
         .unwrap_or_else(GroundBasis::world);
-    moves.write(MoveCommand {
-        axis: basis.axis(screen),
-    });
+    let axis = basis.axis(screen);
+    if keys.pressed(KeyCode::KeyX) {
+        dashes.write(DashCommand { axis });
+    } else {
+        moves.write(MoveCommand { axis });
+    }
     takeovers.write(PlayerTakeover);
 }
 
@@ -270,6 +282,7 @@ pub fn focus_intent_input_system(
         KeyCode::ArrowRight,
         KeyCode::KeyC,
         KeyCode::KeyG,
+        KeyCode::KeyX,
         KeyCode::Digit1,
         KeyCode::Digit2,
         KeyCode::Digit3,

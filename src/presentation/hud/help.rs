@@ -27,6 +27,7 @@ pub struct HelpPanel;
 pub const HELP_LINES: &[&str] = &[
     "KEYBOARD",
     "  arrows          move one cell (screen-relative)",
+    "  X + arrows      dash two cells (costs energy)",
     "  1-5             use skill slot 1-5 directly",
     "  Q / W / E / R   hotkeys: fireball / melee / roll / parry",
     "  Tab / Shift+Tab cycle affordable skills",
@@ -159,7 +160,7 @@ mod tests {
     fn the_help_lists_every_key_the_input_domain_reads() {
         let help = HELP_LINES.join("\n");
         // `input` 域真正读的按键（名字 → 玩家看到的写法）
-        let keys: [(&str, &str); 16] = [
+        let keys: [(&str, &str); 17] = [
             ("ArrowUp", "arrows"),
             ("ArrowDown", "arrows"),
             ("ArrowLeft", "arrows"),
@@ -175,6 +176,7 @@ mod tests {
             ("Space", "Space"),
             ("KeyP", "P"),
             ("KeyT", "T"),
+            ("KeyX", "X"),
             ("F5", "F5"),
         ];
         for (code, shown) in keys {
@@ -208,7 +210,7 @@ mod tests {
 
         // 面板首列写的每个键（`arrows` 与 `1-5` 是多个物理键的写法，单独认）
         let spellings = [
-            "arrows", "1-5", "Q", "W", "E", "R", "Tab", "G", "C", "Space", "P", "B", "V", "T",
+            "arrows", "1-5", "Q", "W", "E", "R", "Tab", "G", "C", "Space", "P", "B", "V", "T", "X",
             "F5", "F1",
         ];
         for spelling in spellings {
@@ -231,6 +233,7 @@ mod tests {
             ("B", "KeyB"),
             ("V", "KeyV"),
             ("T", "KeyT"),
+            ("X", "KeyX"),
             ("F5", "F5"),
             ("F1", "F1"),
         ];
