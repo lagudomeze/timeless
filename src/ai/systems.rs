@@ -331,8 +331,8 @@ mod tests {
             let mut tactics = probe.world_mut().query_filtered::<&Tactic, With<Faction>>();
             assert_eq!(
                 tactics.iter(probe.world()).count(),
-                1,
-                "敌人应当从组装开始就带 `Tactic`，否则 AI 一行都不会执行"
+                2,
+                "**每个**敌人都应当从组装开始就带 `Tactic`，否则 AI 一行都不会执行"
             );
         }
 

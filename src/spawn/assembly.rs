@@ -6,7 +6,7 @@ use crate::presentation::unit_sprite::UnitSprites;
 use crate::presentation::{camera, decoration};
 use crate::world::{TerrainConfig, ground_position};
 
-use super::enemy::enemy_scene;
+use super::enemy::{ENEMY_SPAWNS, enemy_scene};
 use super::player::player_scene;
 
 /// 组装静态场景：灯光、相机、玩家、敌人、地表装饰。
@@ -29,7 +29,10 @@ pub fn setup_scene(
     commands.spawn_scene(camera::main_camera());
     commands.spawn_scene(camera::light());
     commands.spawn_scene(player_scene(&terrain, &sprites));
-    commands.spawn_scene(enemy_scene(&terrain, &sprites));
+    // 两个敌人各占一格：多敌人是 HUD 面板与威胁预判的前提（见 `ENEMY_SPAWNS`）
+    for spawn in ENEMY_SPAWNS {
+        commands.spawn_scene(enemy_scene(&terrain, &sprites, spawn));
+    }
 
     // 地表装饰：铺满可视范围，位置随地形起伏
     for x in 0..5 {

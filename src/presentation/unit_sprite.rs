@@ -286,7 +286,11 @@ mod tests {
             .iter(app.world())
             .map(|(entity, faction, transform)| (entity, *faction, *transform))
             .collect();
-        assert_eq!(units.len(), 2, "应当组装出玩家与敌人");
+        assert_eq!(
+            units.len(),
+            3,
+            "应当组装出玩家与两个敌人（见 `ENEMY_SPAWNS`）"
+        );
 
         for (unit, faction, transform) in units {
             let children = app

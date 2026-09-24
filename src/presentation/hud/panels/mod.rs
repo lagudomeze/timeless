@@ -15,9 +15,12 @@ mod model;
 mod scene;
 mod system;
 
-pub use model::{UnitPanelCache, UnitPanels, UnitRow, bar_fraction, bar_percent, tactic_label};
+pub use model::{
+    MAX_ENEMY_ROWS, PanelSlot, UnitPanelCache, UnitPanels, UnitRow, bar_fraction, bar_percent,
+    tactic_label,
+};
 pub use scene::{
-    PANEL_HEIGHT, PANEL_WIDTH, PORTRAIT_SIZE, PanelBar, PanelText, UnitPanel, faction_prefix,
-    status_bar, unit_panel,
+    ENEMY_ROW_GAP, ENEMY_ROW_HEIGHT, PANEL_HEIGHT, PANEL_WIDTH, PORTRAIT_SIZE, PanelBar, PanelText,
+    UnitPanel, enemy_row, row_bottom, slot_prefix, status_bar, unit_panel,
 };
 pub use system::update_unit_panels_system;

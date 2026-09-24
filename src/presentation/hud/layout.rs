@@ -4,7 +4,8 @@
 //! HudRoot                      整屏、不吃鼠标事件
 //! ├── Timeline               (顶部)    状态行 + 时间轴轨道（色块池）
 //! ├── PlayerPanel            (左下)    头像 + 状态行 + HP / EN 条 + 行动行
-//! ├── EnemyPanel             (右下)    同上（头像贴右）
+//! ├── Enemy1Row .. EnemyNRow (右下)    **每个敌人一行**（没有头像：N 行会太高，
+//! │                                   且行首的 `ENEMY 1` 已经能分清是谁）
 //! ├── SkillBar               (底部中)  4 个图标按钮 + 角标 + 悬停 tooltip
 //! ├── LogPanel               (右下偏上) 标题按钮 + 正文（可折叠）
 //! └── HelpPanel              (居中)    F1 开合
@@ -56,18 +57,7 @@ pub fn setup_hud(mut commands: Commands, assets: Res<AssetServer>, sprites: Res<
 
     let regions = [
         commands
-            .spawn(panels::unit_panel(
-                &font,
-                Faction::Player,
-                sprites.sprite(Faction::Player),
-            ))
-            .id(),
-        commands
-            .spawn(panels::unit_panel(
-                &font,
-                Faction::Enemy,
-                sprites.sprite(Faction::Enemy),
-            ))
+            .spawn(panels::unit_panel(&font, sprites.sprite(Faction::Player)))
             .id(),
         commands.spawn(skills::skill_bar(&font, &assets)).id(),
         commands.spawn(log_panel::log_panel(&font)).id(),
@@ -75,6 +65,13 @@ pub fn setup_hud(mut commands: Commands, assets: Res<AssetServer>, sprites: Res<
         commands.spawn(help::help_panel(&font)).id(),
     ];
     commands.entity(root).add_children(&regions);
+
+    // 敌人面板是**行池**（按下标建好、每帧只改内容与显隐），所以不走上面的工厂数组——
+    // 池子大小由 `MAX_ENEMY_ROWS` 一处说了算（有测试钉住两边一致）
+    let enemy_rows: Vec<Entity> = (0..panels::MAX_ENEMY_ROWS)
+        .map(|index| commands.spawn(panels::enemy_row(&font, index)).id())
+        .collect();
+    commands.entity(root).add_children(&enemy_rows);
 
     // 时间轴要建一个色块池（循环 spawn），所以不走上面的工厂数组
     let timeline = timeline::spawn_timeline(&mut commands, &font);
@@ -167,9 +164,13 @@ mod tests {
             "PlayerHpText",
             "PlayerEnFill",
             "PlayerAction",
-            "EnemyPanel",
-            "EnemyHpFill",
-            "EnemyEnFill",
+            // 右下：敌人**行池**（每行一个 `UnitPanel` 手法，见 `MAX_ENEMY_ROWS`）
+            "Enemy1Row",
+            "Enemy1Info",
+            "Enemy1StateLine",
+            "Enemy1HpFill",
+            "Enemy1EnFill",
+            "Enemy1Action",
             // 正下方：技能栏容器 + 4 个槽位（图标 / 热键 / 角标）+ tooltip
             "SkillBar",
             "SkillBarPanel",
