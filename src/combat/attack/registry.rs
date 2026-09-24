@@ -26,9 +26,21 @@ pub enum SkillKind {
     Fireball,
     /// 翻滚（远离威胁退一格 + 无敌帧）
     Roll,
+    /// 单体射击（箭矢）：**尚未接进菜单**（见 `TODO.md` 的「箭矢接回输入」），
+    /// 但图标与定义都已就位——它是一条技能，只是还没有按键触发它。
+    Shoot,
 }
 
 impl SkillKind {
+    /// 全部菜单项（**加一个就要有图标**，asset 验收按它逐个查）。
+    pub const ALL: [Self; 5] = [
+        Self::Attack,
+        Self::Melee,
+        Self::Fireball,
+        Self::Roll,
+        Self::Shoot,
+    ];
+
     /// HUD / 日志用的英文短名。
     pub fn label(self) -> &'static str {
         match self {
@@ -36,6 +48,7 @@ impl SkillKind {
             Self::Melee => "melee",
             Self::Fireball => "fireball",
             Self::Roll => "roll",
+            Self::Shoot => "shoot",
         }
     }
 }
@@ -76,6 +89,7 @@ impl SkillDef {
             SkillKind::Melee => Some(crate::skills::AbilityId::Melee),
             SkillKind::Fireball => Some(crate::skills::AbilityId::Fireball),
             SkillKind::Roll => Some(crate::skills::AbilityId::Roll),
+            SkillKind::Shoot => Some(crate::skills::AbilityId::Shoot),
         }
     }
 
@@ -93,6 +107,7 @@ impl SkillDef {
         let category = match self.kind {
             SkillKind::Attack | SkillKind::Melee => crate::skills::AbilityCategory::Attack,
             SkillKind::Fireball => crate::skills::AbilityCategory::Spell,
+            SkillKind::Shoot => crate::skills::AbilityCategory::Attack,
             SkillKind::Roll => crate::skills::AbilityCategory::Movement,
         };
         crate::skills::AbilityDef {

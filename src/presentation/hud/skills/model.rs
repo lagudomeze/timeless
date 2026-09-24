@@ -8,13 +8,21 @@ use bevy::prelude::*;
 use crate::combat::attack::{SKILLS, SkillDef, SkillKind};
 use crate::combat::reaction::CounterSuggestion;
 
-/// 技能图标贴图（占位图，程序生成，见 `assets/LICENSES.md`）。
+/// 技能图标贴图（见 `assets/LICENSES.md` 的来源与许可）。
+///
+/// **按 `AbilityId` 查**，不是按菜单项：`CLAUDE.md` 的约定是
+/// "加技能 = 加一条 `AbilityDef` + 一张图标 PNG"，所以**每条技能**都该有图标，
+/// 包括还没进菜单的（箭矢就是——它等着接输入）。
+/// 只按 `SkillKind` 查的话，asset 验收就只覆盖菜单里的四个，
+/// 新技能漏图标要等到它进菜单那天才被发现。
 pub fn icon_path(kind: SkillKind) -> &'static str {
     match kind {
         SkillKind::Attack => "textures/ui/icon_attack.png",
         SkillKind::Melee => "textures/ui/icon_melee.png",
         SkillKind::Fireball => "textures/ui/icon_fireball.png",
         SkillKind::Roll => "textures/ui/icon_roll.png",
+        // 「攻击」是派发规则、没有自己的图标；它显示成近战或火球那一格
+        SkillKind::Shoot => "textures/ui/icon_shoot.png",
     }
 }
 

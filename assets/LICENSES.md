@@ -8,7 +8,8 @@
 | `textures/units/player.png` | Kenney.nl Tiny Dungeon（`Tiles/tile_0097.png`，骑士） | CC0 1.0 | https://kenney.nl/assets/tiny-dungeon · 原件是 16×16 调色板 PNG，**无损转成 RGBA**（见下） |
 | `textures/units/enemy.png` | Kenney.nl Tiny Dungeon（`Tiles/tile_0121.png`，幽灵） | CC0 1.0 | 同上 |
 | `textures/units/shadow.png` | 本仓库程序生成（软边黑圆，128×128 RGBA） | 无（自有素材） | 贴地阴影：64 层同心椭圆叠加 alpha 得到径向渐变 |
-| `textures/ui/icon_*.png`（4 个） | 本仓库程序生成（64×64 RGBA 技能图标：靶心 / 剑 / 火球 / 弧形箭头） | 无（自有素材） | 技能栏占位图标；换正式图标时替换同名文件即可 |
+| `textures/ui/icon_*.png`（4 个：attack / melee / fireball / roll） | 本仓库程序生成（64×64 RGBA 技能图标：靶心 / 剑 / 火球 / 弧形箭头） | 无（自有素材） | 技能栏占位图标；换正式图标时替换同名文件即可 |
+| `textures/ui/icon_shoot.png` | Kenney.nl Tiny Dungeon（`Tiles/tile_0119.png`，弓） | CC0 1.0 | https://kenney.nl/assets/tiny-dungeon · 与单位精灵同一套素材（风格一致）· 原件 16×16，**最近邻放大到 64×64**（HUD 用 `ImageSampler::nearest`，放大后仍是硬边像素）· 单体射击（箭矢）技能的图标 |
 | `models/nature/*.glb`（21 个） | Kenney.nl Nature Kit（`Models/GLTF format/*.glb`） | CC0 1.0 | https://kenney.nl/assets/nature-kit |
 | `fonts/NotoSansSC-Regular.otf` | noto-cjk 仓库 `Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` | OFL-1.1 | https://github.com/googlefonts/noto-cjk · 8.3 MB · 单一 Regular 字重 |
 
