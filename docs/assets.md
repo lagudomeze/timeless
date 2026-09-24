@@ -23,7 +23,14 @@
 | 技能图标 | `textures/ui/icon_{attack,melee,fireball,roll}.png` | 同上 |
 | 地表装饰 | `models/nature/*.glb`（21 个：树 / 石 / 草 / 花 / 木桩…） | Kenney Nature Kit（CC0） |
 | HUD 字体 | `fonts/NotoSansSC-Regular.otf`（OFL-1.1，8.3 MB） | OFL-1.1 |
-| 未引用 | `textures/ground/grass.png` | 见 `assets/LICENSES.md` |
+| **故意不引用** | `textures/ground/grass.png` | CC0，但**这张图不该用**——见下 |
+
+`textures/ground/grass.png` 是 Kenney **Prototype Textures** 的灰盒贴图：
+纯绿底 + 白色网格线 + **烙在图上的文字**「WALL / 1 × 1 meter / 1024 × 1024」。
+铺到体素表面上，那段说明文字会跟着重复铺满地形，所以代码里**不加引用**
+（选品错了，不是许可问题）。将来要真地表贴图，需要一张**可平铺**的自然纹理，
+并连同 `TODO.md` 的「纹理图集 / UV」一起做——网格现在没有 UV 属性，
+而且贪婪网格化之后 UV 还要按矩形尺寸铺开。
 
 字体体积取舍与子集化出路见 `assets/LICENSES.md`。当前 8.3 MB 全覆盖；
 子集化可缩到几十 KB，但要在「加新文案不能缺字」和「仓库体积」之间取舍。
