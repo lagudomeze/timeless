@@ -4,9 +4,10 @@ use bevy::prelude::*;
 
 use super::InputSet;
 use super::keyboard::{
-    HotkeyBinds, block_edit_input_system, focus_intent_input_system, pause_input_system,
-    player_help_input_system, player_move_input_system, player_skill_input_system,
-    restart_input_system, skill_menu_input_system, skill_use_input_system,
+    HotkeyBinds, block_edit_input_system, focus_intent_input_system, loadout_input_system,
+    pause_input_system, player_help_input_system, player_move_input_system,
+    player_skill_input_system, restart_input_system, skill_menu_input_system,
+    skill_use_input_system,
 };
 use super::pointer::{
     camera_pan_input_system, camera_zoom_input_system, pointer_click_input_system,
@@ -44,6 +45,8 @@ impl Plugin for InputPlugin {
                 restart_input_system,
                 // B / V = 在悬停格放 / 挖一块（只写消息，落地在 `world`）
                 block_edit_input_system,
+                // T = 穿 / 脱一身装备（只写消息，落地在 `equipment`）
+                loadout_input_system,
                 // Shift + 决策键 = 用 Focus 换前摇（只写请求，扣费在声明那一刻）
                 focus_intent_input_system,
                 camera_pan_input_system,

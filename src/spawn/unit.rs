@@ -11,14 +11,17 @@ use crate::presentation::unit_sprite::{
 };
 use crate::timeline::{DecisionSlot, Focus, FocusRecoverTimer};
 
-/// ⚠️ **护甲占位值**（设计旋钮，不是平衡结论）。
+/// ⚠️ **护甲基础值**（设计旋钮，不是平衡结论）。
 ///
 /// 参照当前伤害（近战 15 / 火球 12 / 箭矢 10）与 50 血：
 /// - 玩家 1 点：近战 4 刀、火球 5 发才打死（**没有改变任何一击的刀数**，安全值）；
 /// - 敌人 0 点：保持"敌人比玩家脆"的既有手感——玩家先手更有价值。
 ///
 /// 这两个数**该由你定**：护甲每加 1 点，箭矢就要多打一发才死。
-/// 等装备系统（M27）落地后，这里换成"基础值 + 装备加成"。
+///
+/// 这是**基础值**（M27 的"基础 + 加成"）——装备域的 `EquipmentBonus` 会在它之上
+/// 再加一份，命中公式读的是两者之和（`equipment::armor_of`）。
+/// 装备从不改写这个组件，所以"没穿装备时我是什么样"永远查得到。
 pub const PLAYER_ARMOR: i32 = 1;
 /// 见 [`PLAYER_ARMOR`]。
 pub const ENEMY_ARMOR: i32 = 0;
@@ -50,15 +53,15 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
     bsn! {
         template_value(faction)
         template_value(Health::new(50))
-        // 护甲（命中管线第 ④ 关：格挡之后再减）：**单位属性**，
-        // 等装备系统（M27）落地后改成"基础值 + 装备加成"。
-        // ⚠️ **数值是占位**：`ARMOR_*` 三个常量是设计旋钮，不是平衡结论。
+        // 护甲**基础值**（命中管线第 ④ 关：格挡之后再减）：装备域在它之上加
+        // `EquipmentBonus`，命中公式读"基础 + 加成"（M27 已落地）。
+        // ⚠️ **数值是占位**：`ARMOR_*` 两个常量是设计旋钮，不是平衡结论。
         template_value(Armor(armor))
         HitRadius(0.8)
         AttackRange::MELEE
         Collidable
-        // 格挡率：现在是单位属性（**没有单位真的会格挡**，`0.0` = 管线第 ③ 关直接跳过），
-        // 等装备系统（M27）落地后改成从装备 / 姿态读。
+        // 格挡率**基础值**：0.0 = 这个单位本身不会格挡（管线第 ③ 关直接跳过）。
+        // 真实的格挡率来自装备——一面盾（`ItemKind::Shield`）给 +0.35（M27）。
         template_value(BlockChance(0.0))
         template_value(Velocity(Vec3::ZERO))
         template_value(DecisionSlot::Idle { intent: None })

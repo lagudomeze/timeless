@@ -45,6 +45,7 @@ pub mod ai;
 pub mod clock;
 pub mod combat;
 pub mod config;
+pub mod equipment;
 pub mod input;
 pub mod interaction;
 pub mod movement;
@@ -59,6 +60,7 @@ pub use ai::{AiPlugin, AiSet};
 pub use clock::{ClockPlugin, ClockSet};
 pub use combat::{CombatPlugin, CombatSet};
 pub use config::ConfigPlugin;
+pub use equipment::{EquipmentPlugin, EquipmentSet};
 pub use input::{InputPlugin, InputSet};
 pub use interaction::{InteractionPlugin, InteractionSet};
 pub use movement::{MovementPlugin, MovementSet};
@@ -90,6 +92,8 @@ pub fn configure_pipeline(app: &mut App) {
                 TimelineSet,
                 AiSet,
                 MovementSet,
+                // 装备加成要在命中公式读它之前算好（有效护甲 / 格挡率）
+                EquipmentSet,
                 CombatSet,
                 VoxelRenderSet,
                 PresentationSet,
@@ -118,6 +122,7 @@ impl Plugin for GamePlugin {
             InteractionPlugin,
             TimelinePlugin,
             MovementPlugin,
+            EquipmentPlugin,
             CombatPlugin,
             AiPlugin,
         ));
@@ -162,6 +167,7 @@ pub(crate) mod test_support {
                 InteractionPlugin,
                 TimelinePlugin,
                 MovementPlugin,
+                EquipmentPlugin,
                 CombatPlugin,
                 AiPlugin,
             ));
@@ -259,6 +265,7 @@ mod tests {
                 InteractionPlugin,
                 TimelinePlugin,
                 MovementPlugin,
+                EquipmentPlugin,
                 CombatPlugin,
             ));
         configure_pipeline(&mut app);
@@ -1567,6 +1574,10 @@ mod tests {
             "app::timeline::focus::Focus",
             // 坐标（此前唯一注册过的一个）
             "app::movement::cell::Cell",
+            // 装备：BRP 要能读到"身上挂着什么、加成是多少"
+            "app::equipment::components::EquipmentBonus",
+            "app::equipment::components::EquipmentSlot",
+            "app::equipment::components::Item",
         ] {
             assert!(
                 registry
@@ -1618,15 +1629,22 @@ mod tests {
     /// **护甲真的在链路上**：装出来的玩家挨近战一刀，掉的血比裸数值少。
     ///
     /// 此前 `Armor` 只有公式与单测，**没有任何单位挂它**——第 ④ 关永远减 0。
-    /// 这条从**组装层真造出来的单位**出发，走完整条命中管线，确认护甲生效：
-    /// 15 点近战打在玩家（护甲 1）身上应当只掉 14。
+    /// 这条从**组装层真造出来的单位**出发，走完整条命中管线。
+    ///
+    /// ⚠️ **判据是上界而不是等号**：玩家现在带着一面盾（`ItemKind::Shield`），
+    /// 而格挡是**掷骰**的——挡下时伤害只会更低。所以这里断言"最多掉这么多"，
+    /// 那是确定性的；格挡的减伤比例由 `equipment::domain` 的纯函数用例守住，
+    /// 命中管线第 ③ 关的顺序由 `combat::formula` 的用例守住。
     #[test]
     fn the_assembled_player_actually_has_armor() {
+        use crate::equipment::{EquipmentBonus, armor_of};
+
         let mut app = crate::test_support::headless_app();
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
             100,
         )));
         app.update(); // Startup：组装玩家 + 敌人
+        app.update(); // 起始装备（槽位 + 物品）由组装系统在 Update 里补上
 
         let (player, enemy) = {
             let mut query = app.world_mut().query::<(Entity, &Faction)>();
@@ -1644,11 +1662,16 @@ mod tests {
             (find(Faction::Player), find(Faction::Enemy))
         };
 
+        let base = app
+            .world()
+            .get::<Armor>(player)
+            .map(|armor| armor.0)
+            .unwrap();
+        let armor = armor_of(base, app.world().get::<EquipmentBonus>(player));
+        assert!(armor > 0, "组装出来的玩家应当带护甲，否则第 ④ 关形同不存在");
         assert!(
-            app.world()
-                .get::<Armor>(player)
-                .is_some_and(|armor| armor.0 > 0),
-            "组装出来的玩家应当带护甲，否则第 ④ 关形同不存在"
+            armor > base,
+            "装备应当在基础护甲之上再加一点（基础 {base}、有效 {armor}）"
         );
 
         let before = app.world().get::<Health>(player).unwrap().current;
@@ -1666,12 +1689,12 @@ mod tests {
         app.update();
         app.update();
 
-        let armor = app.world().get::<Armor>(player).unwrap().0;
-        assert_eq!(
-            app.world().get::<Health>(player).unwrap().current,
-            before - (15 - armor),
-            "护甲 {armor} 应当从 15 点里减掉"
+        let taken = before - app.world().get::<Health>(player).unwrap().current;
+        assert!(
+            taken <= 15 - armor,
+            "有效护甲 {armor} 应当从 15 点里减掉（格挡只会减得更多），实际掉了 {taken}"
         );
+        assert!(taken > 0, "这一击没有被完全免掉（盾是减伤不是免伤）");
         let _ = enemy;
     }
 
@@ -1727,5 +1750,53 @@ mod tests {
             "玩家一直在动的时候，敌人应当走过来（否则就是死锁了）"
         );
         assert_ne!(player_cell, Some(Cell::new(1, 0)), "玩家也应当动过");
+    }
+
+    /// **装备的护甲真的进了命中公式**（不是只挂在单位身上好看）。
+    ///
+    /// 判据必须是**等号**，不能用上界：`taken <= 15 - bare` 那种写法在
+    /// "公式根本没读装备加成"时也成立（裸护甲算出来正好等于上界），
+    /// 于是测试是空跑的。这里让目标**基础护甲为 0、格挡率为 0**，
+    /// 只挂一份装备加成，于是伤害只有一种可能：`15 − 加成`。
+    ///
+    /// （变异验证：把 `apply_physical_hits_system` 里的 `equipment::armor_of`
+    /// 换回裸组件，这条立刻转红，报实际掉了 15。）
+    #[test]
+    fn the_equipment_armor_bonus_reaches_the_hit_formula() {
+        use crate::equipment::{EquipmentBonus, ItemBonus};
+
+        let mut app = test_app();
+        let target = app
+            .world_mut()
+            .spawn((
+                Health::new(100),
+                Collidable,
+                HitRadius(0.8),
+                // 基础护甲 0、格挡率 0：这一击的每一个数字都由装备决定
+                Armor(0),
+                crate::combat::defense::BlockChance(0.0),
+                EquipmentBonus(ItemBonus {
+                    armor: 3,
+                    ..ItemBonus::default()
+                }),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
+        app.world_mut().spawn((
+            Velocity(Vec3::ZERO),
+            Projectile::default(),
+            HitRadius(0.2),
+            PhysicalDamage(15),
+            Transform::from_xyz(0.5, 0.0, 0.0),
+        ));
+
+        app.update();
+        app.update();
+
+        let taken = 100 - app.world().get::<Health>(target).unwrap().current;
+        assert_eq!(
+            taken, 12,
+            "装备给的 3 点护甲必须从 15 里减掉（公式没读加成的话会掉满 15）"
+        );
     }
 }

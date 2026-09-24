@@ -17,7 +17,7 @@ Project Timeless：基于 **Bevy 0.19.1** 的 roguelike 策略游戏原型。pac
 
 ```bash
 cargo run                                   # 启动：体素地形 + 世界空间战斗
-cargo test                                  # 全部测试（251：248 单元 + 3 资产验收）
+cargo test                                  # 全部测试（308：305 单元 + 3 资产验收）
 cargo test <name>                           # 单个测试，例：cargo test fireball_flies_to_the_locked_cell_and_explodes
 cargo test --lib                            # 只跑单元测试
 cargo test --test assets                    # 只跑资产验收（改日志文案 / 加技能后必跑）
@@ -45,7 +45,8 @@ cargo fmt --check                           # 必须通过
 
 顶层域：`world`（体素数据，零渲染依赖）· `voxel_render`（网格化 / 材质 / 明暗）·
 `movement`（`Cell` 决策 + `Velocity` 位移 + 移动 / 跳跃 / 翻滚）· `combat`（战斗全部子域）·
-`skills`（技能**静态定义**：`AbilityId` / `AbilityDef` / `can_cast`）· `timeline`（无回合调度）·
+`skills`（技能**静态定义**：`AbilityId` / `AbilityDef` / `can_cast`）·
+`equipment`（装备：槽位 / 物品 / 「基础值 + 加成」）· `timeline`（无回合调度）·
 `ai`（敌人战术）· `input`（键盘 / 鼠标 → 消息）· `interaction`（鼠标拾取 / 点击翻译 / 高亮与预演画面）·
 `presentation`（相机 / 纸片 / HUD / 日志，只读）· `spawn`（组装车间）。
 
@@ -70,12 +71,13 @@ cargo fmt --check                           # 必须通过
 ```text
 Startup:  PreloadSet ─▶ AssemblySet
 Update:   SpawnSet ─▶ InputSet ─▶ InteractionSet ─▶ TimelineSet ─▶ AiSet
-          ─▶ MovementSet ─▶ CombatSet ─▶ VoxelRenderSet ─▶ PresentationSet ─▶ ClockSet
+          ─▶ MovementSet ─▶ EquipmentSet ─▶ CombatSet ─▶ VoxelRenderSet ─▶ PresentationSet ─▶ ClockSet
 WorldSet ──────────────────────▶（必须早于 VoxelRenderSet）
 ```
 
 - `InputSet` 在 `AiSet` 前：玩家这一帧的表态先落地。
 - `AiSet` 在 `CombatSet` 前：**敌人先决策**，威胁扫描（`combat::reaction`）才扫得到它刚生成的行动。
+- `EquipmentSet` 在 `CombatSet` 前：装备加成要在命中公式读它之前算好（有效护甲 / 格挡率）。
 - `ClockSet` 排在帧末：这一帧所有系统看到同一个冻结状态，唯一的 `Time<Virtual>` 写入点在这里。
 
 **一处改动会牵动整条链**：改声明顺序或往管道里加系统集，必须同时想清
@@ -142,7 +144,8 @@ WorldSet ──────────────────────▶�
   `EntityEvent` + Observer，两者不可混用（Bevy 0.19 已移除 `EventReader` / `EventWriter`）。
 - **消息定义在消费它的领域**（消费方在插件 `build` 里 `add_message::<T>()`），注释写清「谁写、谁消费」。
   完整跨域消息清单见 `docs/domain.md` 第二节。
-- **`input` 只翻译、不执行**：按键本身永远住在 `input/`（空格暂停、`F5` 重置、`Q/W/E/R` 技能），
+- **`input` 只翻译、不执行**：按键本身永远住在 `input/`（空格等待、`P` 暂停、
+  `B`/`V` 方块、`T` 穿脱装备、`F5` 重置、`Q/W/E/R` 技能），
   其它域只收到「暂停一下」「重置一下」这类意图，不认识 `KeyCode`。
 - **组件可以跨域读，行为不许跨域调**：数据契约（组件类型、纯类型 / 常量、纯函数）可直接引用；
   别人的系统、别人的 `Resource`、一次操作的请求 / 结果必须走消息或事件。
@@ -170,6 +173,7 @@ WorldSet ──────────────────────▶�
 | `docs/domain.md` | 域地图、跨域契约、执行顺序、**十二条铁律** |
 | `docs/relations.md` | 物理附着（`ChildOf`）vs 逻辑关系（自定义关系） |
 | `docs/timeline.md` / `docs/skills.md` / `docs/combat.md` | 时间线 / 技能 / 战斗专题（🚧 = 目标设计，代码未落地） |
+| `docs/equipment.md` | 装备：槽位 / 物品 / 穿脱 / **属性叠加（基础 + 加成）**（已落地）· `docs/insight.md` 是洞察力设计稿 |
 | `docs/bevy-019.md` | **写任何 Bevy 代码之前**必读：0.19 API 与迁移清单 |
 
 ## 风格要点

@@ -21,8 +21,9 @@
   └─▶ ⑥ 触发打断 / 施加 debuff
 ```
 
-格挡率的来源是**装备 / 姿态**（`BlockChance`，见第五节）——命中管线只读它，
-不自己算。
+格挡率的**基础值**在单位身上（`BlockChance`），**来源是装备**（M27 已落地的
+`equipment` 域：一面盾给 `+0.35`）——命中管线读的是"基础 + 装备加成"的有效值，
+它只读、不自己算。
 
 **"有没有吃到冲击"决定第 ⑥ 步**：被闪开 / 被招架 = 没吃到冲击，因此**不触发打断**
 （挡住一次攻击不该反被打断）。格挡是**减伤不是免伤**，所以照样触发打断。
@@ -157,7 +158,7 @@ HUD 只读 `ReactionSlot`，不认识 `CounterCost` 的语义——它只画
 | `Health { current, max }` | 唯一的生命真相 |
 | `Stamina { current, max }` | 动作消耗；**后摇结束时回 1 点**（订阅 `DecisionReady`） |
 | `Focus { current, max }` | **反制资源** ✅：1 点把一次声明的前摇归零（`FOCUS_MAX = 3`，每 `FOCUS_RECOVER_INTERVAL = 10.0` 虚拟秒回 1 点）。付 `CounterCost::Resource` 🚧 还没落地 |
-| `BlockChance(f32)` ✅ | 格挡率（**现在是单位属性**；来源本该是装备 / 姿态，等 M27），管线第 ③ 关读它 |
+| `BlockChance(f32)` ✅ | 格挡率**基础值**；有效值 = 基础 + 装备加成（`equipment` 域，M27 已落地）。管线第 ③ 关读**有效值** |
 | `Faction { Player \| Enemy }` | **只管战斗目标过滤**，不代表"谁在操作"（那是 `InputDriven`） |
 
 资源归**拥有它的域**：谁能拿到它（回、扣）由该域的 Observer 决定，

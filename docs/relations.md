@@ -1,7 +1,7 @@
 # 关系模型：物理附着 与 逻辑关系
 
-> ⚠️ **目标设计**：标 🚧 的部分代码里还没有——行动归属（`ActionOf` / `Actions`）
-> **已落地**（M22），装备（`EquippedTo`）🚧 还是纸面设计（`src/` 里 grep 不到）。
+> ✅ **两处都已落地**：行动归属（`ActionOf` / `Actions`）与装备（`EquippedTo` /
+> `EquippedItems`）都在 `src/` 里。下文提到的代码都是现状。
 >
 > 本篇只回答一件事：**两个实体之间的"关系"该用什么表达。**
 > 结论一句话：**要跟着 `Transform` 走的用 `ChildOf`；纯逻辑的用自定义关系。**
@@ -53,10 +53,18 @@ pub struct Actions(Vec<Entity>);
 | 单位 → 纸片 / 阴影 | `UnitSprite` / `UnitShadow` | 单位 | **`ChildOf`** | 纸片与阴影是单位根节点的**视觉子节点**，靠局部坐标表达世界偏移（脚底 + 无旋转 + 无缩放） |
 | 行动 → 行动者 | 行动实体 | 单位 | **`ActionOf` / `Actions`** | 行动实体没有 `Transform`，归属是纯逻辑（谁能撤它、它忙住了谁） |
 | 物品 → 装备槽位 | 物品 | 槽位 | **`EquippedTo` / `EquippedItems`** | 装备逻辑（类型校验 / 卸下）与"跟着动"是两件事 |
+| 槽位 → 单位 | 槽位 | 单位 | **`ChildOf`** | 槽位是 PC 的物理延伸，"跟着动" |
+| 物品 → 槽位（空间） | 物品 | 槽位 | **`ChildOf`** | 装上时物品还要**跟着槽位动**，所以它同时挂两个关系 |
 
-**装备的容器与内容分离**：槽位是 PC 的物理延伸 → 槽位挂 `ChildOf(pc)`；
-物品是独立实体（可自由脱离）→ 物品挂 `EquippedTo(slot)`。**卸下时要同时移除两者**，
-并把 `GlobalTransform` 转回 `Transform`，否则物品会跳到世界原点。
+**装备的容器与内容分离**：槽位挂 `ChildOf(pc)`；物品挂 `EquippedTo(slot)`（逻辑）
+**并同时**挂 `ChildOf(slot)`（空间）。卸下时移除两者，并把 `GlobalTransform` 转回
+`Transform`，否则物品会跳到世界原点。
+
+⚠️ **物品挂 `ChildOf(slot)` 时，它自己的 `Transform` 必须是局部零偏移**：
+`GlobalTransform` 是本地坐标乘上父级链，写世界坐标会**再叠一次**父级的位置。
+实机探针抓到过这个——PC 在 `(3,-1,1)`，卸下的物品却落在 `(6,-2,2)`。
+这条与"卸下时写回世界坐标"是同一条算术的两端，见
+[equipment.md](equipment.md) 第四节。
 
 ## 四、用关系的两条纪律
 

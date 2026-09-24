@@ -18,7 +18,11 @@ pub const MELEE_POWER: i32 = 3;
 ///
 /// 命中由 [`detect_melee_system`](crate::combat::targeting::detect_melee_system) 负责，
 /// 伤害走通用流水线，[`Lifetime`] 到期自动销毁。
-pub fn melee_scene(position: Vec3, direction: Vec3, faction: Faction) -> impl Scene {
+///
+/// `damage` 是**这一发的最终数值**（基础 `MELEE_DAMAGE` + 攻击者的武器加成），
+/// 由执行器在生成时算好传进来——攻击实体自己不必知道"武器"是什么，
+/// 下游（目标获取 / 命中管线 / 爆炸）也一行不用改。
+pub fn melee_scene(position: Vec3, direction: Vec3, faction: Faction, damage: i32) -> impl Scene {
     let direction = direction.normalize_or_zero();
     let rotation = if direction == Vec3::ZERO {
         Quat::IDENTITY
@@ -29,7 +33,7 @@ pub fn melee_scene(position: Vec3, direction: Vec3, faction: Faction) -> impl Sc
     let hit_once = HitOnce::default();
     bsn! {
         template_value(faction)
-        template_value(PhysicalDamage(MELEE_DAMAGE))
+        template_value(PhysicalDamage(damage))
         template_value(AttackFrame(MELEE_FRAME))
         template_value(InterruptPower(MELEE_POWER))
         template_value(lifetime)

@@ -9,6 +9,7 @@
 
 use bevy::prelude::*;
 
+use crate::equipment::EquipmentRefused;
 use crate::movement::MoveRefused;
 use crate::timeline::{ActionBlocked, BlockReason};
 use crate::world::BlockRefused;
@@ -77,28 +78,39 @@ pub fn update_action_hint_system(
     mut blocked: MessageReader<ActionBlocked>,
     mut refused: MessageReader<BlockRefused>,
     mut moves_refused: MessageReader<MoveRefused>,
+    mut equipment_refused: MessageReader<EquipmentRefused>,
     mut readouts: MessageReader<PreviewReadout>,
     mut nodes: Query<&mut Node, With<ActionHint>>,
     mut texts: Query<(&mut Text, &mut TextColor, &mut BackgroundColor), With<ActionHintText>>,
 ) {
-    // 三种"不让做"的原因汇到同一条提示条：地形没加载 / 方块交互被拒 / 走不过去
+    // 四种"不让做"的原因汇到同一条提示条：地形没加载 / 方块交互被拒 / 走不过去 / 装备装错槽。
+    // 全部收成 `String`（装备那条要拼物品与槽位名），因此文案的构造只有一处。
     let move_refused = moves_refused
         .read()
         .last()
-        .map(|MoveRefused::BlockedByTerrain| "BLOCKED · too high to step up");
+        .map(|MoveRefused::BlockedByTerrain| "BLOCKED · too high to step up".to_string());
     let refused_message = refused
         .read()
         .last()
-        .map(|BlockRefused::TerrainNotLoaded| "NO GROUND HERE · chunk not loaded")
+        .map(|BlockRefused::TerrainNotLoaded| "NO GROUND HERE · chunk not loaded".to_string())
         .or(move_refused);
+    let equipment_message = equipment_refused
+        .read()
+        .last()
+        .map(|refused| match refused {
+            EquipmentRefused::WrongSlot { item, slot } => {
+                format!("WON'T FIT · {} in the {} slot", item.label(), slot.label())
+            }
+            EquipmentRefused::NoSuchSlot => "NO SUCH SLOT".to_string(),
+        });
     let blocked_message = blocked.read().last().map(|last| match last.reason {
-        BlockReason::Busy => "CAN'T ACT YET · still busy",
-        BlockReason::NotEnoughEnergy => "NOT ENOUGH ENERGY",
+        BlockReason::Busy => "CAN'T ACT YET · still busy".to_string(),
+        BlockReason::NotEnoughEnergy => "NOT ENOUGH ENERGY".to_string(),
     });
-    if let Some(message) = refused_message.or(blocked_message) {
+    if let Some(message) = equipment_message.or(refused_message).or(blocked_message) {
         timer.0 = HINT_SECS;
         for (mut text, mut color, mut background) in &mut texts {
-            **text = message.to_string();
+            **text = message.clone();
             *color = TextColor(WARN_TEXT);
             *background = BackgroundColor(WARN_BG);
         }
@@ -164,6 +176,7 @@ mod tests {
             .add_message::<ActionBlocked>()
             .add_message::<BlockRefused>()
             .add_message::<MoveRefused>()
+            .add_message::<crate::equipment::EquipmentRefused>()
             .add_message::<PreviewReadout>()
             .add_systems(Update, update_action_hint_system);
         let node = app

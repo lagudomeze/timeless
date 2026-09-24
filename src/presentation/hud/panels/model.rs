@@ -41,6 +41,11 @@ pub struct UnitRow {
     pub parrying: bool,
     pub airborne: bool,
     pub tactic: Option<Tactic>,
+    /// 有效护甲（基础 + 装备加成）；`None` = 这个单位没有护甲组件。
+    ///
+    /// 取数时**已经算好**（由 `equipment::armor_of` 合成）：面板只显示一个数，
+    /// 不必知道"基础 / 加成"的结构。装备改动因此在这个读数上直接看得见。
+    pub armor: Option<i32>,
 }
 
 /// 面板快照缓存：与上一帧完全相同就整帧不碰 UI。
@@ -166,7 +171,7 @@ impl UnitPanels {
 }
 
 impl UnitRow {
-    /// 状态行：`PLAYER · ready · cell (1,1)`。
+    /// 状态行：`PLAYER · ready · cell (1,1) · arm 3`。
     pub fn state_line(&self, to_player: Option<f32>) -> String {
         let name = match self.faction {
             Faction::Player => "PLAYER",
@@ -182,6 +187,10 @@ impl UnitRow {
             "{name} · {defense} · cell ({:>2},{:>2})",
             self.cell.x, self.cell.z
         );
+        // 有效护甲（基础 + 装备加成）：装备一穿一脱，这个数立刻跟着变
+        if let Some(armor) = self.armor {
+            line.push_str(&format!(" · arm {armor}"));
+        }
         if let Some(distance) = to_player {
             line.push_str(&format!(" · dist {distance:.1}"));
         }
@@ -243,6 +252,7 @@ mod tests {
             parrying: false,
             airborne: false,
             tactic: None,
+            armor: Some(1),
         }
     }
 
@@ -264,6 +274,25 @@ mod tests {
         assert!(line.contains("cell ( 3, 3)"), "{line}");
         assert!(line.contains("dist 7.1"), "{line}");
         assert!(line.contains("approach"), "{line}");
+    }
+
+    /// **有效护甲是面板上的一个读数**：装备一穿一脱，这个数跟着变。
+    ///
+    /// 这条守着"装备改动看得见"——没有它，装备只能靠日志猜。
+    #[test]
+    fn the_state_line_carries_the_effective_armor() {
+        let mut unit = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        unit.armor = Some(3);
+        assert!(
+            unit.state_line(None).contains("arm 3"),
+            "面板要显示有效护甲：{}",
+            unit.state_line(None)
+        );
+
+        // 没有护甲组件的单位不显示这一段（而不是显示 arm 0）
+        let mut without = row(Faction::Enemy, Cell::new(0, 0), Vec3::ZERO);
+        without.armor = None;
+        assert!(!without.state_line(None).contains("arm"), "缺组件就不显示");
     }
 
     /// 只有敌人那一行带距离——玩家面板不需要"离自己多远"。
