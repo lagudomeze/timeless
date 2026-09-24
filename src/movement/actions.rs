@@ -15,9 +15,12 @@ use crate::timeline::{
     PendingFocus, ScheduledAction, Target, Uncancellable,
 };
 
-use super::cell::{Cell, MoveGoal};
+use crate::world::{TerrainConfig, surface_height_at};
+
+use super::cell::{CELL_SIZE, Cell, MoveGoal};
 use super::components::{MoveSpeed, Velocity};
 use super::events::{JumpCommand, MoveCommand, MoveToCommand};
+use super::rules::{MoveRefused, can_step};
 
 /// 移动的节奏：一格一步，几乎不设防（走得快就容易被打断）。
 pub const MOVE_TIMING: ActionTiming = ActionTiming::new(0.15, 0.10, 1);
@@ -144,12 +147,15 @@ pub struct Jumping {
 ///
 /// 只在玩家的决策槽是 `Empty` 时接受；输入是**按下的一次**（见 [`crate::input`] 的
 /// `just_pressed` 语义），因此「按住 W」就是按一次走一格，不会和技能键互相覆盖。
+#[allow(clippy::too_many_arguments)]
 pub fn declare_move_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     pending_focus: Res<PendingFocus>,
+    terrain: Res<TerrainConfig>,
     mut requests: MessageReader<MoveCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
+    mut refused: MessageWriter<MoveRefused>,
     mut players: Query<(Entity, &Cell, &mut Focus, &DecisionSlot), With<InputDriven>>,
 ) {
     let Some(axis) = requests.read().last().map(|command| command.axis) else {
@@ -165,6 +171,11 @@ pub fn declare_move_system(
     };
 
     let to_cell = Cell::new(cell.x + dx, cell.z + dz);
+    // 可行走性：高太多就是墙，走不过去（纯规则见 `super::rules`）
+    if !step_is_walkable(&terrain, *cell, to_cell) {
+        refused.write(MoveRefused::BlockedByTerrain);
+        return;
+    }
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, pending_focus.wants());
     commands.spawn_scene(move_action_scene(
@@ -190,12 +201,15 @@ pub fn declare_move_system(
 /// 多格与单格走的是**同一个载荷与执行器**（`MoveAction { from_cell, to_cell }`）：
 /// 执行器本来就是"朝目标格中心设速度"，所以跨几格天然成立；忙多久也按
 /// `距离 / 速度` 自动变长。
+#[allow(clippy::too_many_arguments)]
 pub fn declare_move_to_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
     pending_focus: Res<PendingFocus>,
+    terrain: Res<TerrainConfig>,
     mut requests: MessageReader<MoveToCommand>,
     mut blocked: MessageWriter<ActionBlocked>,
+    mut refused: MessageWriter<MoveRefused>,
     mut players: Query<(Entity, &Cell, &mut Focus, &DecisionSlot), With<InputDriven>>,
 ) {
     let Some(target) = requests.read().last().map(|request| request.cell) else {
@@ -206,6 +220,12 @@ pub fn declare_move_to_system(
     };
     if *cell == target {
         return; // 点自己脚下：不浪费一次决策
+    }
+    // 点地板是**一格一格走过去**的：沿途每一格的落差都得能迈上去。
+    // 不查的话会出现"墙那边也点得动"——单位会直接穿墙停在墙背后。
+    if !path_is_walkable(&terrain, *cell, target) {
+        refused.write(MoveRefused::BlockedByTerrain);
+        return;
     }
     let now = time.elapsed_secs();
     let schedule = ScheduledAction::with_focus(MOVE_TIMING, now, &mut focus, pending_focus.wants());
@@ -350,6 +370,58 @@ pub fn jump_motion_system(
 /// 平面方向 → 世界方向：`axis.x` 走世界 X，`axis.y` 走世界 **Z**，Y 永远是 0。
 ///
 /// 别用 `Vec2::extend`——那把第二分量放进 Y，单位会直接往天上飞。
+/// 相邻两格能不能迈过去（纯规则 + 地形高度查询）。
+///
+/// 高度取自 `world::surface_height_at`——**纯函数**，因此不依赖区块是否已加载，
+/// 与"单位贴地"用的是同一份判据。
+fn step_is_walkable(terrain: &TerrainConfig, from: Cell, to: Cell) -> bool {
+    let from_y = surface_height_at(terrain, from.center().x, from.center().y);
+    let to_y = surface_height_at(terrain, to.center().x, to.center().y);
+    can_step(from_y, to_y)
+}
+
+/// 从 `from` 走到 `to` 的**直线路径**上，每一步都迈得过去吗。
+///
+/// 多格移动是**直线**（执行器朝目标格中心设速度），所以沿途经过的格就是
+/// 这条直线覆盖到的格。逐格检查而不是只看终点：只看终点的话，
+/// 墙可以"绕过"——单位会穿墙停在墙后面。
+fn path_is_walkable(terrain: &TerrainConfig, from: Cell, to: Cell) -> bool {
+    let mut previous = from;
+    for cell in cells_along_the_line(from, to).into_iter().skip(1) {
+        if !step_is_walkable(terrain, previous, cell) {
+            return false;
+        }
+        previous = cell;
+    }
+    true
+}
+
+/// 直线从 `from` 到 `to` 依次经过的格（含两端）。
+///
+/// 用细采样走一遍直线再按格去重：格是 2 个体素宽，而直线是连续的，
+/// 采样步长取 `CELL_SIZE / 4` 足以不漏格（更快更粗的 Bresenham 在这里
+/// 没有必要——路径最长也就几十格，而且这是**声明时**跑一次，不是每帧）。
+fn cells_along_the_line(from: Cell, to: Cell) -> Vec<Cell> {
+    let start = from.center();
+    let end = to.center();
+    let delta = end - start;
+    let length = delta.length();
+    if length <= f32::EPSILON {
+        return vec![from];
+    }
+    let steps = (length / (CELL_SIZE / 4.0)).ceil().max(1.0) as usize;
+    let mut cells = vec![from];
+    for step in 1..=steps {
+        let t = step as f32 / steps as f32;
+        let point = start + delta * t;
+        let cell = Cell::new(point.x.floor() as i32, point.y.floor() as i32);
+        if cells.last() != Some(&cell) {
+            cells.push(cell);
+        }
+    }
+    cells
+}
+
 pub fn ground_direction(axis: Vec2) -> Vec3 {
     Vec3::new(axis.x, 0.0, axis.y)
 }
@@ -359,6 +431,118 @@ mod tests {
     use super::*;
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
+
+    /// **可行走性真的接在声明上**：地形高得迈不上去时，声明被拒、不产生行动。
+    ///
+    /// 默认地形相邻格最多差 1 个体素（处处可走），所以这里把起伏调大，
+    /// 造出一堵真的走不过去的"墙"——正是玩家自己堆高地形时的情形。
+    #[test]
+    fn a_target_behind_a_wall_is_refused() {
+        use crate::timeline::PendingFocus;
+        use crate::timeline::{ActionBlocked, DecisionSlot, Focus, InputDriven};
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                100,
+            )))
+            // 幅度拉大：制造相邻 2 级以上的落差
+            .insert_resource(TerrainConfig {
+                amplitude: 8,
+                base_height: 0,
+                scale: 3.0,
+                ..TerrainConfig::default()
+            })
+            .init_resource::<PendingFocus>()
+            .add_message::<MoveCommand>()
+            .add_message::<ActionBlocked>()
+            .add_message::<MoveRefused>()
+            .add_systems(Update, declare_move_system);
+
+        // 找一对"迈不上去"的相邻格
+        let terrain = *app.world().resource::<TerrainConfig>();
+        let mut found = None;
+        'outer: for z in -8..8 {
+            for x in -8..8 {
+                let from = Cell::new(x, z);
+                let to = Cell::new(x + 1, z);
+                if !step_is_walkable(&terrain, from, to) {
+                    found = Some((from, to));
+                    break 'outer;
+                }
+            }
+        }
+        let (from, to) = found.expect("放大起伏后应当存在迈不上去的相邻格");
+
+        let player = app
+            .world_mut()
+            .spawn((
+                InputDriven,
+                from,
+                Focus::default(),
+                DecisionSlot::Idle { intent: None },
+            ))
+            .id();
+        app.world_mut().write_message(MoveCommand {
+            axis: Vec2::new(1.0, 0.0),
+        });
+        // 只声明、不执行：这里要看的正是"声明有没有被拒"
+        app.update();
+
+        assert_eq!(
+            slot_of(&mut app, player),
+            DecisionSlot::Idle { intent: None },
+            "走不过去就不该占用决策（槽必须还是空的）"
+        );
+        assert_eq!(actions_of(&mut app), 0, "被拒的移动不该产生行动实体");
+        let _ = to;
+    }
+
+    /// 同一条直线上的**每一格**都要能迈上去：墙不能被"绕过"。
+    #[test]
+    fn every_cell_on_the_line_must_be_walkable() {
+        use crate::timeline::PendingFocus;
+        let _ = PendingFocus; // 仅供可读性：这个断言不碰调度
+
+        let terrain = TerrainConfig {
+            amplitude: 8,
+            base_height: 0,
+            scale: 3.0,
+            ..TerrainConfig::default()
+        };
+        // 找一条"起点与终点之间隔着墙"的直线
+        let mut demonstrated = false;
+        for z in -12..12 {
+            for x in -12..12 {
+                let from = Cell::new(x, z);
+                let to = Cell::new(x + 6, z);
+                let endpoints_ok = step_is_walkable(&terrain, from, Cell::new(x + 1, z))
+                    && step_is_walkable(&terrain, Cell::new(x + 5, z), to);
+                if endpoints_ok && !path_is_walkable(&terrain, from, to) {
+                    demonstrated = true;
+                    break;
+                }
+            }
+            if demonstrated {
+                break;
+            }
+        }
+        assert!(
+            demonstrated,
+            "应当存在「两端可走、中间被墙挡住」的直线——这正是逐格检查的意义"
+        );
+    }
+
+    /// 读行动者的决策槽。
+    fn slot_of(app: &mut App, entity: Entity) -> DecisionSlot {
+        *app.world().get::<DecisionSlot>(entity).unwrap()
+    }
+
+    /// 场上还剩几条行动实体。
+    fn actions_of(app: &mut App) -> usize {
+        let mut query = app.world_mut().query::<&ActionOf>();
+        query.iter(app.world()).count()
+    }
 
     #[test]
     fn step_from_axis_snaps_to_one_orthogonal_cell() {

@@ -1,8 +1,15 @@
 //! # movement — 移动领域
 //!
 //! 只回答「实体在世界里怎么动」：速度、位移、格子坐标，以及**移动行动**
-//! （载荷 + 声明 + 执行器）。不含伤害 / 命中 / 技能（那些属于 [`crate::combat`]），
-//! 也不认识区块数据（体素碰撞是下一步：查 [`crate::world`] 的体素再决定是否位移）。
+//! （载荷 + 声明 + 执行器）。不含伤害 / 命中 / 技能（那些属于 [`crate::combat`]）。
+//!
+//! **可行走性**在 [`rules`]：声明移动时先问"那一步迈得上去吗"，迈不上去就拒绝。
+//! 判据只用**地形高度**（`world::surface_height_at`，纯函数），不查体素、
+//! 也不依赖区块加载状态——那条"地形高度是纯函数"的性质是刻意保留的。
+//!
+//! ⚠️ **已知缺口**：玩家**自己堆的方块不影响站立高度**——单位站在噪声地表上，
+//! 放三块石头也不会站上去（实测确认）。要让建造真的改变地形，得让高度查询
+//! 也看体素，那会打破上面那条纯函数性质，属于单独的设计决定。
 //!
 //! 坐标分两层（见 [docs/timeline.md](../../docs/timeline.md) 第二节）：
 //!
@@ -23,6 +30,7 @@ pub mod cell;
 pub mod components;
 pub mod events;
 pub mod plugin;
+pub mod rules;
 pub mod systems;
 
 pub use actions::{
@@ -35,6 +43,7 @@ pub use cell::{CELL_SIZE, Cell, MoveGoal};
 pub use components::{MoveSpeed, Velocity};
 pub use events::{JumpCommand, MoveCommand, MoveToCommand};
 pub use plugin::MovementPlugin;
+pub use rules::{MAX_STEP_UP, MoveRefused, can_step};
 pub use systems::{DodgingOnArrival, follow_terrain_system, move_entities_system};
 
 /// 移动领域在 `Update` 中的系统集。

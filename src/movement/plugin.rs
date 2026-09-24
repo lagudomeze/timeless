@@ -25,6 +25,8 @@ impl Plugin for MovementPlugin {
         app.add_message::<MoveCommand>()
             .add_message::<MoveToCommand>()
             .add_message::<JumpCommand>()
+            // 可行走性被拒：写方是本域的声明系统，消费方是 presentation 的提示条
+            .add_message::<super::MoveRefused>()
             // 反射：`Cell` 是决策层的坐标，BRP / 调试面板想直接读它
             .register_type::<super::Cell>()
             // 技能目录的静态数据在启动时交上去（数值仍归本域，见 `docs/skills.md`）

@@ -69,6 +69,8 @@ impl Plugin for PresentationPlugin {
             // 方块交互被拒：写方是 world（纯数据域，不认识时间线的 ActionBlocked），
             // 消费方是本域——表现层替它把原因翻译成同一条提示条上的文案
             .add_message::<crate::world::BlockRefused>()
+            // 走不过去（地形太高）：写方是 movement，消费方是本域的提示条
+            .add_message::<crate::movement::MoveRefused>()
             .add_message::<PanCamera>()
             .add_message::<ZoomCamera>()
             // 帮助面板的开关消息：写方是 input（F1），消费方是 HUD
