@@ -27,3 +27,14 @@ pub struct FireCommand {
 /// 到点后由 `melee_action_executor_system` 朝最近敌人生成一次性横扫。
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeleeCommand;
+
+/// 请求射一支箭（弓：单体狙击）。
+///
+/// 消费：[`declare_shoot_system`](super::actions::declare_shoot_system)——
+/// 到点后由 `shoot_action_executor_system` 朝**最近的敌对单位**放一支箭。
+///
+/// **与火球的分工**：火球锁格 + 半径 AoE（可以打空、可以蹭到多个），
+/// 箭矢是**单体**、伤害略低、出手更快（帧 4 vs 7）——「狙击」就是"打一个准的"。
+/// 因此它**不接鼠标的目标格**：单体射击的语义是"瞄准那个人"，而不是"瞄准那一格"。
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShootCommand;

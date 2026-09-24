@@ -15,6 +15,7 @@ use crate::combat::defense::PARRY_COST;
 use crate::config::ActionConfig;
 
 use super::actions::{ARROW_TIMING, MELEE_TIMING};
+use super::arrow::ARROW_DAMAGE;
 use super::fireball::{FIREBALL_COST, FIREBALL_TIMING};
 use super::melee::MELEE_DAMAGE;
 
@@ -32,7 +33,11 @@ pub const MELEE_ABILITY: AbilityDef = AbilityDef {
     power: MELEE_DAMAGE,
 };
 
-/// 箭矢：朝一个方向射出去。
+/// 箭矢：单体狙击，朝一个方向射出去。
+///
+/// ⚠️ `power` 必须等于**载荷真正的伤害**（`ARROW_DAMAGE`，见 `arrow.rs`）：
+/// 这条曾经写成 `MELEE_DAMAGE`（15），而箭矢实际打 10——菜单接上箭矢之后，
+/// `menu_matches_the_catalogue` 立刻把这个分叉抓了出来。
 pub const SHOOT_ABILITY: AbilityDef = AbilityDef {
     id: AbilityId::Shoot,
     category: AbilityCategory::Attack,
@@ -43,7 +48,7 @@ pub const SHOOT_ABILITY: AbilityDef = AbilityDef {
     requirements: &[],
     combat: CombatTags::STRIKE,
     counter: None,
-    power: MELEE_DAMAGE,
+    power: ARROW_DAMAGE,
 };
 
 /// 火球：锁格 AoE，前摇最长、最贵。

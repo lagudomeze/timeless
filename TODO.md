@@ -7,7 +7,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 308 通过（305 单元 + 3 资产验收）/ 0 跳过
+cargo test                                  # 311 通过（308 单元 + 3 资产验收）/ 0 跳过
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
@@ -167,7 +167,8 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       ⑤ `timeline::FirstReady::first_ready` 成为**声明的唯一入口**（迭代器上的方法，
       槽的位置由 `HasDecisionSlot` 回答——约定放在查询元组末位，实测零 GAT/推断摩擦）：
       「槽必须是 `Empty`」这条判据与「被拒时报 `ActionBlocked::BUSY`」原来在 9 个声明系统里
-      各写一遍（其中 8 个是活路径、1 个是未注册的 `declare_skill_system`），现在收成一处。
+      各写一遍（其中 8 个是活路径、1 个是当时未注册的 `declare_skill_system`；
+      后者现已由 `declare_shoot_system` 取代并删除），现在收成一处。
       验收：181 测试全绿（179 单元 + 2 资产）/ clippy 零警告 / `cargo fmt --check` 通过 /
       `cargo run` 无 panic。
 - [x] **M20 时间线整理：声明的另一半 + 按概念分文件**（提交 57df65e / 本次）：
@@ -477,7 +478,9 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 - [x] **死代码清理**：删除 `defense/actions.rs` 里重复且未注册的
       `expire_defense_markers_system`、`lifecycle::manage_projectile_hits_system`、
       写而无消费的 `AttackResolved`。剩下的 `declare_skill_system` / `arrow_scene`
-      是「单体狙击」的预留实现（收尾已与火球对齐），接输入即可用。
+      当时是「单体狙击」的预留实现（收尾已与火球对齐）——**现已接上输入**，
+      见本页的「箭矢接回输入（弓：单体狙击）」（那个从未注册的
+      `declare_skill_system` 已被真正的 `declare_shoot_system` 取代并删除）。
 - [x] **`Space` 手动暂停只前进一帧**：改成暂停原因集合 + **每帧断言**，手动暂停一直有效
       直到再按一次；"按一下是暂停还是恢复"的闩住在
       `input::keyboard::pause_input_system`（读 `PauseReasons`）。
@@ -541,9 +544,32 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 
 ### 玩法与表现
 
-- [ ] **箭矢接回输入**：`ShootAction` / `arrow_scene` 已实现且被测试覆盖，
-      但 `declare_skill_system` 未注册（避免与火球抢同一条 `FireCommand`），
-      计划作为「单体狙击」技能接回。
+- [x] **箭矢接回输入（弓：单体狙击）**（本次）：`ShootAction` / `arrow_scene` 早就
+      实现且被测试覆盖，但**整条提交路径是死的**——`declare_skill_system` 从未注册进
+      插件，`shoot_action_executor_system` 也没注册，`menu.rs` 里 `SkillKind::Shoot`
+      那一分支只写了句注释。现在补齐：`ShootCommand`（新消息）→
+      `declare_shoot_system`（与火球同形：`can_cast` 校验、配置读节奏、武器偏移）→
+      `shoot_action_executor_system`（已注册）→ 箭矢命中。
+      **箭矢进技能栏第 5 格**（`1`~`5` 直接放），与火球的分工是数据说的：
+      火球锁格 + 半径 AoE、箭矢**单体**、伤害 10（火球 12）、帧 4（火球 7，更快出手）。
+      `declare_skill_system`（那个"从未注册的参考实现"）**删掉**——它是死代码，
+      它的两个触发源现在各有真正的归宿。
+      **顺带修掉两个真 bug**（都是接上输入之后才暴露的）：
+      ① `SHOOT_ABILITY.power` 写着 `MELEE_DAMAGE`(15)，而箭矢实际打 10——
+      `menu_matches_the_catalogue` 立刻抓到了这个分叉；
+      ② **射弹碰撞用三维距离**：单位站在地表上、`y` 随地形起伏，而箭从射手脚底平飞，
+      一格之高差就够让箭"擦着头皮飞过去"（实机：完全打不中）。改成**地面平面距离**
+      （与 AoE 的判据同源：决策按格、结算按地面距离）。
+      ③ 技能栏**手写了 4 个 `skill_slot`**，目录加到 5 条时静默少一格
+      （按得出来、栏里看不见）。改成 `Children::spawn(SpawnWith(..))` 按目录长度迭代建，
+      并把那条空跑的测试（只断言 `SKILLS.len() == 4`）换成**数真实 `SkillSlot` 实体**。
+      验收：308 测试全绿 / clippy 零警告 / fmt 通过；
+      `the_bow_slot_declares_a_shot_that_actually_hits`（看**实际掉血**）、
+      `an_arrow_hits_only_the_enemy_it_was_aimed_at`（两个敌人都在火球半径内，
+      只有一个掉血）、`the_bar_builds_one_slot_per_ability`；
+      后两条**验过不是空跑**（把碰撞改回三维距离 / 把槽位 `take(4)` 后都转红）。
+      **实机**：BRP 读技能栏 5 格、按 `5` 后敌人血量 50 → 15（两箭），
+      截图确认第 5 格图标在栏里。
 - [x] **可行走性判定**（本次）：移动此前**完全没有**可行走性检查——点哪走哪、
       一路直线穿过任何东西。现在声明时先问"那一步迈得上去吗"，
       迈不上去就写 `MoveRefused::BlockedByTerrain`（HUD 提示条显示 `BLOCKED`）。

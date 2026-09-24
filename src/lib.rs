@@ -187,7 +187,9 @@ mod tests {
     use std::time::Duration;
 
     use crate::clock::{AWAITING, PauseReasons, THREAT};
-    use crate::combat::attack::{FIREBALL_TIMING, FireballAction, fireball_action_scene};
+    use crate::combat::attack::{
+        ARROW_DAMAGE, ARROW_TIMING, FIREBALL_TIMING, FireballAction, fireball_action_scene,
+    };
     use crate::combat::defense::{Dodging, Parrying, ROLL_COST, RollCommand, Stamina};
     use crate::combat::{
         Armor, Collidable, DamageEvent, Faction, Fireball, HitOnce, HitRadius, InterruptEvent,
@@ -1797,6 +1799,77 @@ mod tests {
         assert_eq!(
             taken, 12,
             "装备给的 3 点护甲必须从 15 里减掉（公式没读加成的话会掉满 15）"
+        );
+    }
+
+    /// **弓（单体狙击）接回输入**：`5` 选中并释放 → 声明 → 到点放箭 → 命中扣血。
+    ///
+    /// 这条取代了旧的"`shoot_action_executor_system` 被覆盖但**没有任何输入能触发**"
+    /// 状态（`declare_skill_system` 从未注册，箭矢整条路径是死的）。
+    /// 判据看**实际掉血**，不看有没有实体活着——否则"箭射出去了但没打中"也会通过。
+    #[test]
+    fn the_bow_slot_declares_a_shot_that_actually_hits() {
+        use crate::combat::attack::ShootAction;
+
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
+
+        // 第 5 格 = 箭矢（`SKILLS` 顺序：攻击 / 近战 / 火球 / 翻滚 / 箭矢）
+        press(&mut app, KeyCode::Digit5);
+        app.update();
+        assert_eq!(
+            actions::<ShootAction>(&mut app),
+            1,
+            "`5` 应当声明一条射击行动（此前这一格派发什么都不做）"
+        );
+        assert_eq!(
+            slot_of(&app, player),
+            DecisionSlot::Executing {
+                until: ARROW_TIMING.total()
+            },
+            "声明之后槽进时间轴（节奏取箭矢的 `ARROW_TIMING`）"
+        );
+
+        // 前摇 0.30s + 箭飞 6 米（12 m/s = 0.5s）≈ 1s；跑 2s 绰绰有余
+        for _ in 0..20 {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world().get::<Health>(enemy).unwrap().current,
+            50 - ARROW_DAMAGE,
+            "箭应当命中最近的那个敌人并扣掉 {ARROW_DAMAGE} 点血"
+        );
+        assert_eq!(
+            actions::<ShootAction>(&mut app),
+            0,
+            "行动实体在到点那一刻就销毁了"
+        );
+    }
+
+    /// **箭矢是单体**：只有被瞄准的那一个敌人掉血，旁边的邻居毫发无伤。
+    ///
+    /// 这条把弓与火球的分工钉住（火球是锁格 + 半径 AoE，可以蹭到多个）。
+    /// 两个敌人都在火球半径（3.0）之内，所以"只有一个掉血"只能由单体命中解释。
+    #[test]
+    fn an_arrow_hits_only_the_enemy_it_was_aimed_at() {
+        let mut app = test_app();
+        spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        let near = spawn_enemy(&mut app, Cell::new(2, 0), Vec3::new(5.0, 0.0, 1.0));
+        let beside = spawn_enemy(&mut app, Cell::new(2, 0), Vec3::new(5.0, 0.0, 2.0));
+
+        press(&mut app, KeyCode::Digit5);
+        for _ in 0..20 {
+            app.update();
+        }
+
+        let near_hp = app.world().get::<Health>(near).unwrap().current;
+        let beside_hp = app.world().get::<Health>(beside).unwrap().current;
+        assert_eq!(near_hp, 50 - ARROW_DAMAGE, "被瞄准的敌人应当掉血");
+        assert_eq!(
+            beside_hp, 50,
+            "箭矢是单体：旁边的敌人不该被蹭到（这一发是火球的话会一起掉血）"
         );
     }
 }

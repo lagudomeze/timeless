@@ -6,10 +6,11 @@ use super::AttackSet;
 
 use super::{
     CycleSkill, FireCommand, MeleeCommand, MenuSelection, ProjectileArrived, SelectSkill,
-    UseSelectedSkill, cycle_skill_system, declare_fireball_system, declare_melee_system,
-    explosion_system, fireball_action_executor_system, melee_action_executor_system,
-    projectile_arrival_system, refund_fireball_observer, refund_melee_observer,
-    register_combat_abilities_system, select_skill_system, use_selected_skill_system,
+    ShootCommand, UseSelectedSkill, cycle_skill_system, declare_fireball_system,
+    declare_melee_system, declare_shoot_system, explosion_system, fireball_action_executor_system,
+    melee_action_executor_system, projectile_arrival_system, refund_fireball_observer,
+    refund_melee_observer, register_combat_abilities_system, select_skill_system,
+    shoot_action_executor_system, use_selected_skill_system,
 };
 
 /// 攻击行动（火球 / 横扫 / 箭矢 + 爆炸）与技能菜单。
@@ -27,6 +28,7 @@ impl Plugin for AttackPlugin {
             // 输入类消息：由消费它们的领域注册（写：input；消费：本域）
             .add_message::<FireCommand>()
             .add_message::<MeleeCommand>()
+            .add_message::<ShootCommand>()
             .add_message::<SelectSkill>()
             .add_message::<CycleSkill>()
             .add_message::<UseSelectedSkill>()
@@ -39,11 +41,16 @@ impl Plugin for AttackPlugin {
                     // 菜单先更新选择，再按选择派发成各领域的指令
                     (select_skill_system, cycle_skill_system),
                     use_selected_skill_system,
-                    (declare_fireball_system, declare_melee_system),
+                    (
+                        declare_fireball_system,
+                        declare_melee_system,
+                        declare_shoot_system,
+                    ),
                     // 执行器到点落地（各自判断 execute_at 并自己收尾）
                     (
                         melee_action_executor_system,
                         fireball_action_executor_system,
+                        shoot_action_executor_system,
                     ),
                     // 投射物飞行：到格就炸（本帧到达本帧结算）
                     (projectile_arrival_system, explosion_system),
