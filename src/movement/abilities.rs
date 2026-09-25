@@ -91,7 +91,9 @@ pub const ROLL_ABILITY: AbilityDef = AbilityDef {
 ///
 /// **它是"用时间换距离"**：前摇比走一格重（0.25 vs 0.15），但一次跨两格——
 /// 追人 / 脱离时用；贴身缠斗时不如走一格灵便。
-/// 标签是 [`CombatTags::COMMITTED`]：蹬出去就收不回来（与跳跃 / 翻滚同一族）。
+/// 标签是 [`CombatTags::COMMITTED`]：蹬地之后**不再受打断**（与跳跃 / 翻滚同一族）。
+/// ⚠️ 它**仍然可以被撤销**（没有 `Uncancellable`）——"不能被打断"与"不能被撤销"
+/// 是**两个独立的轴**，见 `src/movement/actions.rs` 里 `dash_action_scene` 的注释。
 pub const DASH_ABILITY: AbilityDef = AbilityDef {
     id: AbilityId::Dash,
     category: AbilityCategory::Movement,
