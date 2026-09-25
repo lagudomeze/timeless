@@ -41,12 +41,15 @@ impl Health {
 ///
 /// 销毁不由它驱动：`despawn_dead_system` 直接看 `Health.current <= 0`，
 /// 因此"谁把血扣成负的"都能被清理，不会漏。
-#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct DeathEvent {
     /// 阵亡的实体
     pub entity: Entity,
     /// 击杀者（伤害来源；环境伤害可以是 `None`）
     pub killer: Option<Entity>,
+    /// **虚拟时刻**（秒）：致命一击落下的时刻（从那条 [`DamageEvent`] 继承，
+    /// 因此死亡与命中在日志里带同一个时刻戳）。
+    pub at: f32,
 }
 
 /// 一次**已经算完减免**的伤害（纯减法，可交换）。
@@ -57,7 +60,7 @@ pub struct DeathEvent {
 /// 战斗日志（[`crate::presentation::BattleLog`]）。
 ///
 /// `source` 只为复盘 / 击杀归属存在（死亡消息要写清"谁杀的"），结算本身不看它。
-#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct DamageEvent {
     /// 伤害来源（攻击实体 / 施法者；环境伤害可以是 `None`）
     pub source: Option<Entity>,
@@ -65,6 +68,14 @@ pub struct DamageEvent {
     pub target: Entity,
     /// 扣多少血
     pub amount: i32,
+    /// **虚拟时刻**（秒）：这一击是什么时候落下的。
+    ///
+    /// 由**写方**在构造时从 `Time<Virtual>` 取（写方本来就是"结算那一刻"的系统，
+    /// 手里就有当前虚拟时间），因此 `apply_damage_system` 不必自己去读时钟——
+    /// 唯一的扣血点保持"纯减法"的形状。
+    /// 复盘要的正是"**哪个时刻**命中了谁"，所以这个数必须跟着消息走，
+    /// 而不是在日志那一侧事后补（那里读到的会是"记录日志的那一刻"，差一帧）。
+    pub at: f32,
 }
 
 /// **唯一的扣血点**：把 [`DamageEvent`] 落到 `Health` 上，并在首次归零时发
@@ -92,6 +103,8 @@ pub fn apply_damage_system(
             deaths.write(DeathEvent {
                 entity: damage.target,
                 killer: damage.source,
+                // 死亡与命中带同一个时刻戳（复盘里这两行必须对得上）
+                at: damage.at,
             });
         }
     }
@@ -135,6 +148,7 @@ mod tests {
             source: None,
             target: victim,
             amount: 12,
+            at: 0.0,
         });
         app.update();
         app.update();
@@ -142,6 +156,39 @@ mod tests {
         assert!(
             app.world().get_entity(victim).is_err(),
             "生命归零的实体应当在帧末销毁"
+        );
+    }
+
+    /// **死亡继承致命一击的时刻**：日志里"命中"与"阵亡"两行必须带同一个戳，
+    /// 否则复盘时对不上（谁在这一刻倒下、那一刻是什么时候）。
+    #[test]
+    fn a_death_carries_the_moment_of_the_lethal_blow() {
+        #[derive(Resource, Default)]
+        struct Moments(Vec<f32>);
+        fn collect(mut deaths: MessageReader<DeathEvent>, mut out: ResMut<Moments>) {
+            out.0.extend(deaths.read().map(|death| death.at));
+        }
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Moments>()
+            .add_message::<DamageEvent>()
+            .add_message::<DeathEvent>()
+            .add_systems(Update, (apply_damage_system, collect).chain());
+        let victim = app.world_mut().spawn(Health::new(5)).id();
+
+        app.world_mut().write_message(DamageEvent {
+            source: None,
+            target: victim,
+            amount: 12,
+            at: 4.75,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<Moments>().0,
+            vec![4.75],
+            "死亡消息要带上致命一击那一刻的虚拟时刻"
         );
     }
 
@@ -167,6 +214,7 @@ mod tests {
                 source: None,
                 target: victim,
                 amount: 12,
+                at: 0.0,
             });
             app.update();
         }

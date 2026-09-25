@@ -45,8 +45,10 @@ impl BattleLog {
 /// ——"敌人打了你"比"某个实体打了你"更像玩家想看的那句话。
 /// 环境伤害（`source: None`）不带主，照旧只写受击方。
 ///
-/// ⚠️ **时间戳还没有**：复盘要的"**哪个时刻**命中了谁"需要虚拟时间进入
-/// `DamageEvent`，而它现在不带时间。本轮只做到"谁打谁"。
+/// **时刻戳来自消息本身**（`DamageEvent.at`，由写方在结算那一帧记下）：
+/// 复盘要的正是"**哪个时刻**命中了谁"。日志不自己读时钟——那样写出来的是
+/// "记录日志的那一刻"，差一帧，而且与死亡那一行对不上
+/// （死亡继承致命一击的时刻，两行因此带同一个戳）。
 pub fn battle_log_system(
     mut damages: MessageReader<DamageEvent>,
     mut deaths: MessageReader<DeathEvent>,
@@ -69,8 +71,10 @@ pub fn battle_log_system(
             Some(attacker) => format!("{attacker} 命中 {who}，造成 {} 点伤害", damage.amount),
             None => format!("{who} 受到 {} 点伤害", damage.amount),
         };
-        log.push(&text);
-        info!("[{text}]");
+        // 前缀 = 命中那一刻的虚拟时刻（复盘要的"什么时候"）
+        let stamped = format!("[{:.1}s] {text}", damage.at);
+        log.push(stamped.clone());
+        info!("[{stamped}]");
     }
     for death in deaths.read() {
         let who = side(death.entity).unwrap_or("单位");
@@ -78,8 +82,9 @@ pub fn battle_log_system(
             Some(killer) => format!("{who} 被{killer}击杀"),
             None => format!("{who} 阵亡"),
         };
-        log.push(&text);
-        info!("[{text}]");
+        let stamped = format!("[{:.1}s] {text}", death.at);
+        log.push(stamped.clone());
+        info!("[{stamped}]");
     }
 }
 
@@ -133,13 +138,34 @@ mod tests {
             source: Some(attack),
             target: player,
             amount: 12,
+            at: 3.5,
         });
         app.update();
 
         assert_eq!(
             last(&app),
-            "敌人 命中 玩家，造成 12 点伤害",
-            "语序 = 出手方 → 受击方 → 数值，且标签之间要有分隔"
+            "[3.5s] 敌人 命中 玩家，造成 12 点伤害",
+            "前缀是命中时刻，语序 = 出手方 → 受击方 → 数值"
+        );
+    }
+
+    /// **哪个时刻命中了谁**：日志行的前缀取自消息自带的虚拟时刻，
+    /// 而不是"记录日志的那一刻"含糊过去。
+    #[test]
+    fn a_line_is_stamped_with_the_moment_it_happened() {
+        let (mut app, player, attack) = log_app();
+        app.world_mut().write_message(DamageEvent {
+            source: Some(attack),
+            target: player,
+            amount: 7,
+            at: 12.3,
+        });
+        app.update();
+
+        assert!(
+            last(&app).starts_with("[12.3s]"),
+            "命中行要带那一刻的虚拟时刻，实际：{}",
+            last(&app)
         );
     }
 
@@ -153,6 +179,7 @@ mod tests {
             source: Some(attack),
             target: player,
             amount: 1,
+            at: 0.0,
         });
         app.update();
 
@@ -173,6 +200,7 @@ mod tests {
             source: None,
             target: player,
             amount: 3,
+            at: 0.0,
         });
         app.update();
 
@@ -191,12 +219,12 @@ mod tests {
         app.world_mut().write_message(DeathEvent {
             entity: player,
             killer: Some(attack),
+            at: 8.0,
         });
         app.update();
 
         let text = last(&app);
-        assert!(text.contains("玩家"), "{text}");
-        assert!(text.contains("敌人"), "要点出是谁击杀的：{text}");
+        assert_eq!(text, "[8.0s] 玩家 被敌人击杀", "死亡行也要带致命一击的时刻");
     }
 
     /// 没有击杀者（环境致死）时退回"阵亡"，不写"被未知击杀"。
@@ -206,6 +234,7 @@ mod tests {
         app.world_mut().write_message(DeathEvent {
             entity: player,
             killer: None,
+            at: 0.0,
         });
         app.update();
         assert!(last(&app).contains("阵亡"));

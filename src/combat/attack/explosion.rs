@@ -41,10 +41,13 @@ pub fn radial_damage_units(
 /// 范围内**没有单位就是打空了**（不产生任何事件，也不留残留实体）。
 pub fn explosion_system(
     mut commands: Commands,
+    time: Res<Time<Virtual>>,
     mut arrived: MessageReader<ProjectileArrived>,
     bodies: Query<(Entity, &Transform, &Faction), With<Health>>,
     mut damage_events: MessageWriter<DamageEvent>,
 ) {
+    // 爆炸结算的这一帧就是命中时刻（火球落地 → 立刻结算）
+    let now = time.elapsed_secs();
     for blast in arrived.read() {
         let candidates = bodies
             .iter()
@@ -58,6 +61,7 @@ pub fn explosion_system(
                 source: Some(blast.projectile),
                 target: *target,
                 amount: blast.damage,
+                at: now,
             });
         }
         if hits.is_empty() {
