@@ -80,8 +80,11 @@ pub const FIREBALL_DAMAGE: i32 = 12;
 pub const FIREBALL_RADIUS: f32 = 3.0;
 /// 火球的节奏：出手慢、后摇长、威力大。
 pub const FIREBALL_TIMING: ActionTiming = ActionTiming::new(0.30, 0.50, 2);
-/// 火球消耗的精力（比翻滚贵，构成资源取舍）。
-pub const FIREBALL_COST: u32 = 2;
+/// 火球花多少**弹药**（**重击**：比箭矢贵一倍，构成"这一局开几炮"的取舍）。
+///
+/// ⚠️ 它曾经是"精力 2"——资源分线（`TODO.md`）把它挪到了**弹药**线上：
+/// 伤害手段靠攒（弹药慢回），防御手段靠节奏（精力快回）。
+pub const FIREBALL_AMMO_COST: u32 = 2;
 /// 火球的速度帧（**信息层读数**："谁先动"；越小越快）。
 pub const FIREBALL_FRAME: u32 = 7;
 /// 火球的打断力度：出手重，但正在前摇时最怕被打断（见 [`FIREBALL_TIMING`]）。
@@ -118,16 +121,16 @@ pub fn fireball_action_scene(
 pub fn refund_fireball_observer(
     cancelled: On<crate::timeline::ActionCancelled>,
     actions: Query<(), With<FireballAction>>,
-    mut units: Query<&mut crate::combat::defense::Stamina>,
+    mut units: Query<&mut super::ammo::Ammo>,
 ) {
     if actions.get(cancelled.entity).is_err() {
         return; // 被撤的不是火球
     }
-    let Ok(mut stamina) = units.get_mut(cancelled.actor) else {
+    let Ok(mut ammo) = units.get_mut(cancelled.actor) else {
         return; // 行动者可能已经阵亡
     };
-    stamina.regen(FIREBALL_COST);
-    stamina.try_spend(FIREBALL_COST);
+    ammo.regen(FIREBALL_AMMO_COST);
+    ammo.try_spend(FIREBALL_AMMO_COST);
 }
 
 /// 火球实体工厂：朝目标格飞行的投射物（到达后由到达系统广播）。
@@ -196,7 +199,7 @@ type FireballPlayer<'w, 's> = Query<
     (
         Entity,
         &'static Cell,
-        &'static mut crate::combat::defense::Stamina,
+        &'static mut super::ammo::Ammo,
         &'static Transform,
         &'static Faction,
         &'static mut Focus,
@@ -222,13 +225,14 @@ pub fn declare_fireball_system(
     let Some(request) = fires.read().last().copied() else {
         return;
     };
-    let Some((player, cell, mut stamina, transform, faction, mut focus, _)) =
+    let Some((player, cell, mut ammo, transform, faction, mut focus, _)) =
         players.iter_mut().first_ready(&mut blocked)
     else {
         return; // 忙或没有玩家
     };
     // 条件校验的唯一入口（类别共享条件 + 技能自己的 requirements）
-    if let Err(reason) = can_cast(&FIREBALL_ABILITY, stamina.current) {
+    let pools = crate::skills::Pools::new(0, ammo.current);
+    if let Err(reason) = can_cast(&FIREBALL_ABILITY, pools) {
         blocked.write(crate::timeline::ActionBlocked { reason });
         info!("火球失败：{reason:?}");
         return;
@@ -250,7 +254,7 @@ pub fn declare_fireball_system(
             .unwrap_or(*cell)
     });
 
-    stamina.try_spend(FIREBALL_COST);
+    ammo.try_spend(FIREBALL_AMMO_COST);
     // 武器节奏：只有攻击动作吃它（移动 / 翻滚与手上的东西无关）
     let timing = crate::equipment::weapon_timing(
         fireball_timing(config.as_deref()),
@@ -526,7 +530,7 @@ mod tests {
         app.world_mut()
             .get_mut::<Stamina>(actor)
             .unwrap()
-            .try_spend(FIREBALL_COST);
+            .try_spend(FIREBALL_AMMO_COST);
         let fireball = app.world_mut().spawn(FireballAction::default()).id();
 
         app.world_mut().trigger(ActionCancelled {

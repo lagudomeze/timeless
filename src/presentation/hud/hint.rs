@@ -106,6 +106,7 @@ pub fn update_action_hint_system(
     let blocked_message = blocked.read().last().map(|last| match last.reason {
         BlockReason::Busy => "CAN'T ACT YET · still busy".to_string(),
         BlockReason::NotEnoughEnergy => "NOT ENOUGH ENERGY".to_string(),
+        BlockReason::NotEnoughAmmo => "NOT ENOUGH AMMO".to_string(),
     });
     if let Some(message) = equipment_message.or(refused_message).or(blocked_message) {
         timer.0 = HINT_SECS;

@@ -4,7 +4,9 @@ use bevy::prelude::*;
 
 use crate::combat::defense::BlockChance;
 use crate::combat::health::Health;
-use crate::combat::{Armor, AttackRange, Collidable, Faction, HitRadius, Stamina};
+use crate::combat::{
+    Ammo, AmmoRecoverTimer, Armor, AttackRange, Collidable, Faction, HitRadius, Stamina,
+};
 use crate::movement::{Cell, Velocity};
 use crate::presentation::unit_sprite::{
     SHADOW_DIAMETER, SHADOW_OFFSET, SPRITE_SIZE, UnitShadow, UnitSprite, UnitSprites,
@@ -48,6 +50,8 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
     let armor = armor_for(faction);
     let cell = Cell::from_world(position);
     let stamina = Stamina::default();
+    // 弹药（远程 / 重击那条线）：与精力并行的一条资源，恢复更慢
+    let ammo = Ammo::default();
     let sprite = sprites.sprite(faction);
     let shadow = sprites.shadow();
     bsn! {
@@ -70,6 +74,8 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
         template_value(Focus::default())
         template_value(FocusRecoverTimer::default())
         template_value(stamina)
+        template_value(ammo)
+        template_value(AmmoRecoverTimer::default())
         template_value(cell)
         Transform {
             translation: {position},

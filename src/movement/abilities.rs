@@ -22,24 +22,24 @@ pub fn abilities_from(config: &ActionConfig) -> [AbilityDef; 4] {
     [
         AbilityDef {
             timing: config.move_.timing(),
-            cost: config.move_.cost,
+            cost: crate::skills::ResourceCost::Energy(config.move_.cost),
             power: config.move_.power,
             ..MOVE_ABILITY
         },
         AbilityDef {
             timing: config.jump.timing(),
-            cost: config.jump.cost,
+            cost: crate::skills::ResourceCost::Energy(config.jump.cost),
             power: config.jump.power,
             ..JUMP_ABILITY
         },
         AbilityDef {
             timing: config.roll.timing(),
-            cost: config.roll.cost,
+            cost: crate::skills::ResourceCost::Energy(config.roll.cost),
             ..ROLL_ABILITY
         },
         AbilityDef {
             timing: config.dash.timing(),
-            cost: config.dash.cost,
+            cost: crate::skills::ResourceCost::Energy(config.dash.cost),
             ..DASH_ABILITY
         },
     ]
@@ -51,8 +51,9 @@ pub const MOVE_ABILITY: AbilityDef = AbilityDef {
     category: AbilityCategory::Movement,
     timing: MOVE_TIMING,
     targeting: TargetSelector::TargetCell,
-    cost: 0,
-    // 免费：不需要精力
+    // 走一格免费：**但它仍然要求有精力**（见 `AbilityCategory::shared_requirement`）
+    // ——"条件"与"花费"是两件事
+    cost: crate::skills::ResourceCost::Energy(0),
     requirements: &[],
     combat: CombatTags::STRIKE,
     counter: None,
@@ -65,8 +66,7 @@ pub const JUMP_ABILITY: AbilityDef = AbilityDef {
     category: AbilityCategory::Movement,
     timing: JUMP_TIMING,
     targeting: TargetSelector::SelfOnly,
-    cost: 0,
-    // 免费：不需要精力
+    cost: crate::skills::ResourceCost::Energy(0),
     requirements: &[],
     combat: CombatTags::COMMITTED,
     counter: None,
@@ -79,7 +79,7 @@ pub const ROLL_ABILITY: AbilityDef = AbilityDef {
     category: AbilityCategory::Movement,
     timing: ROLL_TIMING,
     targeting: TargetSelector::SelfOnly,
-    cost: crate::combat::defense::ROLL_COST,
+    cost: crate::skills::ResourceCost::Energy(crate::combat::defense::ROLL_COST),
     // Movement 类的共享条件已是 EnoughEnergy（见 `AbilityCategory::shared_requirement`）
     requirements: &[],
     combat: CombatTags::COMMITTED,
@@ -97,7 +97,7 @@ pub const DASH_ABILITY: AbilityDef = AbilityDef {
     category: AbilityCategory::Movement,
     timing: DASH_TIMING,
     targeting: TargetSelector::Direction,
-    cost: DASH_COST,
+    cost: crate::skills::ResourceCost::Energy(DASH_COST),
     // Movement 类的共享条件已是 EnoughEnergy（见 `AbilityCategory::shared_requirement`）
     requirements: &[],
     combat: CombatTags::COMMITTED,

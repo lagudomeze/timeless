@@ -6,8 +6,8 @@
 
 use crate::combat::attack::FIREBALL_DAMAGE;
 use crate::combat::attack::actions::{ARROW_TIMING, MELEE_TIMING};
-use crate::combat::attack::arrow::{ARROW_DAMAGE, ARROW_FRAME};
-use crate::combat::attack::fireball::{FIREBALL_COST, FIREBALL_FRAME, FIREBALL_TIMING};
+use crate::combat::attack::arrow::{ARROW_COST, ARROW_DAMAGE, ARROW_FRAME};
+use crate::combat::attack::fireball::{FIREBALL_AMMO_COST, FIREBALL_FRAME, FIREBALL_TIMING};
 use crate::combat::attack::melee::{MELEE_DAMAGE, MELEE_FRAME};
 use crate::combat::defense::{PARRY_COST, ROLL_COST};
 use crate::movement::ROLL_TIMING;
@@ -58,8 +58,8 @@ impl SkillKind {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkillDef {
     pub kind: SkillKind,
-    /// 精力消耗
-    pub cost: u32,
+    /// **花什么、花多少**（`Free` = 平 A）
+    pub cost: crate::skills::ResourceCost,
     /// 动作节奏（前摇 / 后摇），HUD 展示用
     pub timing: ActionTiming,
     /// 大致威力（展示用；实际伤害在各自的载荷里）
@@ -99,8 +99,8 @@ impl SkillDef {
     /// **走 [`crate::skills::can_cast`]**：菜单的过滤与声明系统的校验必须是
     /// **同一条判据**，否则会出现"菜单里亮着、按下去被拒"这种两处各写一遍的经典漂移。
     /// 没有目录项的（「攻击」）用一个同形定义去问，效果一样而判据仍然只有一份。
-    pub fn affordable(&self, stamina: u32) -> bool {
-        crate::skills::can_cast(&self.as_ability(), stamina).is_ok()
+    pub fn affordable(&self, pools: crate::skills::Pools) -> bool {
+        crate::skills::can_cast(&self.as_ability(), pools).is_ok()
     }
 
     /// 把菜单项看成一条技能定义（供条件校验用）。
@@ -121,10 +121,12 @@ impl SkillDef {
             targeting: crate::skills::TargetSelector::SelfOnly,
             cost: self.cost,
             counter: None, // 菜单项本身不当反制；反制建议直接读目录里的定义
-            requirements: if self.cost == 0 {
-                &[]
-            } else {
-                &[crate::skills::Requirement::EnoughEnergy]
+            requirements: match self.cost {
+                crate::skills::ResourceCost::Free => &[],
+                crate::skills::ResourceCost::Energy(_) => {
+                    &[crate::skills::Requirement::EnoughEnergy]
+                }
+                crate::skills::ResourceCost::Ammo(_) => &[crate::skills::Requirement::EnoughAmmo],
             },
             combat: crate::skills::CombatTags::STRIKE,
             power: self.power,
@@ -136,28 +138,29 @@ impl SkillDef {
 pub const SKILLS: [SkillDef; 5] = [
     SkillDef {
         kind: SkillKind::Attack,
-        cost: FIREBALL_COST,
+        cost: crate::skills::ResourceCost::Ammo(FIREBALL_AMMO_COST),
         timing: FIREBALL_TIMING,
         power: FIREBALL_DAMAGE,
         frame: FIREBALL_FRAME,
     },
     SkillDef {
         kind: SkillKind::Melee,
-        cost: 0,
+        // **平 A 免费**
+        cost: crate::skills::ResourceCost::Free,
         timing: MELEE_TIMING,
         power: MELEE_DAMAGE,
         frame: MELEE_FRAME,
     },
     SkillDef {
         kind: SkillKind::Fireball,
-        cost: FIREBALL_COST,
+        cost: crate::skills::ResourceCost::Ammo(FIREBALL_AMMO_COST),
         timing: FIREBALL_TIMING,
         power: FIREBALL_DAMAGE,
         frame: FIREBALL_FRAME,
     },
     SkillDef {
         kind: SkillKind::Roll,
-        cost: ROLL_COST,
+        cost: crate::skills::ResourceCost::Energy(ROLL_COST),
         timing: ROLL_TIMING,
         power: 0,
         // 翻滚不产生攻击实体，因此没有速度帧可言
@@ -165,9 +168,8 @@ pub const SKILLS: [SkillDef; 5] = [
     },
     SkillDef {
         kind: SkillKind::Shoot,
-        // 箭矢免费（`config/actions.ron` 的 `shoot.cost` 可调）——它靠"单体 + 更快出手"
-        // 与火球分工，不靠资源取舍
-        cost: 0,
+        // 箭矢花**弹药**（远程线）：靠"单体 + 更快出手"与火球分工
+        cost: crate::skills::ResourceCost::Ammo(ARROW_COST),
         timing: ARROW_TIMING,
         power: ARROW_DAMAGE,
         frame: ARROW_FRAME,
@@ -194,11 +196,11 @@ pub fn index_of(kind: SkillKind) -> Option<usize> {
 /// 菜单用 [`crate::skills::can_cast`] 问同一个问题——两处各写一遍
 /// `cost <= stamina` 正是"菜单里亮着、按下去被拒"那种漂移的来源。
 /// `menu_matches_the_catalogue` 这条测试钉住两边的数值不许分叉。
-pub fn affordable_indices(stamina_current: u32) -> Vec<usize> {
+pub fn affordable_indices(pools: crate::skills::Pools) -> Vec<usize> {
     SKILLS
         .iter()
         .enumerate()
-        .filter(|(_, def)| def.affordable(stamina_current))
+        .filter(|(_, def)| def.affordable(pools))
         .map(|(index, _)| index)
         .collect()
 }
@@ -220,22 +222,37 @@ mod tests {
         assert_eq!(MELEE_POWER, 3, "打断力度要与载荷约定一致");
     }
 
+    /// **两条资源线各自过滤**：精力管机动，弹药管远程。
+    ///
+    /// 这条是资源分线的核心验收：0 精力时**近战仍然可用**（平 A 免费），
+    /// 而 0 弹药时火球 / 箭矢灭掉、翻滚照旧（它花的是精力）。
     #[test]
-    fn affordability_filters_by_cost() {
+    fn affordability_filters_by_resource_line() {
+        use crate::skills::Pools;
+
+        // 两条线都空：只剩免费的平 A
         assert_eq!(
-            affordable_indices(0),
-            vec![1, 4],
-            "0 精力时只有免费的两手：近战与箭矢"
+            affordable_indices(Pools::new(0, 0)),
+            vec![1],
+            "两条线都空时只有平 A"
         );
+        // 只给精力：翻滚亮起来，远程仍然灭着
         assert_eq!(
-            affordable_indices(1),
-            vec![1, 3, 4],
-            "1 点精力够翻滚（近战 / 箭矢免费，照旧可选）"
+            affordable_indices(Pools::new(1, 0)),
+            vec![1, 3],
+            "1 点精力够翻滚（花精力），但火球 / 箭矢要的是弹药"
         );
+        // 只给弹药：远程亮起来，翻滚仍然灭着
         assert_eq!(
-            affordable_indices(5),
+            affordable_indices(Pools::new(0, 2)),
+            vec![0, 1, 2, 4],
+            "2 点弹药够火球（重击 2）与箭矢（1），但翻滚要的是精力"
+        );
+        // 两条线都满：全开
+        assert_eq!(
+            affordable_indices(Pools::new(5, 5)),
             vec![0, 1, 2, 3, 4],
-            "满精力五个技能全开"
+            "两条线都够就五个技能全开"
         );
     }
 

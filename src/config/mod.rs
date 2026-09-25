@@ -60,7 +60,7 @@ pub struct ActionNumbers {
     pub recovery: f32,
     /// 打断抗性（越大越难被打断）
     pub interrupt_resist: i32,
-    /// 精力消耗
+    /// 资源消耗的**数量**（花哪条线由各域的技能定义 `ResourceCost` 决定）
     pub cost: u32,
     /// 大致威力（**展示 + 个体伤害**：命中数值仍归载荷的 `PhysicalDamage`）
     pub power: i32,
@@ -194,7 +194,7 @@ impl Default for ActionConfig {
             ),
             fireball: ActionNumbers::from_timing(
                 crate::combat::attack::FIREBALL_TIMING,
-                crate::combat::attack::FIREBALL_COST,
+                crate::combat::attack::FIREBALL_AMMO_COST,
                 crate::combat::attack::FIREBALL_DAMAGE,
                 crate::combat::attack::FIREBALL_FRAME,
             ),
@@ -298,7 +298,11 @@ mod tests {
             config.fireball.timing(),
             crate::combat::attack::FIREBALL_TIMING
         );
-        assert_eq!(config.fireball.cost, crate::combat::attack::FIREBALL_COST);
+        assert_eq!(
+            config.fireball.cost,
+            crate::combat::attack::FIREBALL_AMMO_COST,
+            "火球花的是**弹药**（资源分线）"
+        );
         assert_eq!(
             config.fireball.power,
             crate::combat::attack::FIREBALL_DAMAGE

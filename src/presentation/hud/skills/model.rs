@@ -87,7 +87,7 @@ pub fn affordability(stamina: Option<u32>) -> [bool; SKILLS.len()] {
     std::array::from_fn(|index| {
         SKILLS
             .get(index)
-            .is_some_and(|def| stamina.is_none_or(|stamina| def.cost <= stamina))
+            .is_some_and(|def| stamina.is_none_or(|stamina| def.cost.amount() <= stamina))
     })
 }
 
@@ -117,7 +117,15 @@ pub fn counter_hints(suggestions: Option<&[CounterSuggestion]>) -> [CounterHint;
 pub fn badge_text(index: usize) -> String {
     SKILLS
         .get(index)
-        .map(|def| def.cost.to_string())
+        .map(|def| {
+            // 角标显示**花费多少**；花什么由 tooltip 说（格子里放不下两种信息）
+            let cost = def.cost.amount();
+            if cost == 0 {
+                String::new()
+            } else {
+                cost.to_string()
+            }
+        })
         .unwrap_or_default()
 }
 
@@ -127,9 +135,10 @@ pub fn tooltip_text(index: usize) -> String {
         return String::new();
     };
     format!(
-        "{}   cost {} EN\nwindup {:.2}s   recovery {:.2}s\npower {:.0}",
+        "{}   cost {} {}\nwindup {:.2}s   recovery {:.2}s\npower {:.0}",
         def.label().to_uppercase(),
-        def.cost,
+        def.cost.amount(),
+        def.cost.label(),
         def.timing.windup,
         def.timing.recovery,
         def.power
@@ -284,7 +293,7 @@ mod tests {
         for (index, ok) in broke.iter().enumerate() {
             assert_eq!(
                 *ok,
-                SKILLS[index].cost == 0,
+                SKILLS[index].cost.amount() == 0,
                 "{} 的可用性应当只取决于它的消耗",
                 SKILLS[index].label()
             );
@@ -307,7 +316,10 @@ mod tests {
         let def = &SKILLS[0];
         let text = tooltip_text(0);
         assert!(text.contains(&def.label().to_uppercase()), "{text}");
-        assert!(text.contains(&format!("cost {} EN", def.cost)), "{text}");
+        assert!(
+            text.contains(&format!("cost {} {}", def.cost.amount(), def.cost.label())),
+            "{text}"
+        );
         assert!(
             text.contains(&format!("windup {:.2}s", def.timing.windup)),
             "{text}"

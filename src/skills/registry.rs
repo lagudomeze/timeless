@@ -44,9 +44,11 @@ impl SkillRegistry {
             .unwrap_or_else(|| panic!("技能目录里没有 {}：注册漏了", id.label()))
     }
 
-    /// 当前精力负担得起的技能。
-    pub fn affordable(&self, stamina: u32) -> impl Iterator<Item = &AbilityDef> {
-        self.0.iter().filter(move |def| def.cost <= stamina)
+    /// 当前资源负担得起的技能。
+    pub fn affordable(&self, pools: Pools) -> impl Iterator<Item = &AbilityDef> {
+        self.0
+            .iter()
+            .filter(move |def| can_cast(def, pools).is_ok())
     }
 
     /// 并进一条定义：同 id **覆盖并留在原位**（重复注册不改菜单顺序）。
@@ -68,24 +70,45 @@ pub fn apply_registrations_system(
     }
 }
 
+/// 出手时手里的资源事实（**纯数据**，由调用方从组件读出来）。
+///
+/// 为什么是"事实"而不是 `&World`：这一层因此零 Bevy、可脱离 App 单测
+/// （`docs/skills.md` 第三节那条取舍）。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Pools {
+    pub energy: u32,
+    pub ammo: u32,
+}
+
+impl Pools {
+    /// 两个池子各有多少（顺序与 [`Pools`] 的字段一致）。
+    pub fn new(energy: u32, ammo: u32) -> Self {
+        Self { energy, ammo }
+    }
+}
+
 /// 这一手此刻**能不能出手**——条件校验的唯一入口。
 ///
 /// 判据分两层，**类别共享条件先判**（[`AbilityCategory::shared_requirement`]），
 /// 再判技能自己的 `requirements`：这样每个技能不必把"沉默 / 眩晕 / 冷却"各写一遍。
 ///
-/// 入参是**事实**（精力多少）而不是 `&World`：这一层因此零 Bevy、可脱离 App 单测，
+/// 入参是**事实**（两个池子各多少）而不是 `&World`：这一层因此零 Bevy、可脱离 App 单测，
 /// 而"读哪些组件凑出这些事实"留在调用方（各声明系统）。
 ///
 /// 被拒的原因复用时间线的 [`BlockReason`](crate::timeline::BlockReason)：
 /// 失败要驱动的 UI（提示条）本来就是它，没必要再立一个平行枚举。
-pub fn can_cast(def: &AbilityDef, stamina: u32) -> Result<(), crate::timeline::BlockReason> {
+pub fn can_cast(def: &AbilityDef, pools: Pools) -> Result<(), crate::timeline::BlockReason> {
     let shared = def.category.shared_requirement().into_iter();
     for requirement in shared.chain(def.requirements.iter().copied()) {
-        match requirement {
-            Requirement::EnoughEnergy if stamina < def.cost => {
-                return Err(crate::timeline::BlockReason::NotEnoughEnergy);
-            }
-            Requirement::EnoughEnergy => {}
+        let affordable = match requirement {
+            Requirement::EnoughEnergy => pools.energy >= def.cost.amount(),
+            Requirement::EnoughAmmo => pools.ammo >= def.cost.amount(),
+        };
+        if !affordable {
+            return Err(match requirement {
+                Requirement::EnoughEnergy => crate::timeline::BlockReason::NotEnoughEnergy,
+                Requirement::EnoughAmmo => crate::timeline::BlockReason::NotEnoughAmmo,
+            });
         }
     }
     Ok(())
@@ -94,7 +117,7 @@ pub fn can_cast(def: &AbilityDef, stamina: u32) -> Result<(), crate::timeline::B
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skills::defs::{AbilityCategory, CombatTags, TargetSelector};
+    use crate::skills::defs::{AbilityCategory, CombatTags, ResourceCost, TargetSelector};
     use crate::timeline::ActionTiming;
     use crate::timeline::{ActionBlocked, BlockReason};
 
@@ -104,7 +127,8 @@ mod tests {
             category: AbilityCategory::Movement,
             timing: ActionTiming::new(0.1, 0.2, 1),
             targeting: TargetSelector::SelfOnly,
-            cost,
+            // 测试夹具：把数字当**精力**花费（这一层测的是 can_cast 的判据，不是分线）
+            cost: ResourceCost::Energy(cost),
             requirements: &[],
             combat: CombatTags::COMMITTED,
             counter: None,
@@ -156,7 +180,11 @@ mod tests {
         let registry = app.world().resource::<SkillRegistry>();
         let order: Vec<AbilityId> = registry.all().iter().map(|def| def.id).collect();
         assert_eq!(order, vec![AbilityId::Move, AbilityId::Jump]);
-        assert_eq!(registry.expect(AbilityId::Move).cost, 2, "覆盖应当生效");
+        assert_eq!(
+            registry.expect(AbilityId::Move).cost.amount(),
+            2,
+            "覆盖应当生效"
+        );
     }
 
     /// 负担得起只看花费。
@@ -167,9 +195,15 @@ mod tests {
         registry.register(def(AbilityId::Roll, 1));
         registry.register(def(AbilityId::Fireball, 2));
 
-        let free: Vec<AbilityId> = registry.affordable(0).map(|def| def.id).collect();
+        let free: Vec<AbilityId> = registry
+            .affordable(Pools::new(0, 0))
+            .map(|def| def.id)
+            .collect();
         assert_eq!(free, vec![AbilityId::Melee]);
-        let all: Vec<AbilityId> = registry.affordable(9).map(|def| def.id).collect();
+        let all: Vec<AbilityId> = registry
+            .affordable(Pools::new(9, 9))
+            .map(|def| def.id)
+            .collect();
         assert_eq!(all.len(), 3);
     }
 
@@ -178,9 +212,9 @@ mod tests {
     fn can_cast_checks_the_category_then_the_skill_itself() {
         // Movement 类：类别共享条件就是"有精力"
         let move_ability = def(AbilityId::Move, 2);
-        assert_eq!(can_cast(&move_ability, 2), Ok(()), "刚好够");
+        assert_eq!(can_cast(&move_ability, Pools::new(2, 0)), Ok(()), "刚好够");
         assert_eq!(
-            can_cast(&move_ability, 1),
+            can_cast(&move_ability, Pools::new(1, 0)),
             Err(BlockReason::NotEnoughEnergy),
             "差一点都不行"
         );
@@ -190,7 +224,7 @@ mod tests {
     #[test]
     fn a_free_ability_is_always_castable() {
         let free = def(AbilityId::Melee, 0);
-        assert_eq!(can_cast(&free, 0), Ok(()));
+        assert_eq!(can_cast(&free, Pools::new(0, 0)), Ok(()));
     }
 
     /// 被拒的原因**复用时间线的 `BlockReason`**：提示条本来就是按它驱动的，
@@ -198,7 +232,7 @@ mod tests {
     #[test]
     fn can_cast_rejects_with_the_same_reason_the_hud_reads() {
         let paid = def(AbilityId::Move, 3);
-        let reason = can_cast(&paid, 0).unwrap_err();
+        let reason = can_cast(&paid, Pools::new(0, 0)).unwrap_err();
         assert_eq!(reason, BlockReason::NotEnoughEnergy);
         assert_eq!(
             ActionBlocked { reason }.reason,

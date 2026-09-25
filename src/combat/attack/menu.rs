@@ -92,8 +92,17 @@ pub struct UseSelectedSkill {
 /// 玩家的零件：精力（够不够）+ 决策槽（现在能不能出手）。
 ///
 /// 「谁是玩家」认 [`InputDriven`] 标记，不再满世界 `find(|faction| … == Player)`。
-type PlayerUnit<'w, 's> =
-    Query<'w, 's, (Entity, &'static Stamina, &'static DecisionSlot), With<InputDriven>>;
+type PlayerUnit<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Stamina,
+        Option<&'static super::ammo::Ammo>,
+        &'static DecisionSlot,
+    ),
+    With<InputDriven>,
+>;
 
 /// 选中：只改 [`MenuSelection`]。
 pub fn select_skill_system(
@@ -109,14 +118,19 @@ pub fn select_skill_system(
 pub fn cycle_skill_system(
     mut requests: MessageReader<CycleSkill>,
     mut selection: ResMut<MenuSelection>,
-    // 选择**随时可做**（忙的时候也能先把下一个选好），因此只读玩家当前的精力
-    players: Query<&Stamina, With<InputDriven>>,
+    // 选择**随时可做**（忙的时候也能先把下一个选好），因此只读玩家当前的资源
+    players: Query<(&Stamina, Option<&super::ammo::Ammo>), With<InputDriven>>,
 ) {
     for request in requests.read() {
         let affordable = players
             .iter()
             .next()
-            .map(|stamina| super::registry::affordable_indices(stamina.current))
+            .map(|(stamina, ammo)| {
+                super::registry::affordable_indices(crate::skills::Pools::new(
+                    stamina.current,
+                    ammo.map(|ammo| ammo.current).unwrap_or(0),
+                ))
+            })
             .unwrap_or_default();
         selection.cycle(request.forward, &affordable);
     }
@@ -145,15 +159,27 @@ pub fn use_selected_skill_system(
         return;
     };
     // 决策槽不是空的就是"这次输入被拒"（前摇 / 后摇 / 位移中）
-    let Some((player, stamina, _)) = players.iter().first_ready(&mut blocked) else {
+    let Some((player, stamina, ammo, _)) = players.iter().first_ready(&mut blocked) else {
         return; // 忙（前摇 / 后摇）或没有玩家
     };
     let Some(def) = SKILLS.get(selection.index()) else {
         return;
     };
-    if !def.affordable(stamina.current) {
-        debug!("技能 {} 精力不足（需要 {}）", def.label(), def.cost);
-        blocked.write(crate::timeline::ActionBlocked::NO_ENERGY);
+    let pools = crate::skills::Pools::new(stamina.current, ammo.map(|a| a.current).unwrap_or(0));
+    if !def.affordable(pools) {
+        debug!(
+            "技能 {} 资源不足（需要 {} {}）",
+            def.label(),
+            def.cost.amount(),
+            def.cost.label()
+        );
+        blocked.write(crate::timeline::ActionBlocked {
+            reason: if matches!(def.cost, crate::skills::ResourceCost::Ammo(_)) {
+                crate::timeline::BlockReason::NotEnoughAmmo
+            } else {
+                crate::timeline::BlockReason::NotEnoughEnergy
+            },
+        });
         return;
     }
 
@@ -206,7 +232,7 @@ pub fn use_selected_skill_system(
         }
         SkillKind::Roll => {
             // 与菜单过滤、声明系统同一条判据（`can_cast`）
-            if def.affordable(stamina.current) {
+            if def.affordable(pools) {
                 roll_commands.write(RollCommand);
             }
         }
@@ -217,7 +243,13 @@ pub fn use_selected_skill_system(
 pub fn skill_line(index: usize, selected: usize) -> String {
     let def = &SKILLS[index];
     let marker = if index == selected { ">" } else { " " };
-    format!("{marker}{}:{} ({})", index + 1, def.label(), def.cost)
+    format!(
+        "{marker}{}:{} ({} {})",
+        index + 1,
+        def.label(),
+        def.cost.amount(),
+        def.cost.label()
+    )
 }
 
 #[cfg(test)]

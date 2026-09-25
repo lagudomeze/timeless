@@ -394,14 +394,14 @@ pub fn declare_dash_system(
     // 条件校验与其它技能同一条入口（`can_cast`）
     let def = crate::skills::AbilityDef {
         timing,
-        cost,
+        cost: crate::skills::ResourceCost::Energy(cost),
         ..super::abilities::DASH_ABILITY
     };
     let stamina = stamina_players
         .get(player)
         .map(|stamina| stamina.current)
         .unwrap_or(0);
-    if let Err(reason) = crate::skills::can_cast(&def, stamina) {
+    if let Err(reason) = crate::skills::can_cast(&def, crate::skills::Pools::new(stamina, 0)) {
         blocked.write(ActionBlocked { reason });
         return;
     }

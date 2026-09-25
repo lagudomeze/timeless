@@ -44,8 +44,9 @@ pub mod reaction;
 pub mod targeting;
 
 pub use attack::{
-    FIREBALL_COST, FireCommand, Fireball, FireballAction, MeleeAction, MeleeCommand, MenuSelection,
-    ProjectileArrived, SKILLS, ShootAction, SkillDef, SkillKind,
+    AMMO_MAX, AMMO_RECOVER_INTERVAL, Ammo, AmmoRecoverTimer, FIREBALL_AMMO_COST, FireCommand,
+    Fireball, FireballAction, MeleeAction, MeleeCommand, MenuSelection, ProjectileArrived, SKILLS,
+    ShootAction, SkillDef, SkillKind, recover_ammo_system,
 };
 pub use attributes::{Armor, AttackFrame, AttackRange, HitRadius, InterruptPower, PhysicalDamage};
 pub use components::{Collidable, Faction};
