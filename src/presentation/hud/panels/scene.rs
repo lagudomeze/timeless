@@ -41,6 +41,9 @@ pub enum PanelText {
     Hp(PanelSlot),
     En(PanelSlot),
     State(PanelSlot),
+    /// **洞察力读数**（`docs/insight.md` 第四节）：射程 / 打断抗性 / 战术。
+    /// 只有敌人格有内容（玩家看自己的面板不需要"我够得到多远"）。
+    Insight(PanelSlot),
 }
 
 /// 一格的实体名前缀（`PlayerPanel` / `Enemy1Panel`）。
@@ -128,6 +131,13 @@ fn slot_content(font: &Handle<Font>, slot: PanelSlot) -> impl Bundle {
                 hud_text(font, 11.0, "act: -"),
                 ActionLabel { faction },
             ),
+            // **洞察力读数**（`docs/insight.md` 第四节）：只在**敌人**行上挂——
+            // 玩家面板那一格读自己就够了，多一行只会把固定的 `PANEL_HEIGHT` 挤紧。
+            (
+                Name::new(format!("{prefix}InsightLine")),
+                hud_text_tinted(font, 11.0, "", Color::srgb(0.72, 0.80, 0.92)),
+                PanelText::Insight(slot),
+            ),
         ],
     )
 }
@@ -176,6 +186,25 @@ pub fn unit_panel(font: &Handle<Font>, portrait: Handle<Image>) -> impl Bundle {
     )
 }
 
+/// 敌人面板那一列（右下角，**从下往上长**）。
+///
+/// 行**不是**逐行绝对定位的：那样每加一行内容就要改一次行高常量，忘了就重叠。
+/// 交给 flex 之后"几行、多高"由内容自己决定——多一行字数也不会撞上。
+pub fn enemy_column() -> impl Bundle {
+    (
+        Name::new("EnemyPanels"),
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(14.0),
+            // 列从底边长上去：`column_reverse` 让**第一个**子节点贴底
+            bottom: Val::Px(14.0),
+            flex_direction: FlexDirection::ColumnReverse,
+            row_gap: Val::Px(ENEMY_ROW_GAP),
+            ..default()
+        },
+    )
+}
+
 /// **一个敌人的一行**：只有内容块（没有头像——N 行时头像会把面板撑得过高，
 /// 而行首的名字已经能分清是谁）。
 ///
@@ -188,12 +217,11 @@ pub fn enemy_row(font: &Handle<Font>, index: usize) -> impl Bundle {
         Name::new(format!("Enemy{}Row", index + 1)),
         UnitPanel { slot },
         Node {
-            // 行是**绝对定位**的（面板本身也是）：用 `bottom` 逐行往上错开，
-            // 第 0 行（最近的那个）永远在最下面
-            position_type: PositionType::Absolute,
-            right: Val::Px(14.0),
-            bottom: row_bottom(index),
             width: Val::Px(PANEL_WIDTH),
+            // **给它一个下限**：五行内容（状态行 / 洞察力 / HP / EN / 行动行）
+            // 在自动高度下会被压到 52px——文字本身不参与高度计算，于是行会挤在一起。
+            // 这个数是按玩家面板同样的内容量定的（那边固定 104px，这里去掉头像那一侧）
+            min_height: Val::Px(ENEMY_ROW_MIN_HEIGHT),
             padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
             flex_direction: FlexDirection::Column,
             border_radius: BorderRadius::all(Val::Px(10.0)),
@@ -206,15 +234,10 @@ pub fn enemy_row(font: &Handle<Font>, index: usize) -> impl Bundle {
     )
 }
 
-/// 第 `index` 行离屏幕底边的距离。
-///
-/// 敌人列在右下角、**从下往上长**：第 0 行（离玩家最近的）在最下面，
-/// 越远的越往上——这样"最近的那个"位置固定，不会因为敌人数量变化而整列乱跳。
-pub fn row_bottom(index: usize) -> Val {
-    Val::Px(14.0 + index as f32 * (ENEMY_ROW_HEIGHT + ENEMY_ROW_GAP))
-}
-
-/// 一行敌人的高度（像素）。
-pub const ENEMY_ROW_HEIGHT: f32 = 76.0;
 /// 相邻两行之间的间隙（像素）。
 pub const ENEMY_ROW_GAP: f32 = 6.0;
+/// 一行敌人的**最小高度**（像素）。
+///
+/// 内容量：状态行 / 洞察力读数 / HP 条 / EN 条 / 行动行 = 五行。
+/// 自动高度量不准文字（`ComputedNode` 里文本节点报 0），所以给一个下限兜住。
+pub const ENEMY_ROW_MIN_HEIGHT: f32 = 96.0;

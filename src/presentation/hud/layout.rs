@@ -68,10 +68,12 @@ pub fn setup_hud(mut commands: Commands, assets: Res<AssetServer>, sprites: Res<
 
     // 敌人面板是**行池**（按下标建好、每帧只改内容与显隐），所以不走上面的工厂数组——
     // 池子大小由 `MAX_ENEMY_ROWS` 一处说了算（有测试钉住两边一致）
+    let enemy_column = commands.spawn(panels::enemy_column()).id();
     let enemy_rows: Vec<Entity> = (0..panels::MAX_ENEMY_ROWS)
         .map(|index| commands.spawn(panels::enemy_row(&font, index)).id())
         .collect();
-    commands.entity(root).add_children(&enemy_rows);
+    commands.entity(enemy_column).add_children(&enemy_rows);
+    commands.entity(root).add_child(enemy_column);
 
     // 时间轴要建一个色块池（循环 spawn），所以不走上面的工厂数组
     let timeline = timeline::spawn_timeline(&mut commands, &font);
@@ -167,7 +169,9 @@ mod tests {
             // 右下：敌人**行池**（每行一个 `UnitPanel` 手法，见 `MAX_ENEMY_ROWS`）
             "Enemy1Row",
             "Enemy1Info",
+            "EnemyPanels",
             "Enemy1StateLine",
+            "Enemy1InsightLine",
             "Enemy1HpFill",
             "Enemy1EnFill",
             "Enemy1Action",

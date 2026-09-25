@@ -49,6 +49,44 @@ pub struct UnitRow {
     /// 取数时**已经算好**（由 `equipment::armor_of` 合成）：面板只显示一个数，
     /// 不必知道"基础 / 加成"的结构。装备改动因此在这个读数上直接看得见。
     pub armor: Option<i32>,
+    /// **洞察力读数**（`docs/insight.md` 第四节）：敌人此刻"会什么、够多远、
+    /// 这一手多难打断"。`None` = 这个单位没有可读的能力（玩家面板不显示）。
+    ///
+    /// 它把"信息即力量"落成看得见的数：射程决定"我站哪儿安全"，
+    /// 打断抗性决定"该躲还是该抢一手打掉它"。
+    pub insight: Option<Insight>,
+}
+
+/// 一个敌人的**洞察力读数**（纯数据，由 `insight_of` 算出来）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Insight {
+    /// 射程（格）：它的攻击够得到多远
+    pub range_cells: u32,
+    /// 正在前摇的那一手的打断抗性（`None` = 此刻没有前摇中的行动）
+    pub interrupt_resist: Option<i32>,
+    /// 它当前在用什么战术（读 `Tactic`，与"会什么技能"是同一层信息）
+    pub tactic: Option<Tactic>,
+}
+
+/// 一帧的洞察力读数（**纯函数**：只吃已经摘好的事实，可脱离 App 单测）。
+///
+/// `range_cells` 由调用方从 `AttackRange` 取（那一层的世界里它就是格）；
+/// `interrupt_resist` 从**正在前摇的那一条行动**上取——没有前摇就没有读数
+/// （"它现在这一手能不能打断"只在有那一手时才有意义）。
+pub fn insight_of(
+    range_cells: Option<u32>,
+    interrupt_resist: Option<i32>,
+    tactic: Option<Tactic>,
+) -> Option<Insight> {
+    // 三个读数全无（没有射程、没有前摇、没有战术）就没什么可说的
+    if range_cells.is_none() && interrupt_resist.is_none() && tactic.is_none() {
+        return None;
+    }
+    Some(Insight {
+        range_cells: range_cells.unwrap_or(0),
+        interrupt_resist,
+        tactic,
+    })
 }
 
 /// 面板快照缓存：与上一帧完全相同就整帧不碰 UI。
@@ -84,6 +122,24 @@ impl PanelSlot {
 /// **一处真相**：场景按它建行池、模型按它截断，两边不会分叉
 /// （有测试钉住"行池大小 = 这个常量"）。
 pub const MAX_ENEMY_ROWS: usize = 3;
+
+impl Insight {
+    /// 一行洞察力读数：`range 1 · break 3 · approach`。
+    ///
+    /// **每个数都回答一个具体问题**（`docs/insight.md` 第五节）：
+    /// 射程 → "我站哪儿安全"；打断抗性 → "该躲还是该抢一手打掉它"；
+    /// 战术 → "它想干什么"。没有的那几项**整段不出现**（不留空段）。
+    pub fn line(&self) -> String {
+        let mut parts = vec![format!("range {}", self.range_cells)];
+        if let Some(resist) = self.interrupt_resist {
+            parts.push(format!("break {resist}"));
+        }
+        if let Some(tactic) = self.tactic {
+            parts.push(tactic_label(tactic).to_string());
+        }
+        parts.join(" · ")
+    }
+}
 
 /// 敌人之间的顺序：**离玩家更近的在前**；一样近时取格坐标更小的。
 ///
@@ -183,6 +239,14 @@ impl UnitPanels {
                 Some(stamina) => format!("EN {} / {}", stamina.current, stamina.max),
                 None => "EN -".to_string(),
             })
+            .unwrap_or_default()
+    }
+
+    /// 洞察力读数行（玩家格没有可读项，返回空串）。
+    pub fn insight_line(&self, slot: PanelSlot) -> String {
+        self.of(slot)
+            .and_then(|row| row.insight)
+            .map(|insight| insight.line())
             .unwrap_or_default()
     }
 
@@ -288,6 +352,7 @@ mod tests {
             airborne: false,
             tactic: None,
             armor: Some(1),
+            insight: None,
         }
     }
 
@@ -351,6 +416,30 @@ mod tests {
             !without.state_line("ENEMY 1", None).contains("ammo"),
             "缺组件就不显示"
         );
+    }
+
+    /// **洞察力读数拼得出来**：射程 / 打断抗性 / 战术各占一段。
+    #[test]
+    fn the_insight_line_carries_range_break_resistance_and_tactic() {
+        let insight = insight_of(Some(2), Some(3), Some(Tactic::Approach)).unwrap();
+        let line = insight.line();
+        assert!(line.contains("range 2"), "{line}");
+        assert!(
+            line.contains("break 3"),
+            "打断抗性是「该不该抢一手」的关键数：{line}"
+        );
+        assert!(line.contains("approach"), "{line}");
+    }
+
+    /// 缺的读数**整段不出现**（不留 `break ` 这种空段）。
+    #[test]
+    fn missing_insight_readings_are_left_out_entirely() {
+        // 只有射程（比如敌人没在做事）
+        let bare = insight_of(Some(1), None, None).unwrap();
+        assert_eq!(bare.line(), "range 1", "没有前摇就没有打断抗性可读");
+
+        // 什么都没有：整个读数都不该存在
+        assert_eq!(insight_of(None, None, None), None);
     }
 
     /// 只有敌人那一行带距离——玩家面板不需要"离自己多远"。

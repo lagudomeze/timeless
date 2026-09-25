@@ -8,12 +8,12 @@ use bevy::prelude::*;
 use crate::ai::Tactic;
 use crate::combat::Ammo;
 use crate::combat::defense::{Dodging, Parrying, Stamina};
-use crate::combat::{Armor, Faction, Health};
+use crate::combat::{Armor, AttackRange, Faction, Health};
 use crate::movement::{Cell, Jumping};
-use crate::timeline::DecisionSlot;
+use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, ScheduledAction};
 
 use super::super::HudCache;
-use super::model::{UnitPanels, UnitRow};
+use super::model::{PanelSlot, UnitPanels, UnitRow, insight_of};
 use super::scene::{PanelBar, PanelText, UnitPanel};
 
 /// 单位快照查询（实体 + 阵营 + 血量 + 格 + 位姿 + 精力）。
@@ -31,6 +31,10 @@ type UnitQuery<'w, 's> = Query<
     ),
 >;
 
+/// 洞察力读数行（改显隐：玩家那条藏起来）。
+type InsightLineQuery<'w, 's> =
+    Query<'w, 's, (&'static PanelText, &'static mut Node), (Without<UnitPanel>, Without<PanelBar>)>;
+
 /// 把 HP / EN / 状态行写进面板（玩家一格 + 敌人 **N** 行）。
 ///
 /// 敌人那一列是**行池**：每帧按"离玩家最近"的名次把前几行填满，
@@ -44,6 +48,8 @@ pub fn update_unit_panels_system(
     mut bars: Query<(&PanelBar, &mut Node), Without<UnitPanel>>,
     mut texts: Query<(&PanelText, &mut Text)>,
     mut rows: Query<(&UnitPanel, &mut Node), Without<PanelBar>>,
+    // 玩家那条洞察力行**藏起来**（它没有可读项，而面板高度是固定的）
+    mut insight_lines: InsightLineQuery<'_, '_>,
     // 决策槽：面板只读它，不写
     slots: Query<&DecisionSlot>,
     dodging: Query<(), With<Dodging>>,
@@ -52,6 +58,11 @@ pub fn update_unit_panels_system(
     tactics: Query<&Tactic>,
     // 有效护甲 = 基础 + 装备加成：这里只问"是多少"，结构由 equipment 回答
     armors: Query<(&Armor, Option<&crate::equipment::EquipmentBonus>)>,
+    // 洞察力读数：射程（单位属性）
+    ranges: Query<&AttackRange>,
+    // 洞察力读数：**正在前摇的那一手**多难打断——只对敌人算（玩家看自己就够了）
+    actions: Query<(&ActionOf, &ActionTiming, &ScheduledAction)>,
+    now: Res<Time<Virtual>>,
 ) {
     let rows_data: Vec<UnitRow> = units
         .iter()
@@ -72,6 +83,22 @@ pub fn update_unit_panels_system(
                     .get(entity)
                     .ok()
                     .map(|(base, bonus)| crate::equipment::armor_of(base.0, bonus)),
+                insight: (*faction == Faction::Enemy)
+                    .then(|| {
+                        // 前摇中的那一手：`interrupt_resist` 只在"有那一手"时有意义
+                        let pending = actions
+                            .iter()
+                            .find(|(action_of, _, schedule)| {
+                                action_of.actor() == entity && schedule.pending(now.elapsed_secs())
+                            })
+                            .map(|(_, timing, _)| timing.interrupt_resist);
+                        insight_of(
+                            ranges.get(entity).ok().map(|range| range.0),
+                            pending,
+                            tactics.get(entity).ok().copied(),
+                        )
+                    })
+                    .flatten(),
             },
         )
         .collect();
@@ -94,6 +121,16 @@ pub fn update_unit_panels_system(
         };
     }
 
+    for (label, mut node) in &mut insight_lines {
+        if let PanelText::Insight(slot) = label {
+            node.display = if matches!(slot, PanelSlot::Enemy(_)) {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+    }
+
     for (bar, mut node) in &mut bars {
         node.width = match bar {
             PanelBar::Hp(slot) => panels.hp_percent(*slot),
@@ -106,6 +143,8 @@ pub fn update_unit_panels_system(
             PanelText::Hp(slot) => panels.hp_text(*slot),
             PanelText::En(slot) => panels.stamina_text(*slot),
             PanelText::State(slot) => panels.state_line(*slot),
+            // 洞察力读数：玩家格没有可读项——它是空的，而且面板本来就满了
+            PanelText::Insight(slot) => panels.insight_line(*slot),
         };
     }
 }
