@@ -2,14 +2,14 @@
 
 > ⚠️ **目标设计**：标 🚧 的部分代码里还没有，标 ✅ 的已落地。
 >
-> 已经落地的是**注册表本身**：顶层 `skills` 域装 `AbilityId` / `AbilityDef` /
-> `SkillRegistry` / `RegisterAbility`，`movement` 与 `combat` 各自在 `Startup`
-> 交上自己的定义，`AbilityId::ALL` 由整机测试自检完整性。
->
-> 还没落地的是：**`can_cast` / `Requirement`（第三节）**、`Effect` / `Phase`（第七节）、
-> 以及定义里的 `counter` 字段。尺寸几何**已按"一个形状一个组件"落地**（第六节），
+> **已落地**：顶层 `skills` 域的注册表（`AbilityId` / `AbilityDef` / `SkillRegistry` /
+> `RegisterAbility`，`movement` / `combat` / `timeline` 各自在 `Startup` 交上定义，
+> `AbilityId::ALL` 由整机测试自检）；`can_cast` / `Requirement`（第三节）；
+> 定义里的 `counter` 字段（第四节）；尺寸几何**按"一个形状一个组件"**（第六节），
 > 不再计划 `Shape` 枚举 / `utils` 域。
-> 条件校验目前由各声明系统各自做（`Stamina` → `ActionBlocked::NO_ENERGY`）。
+>
+> **还没落地**：`Effect` / `Phase`（第七节）——**不是遗漏，是刻意的**：
+> 审计结论见第七节末尾（`ActionTemplate` 资产图"现在不建"）。
 
 技能是**这一手"是什么"**，行动是**这一次"发生了什么"**。两者分开：
 
@@ -197,6 +197,33 @@ pub struct Phase {              // 🚧
 ```
 
 **阶段只描述"何时、发什么事件"，不写逻辑**；逻辑住在订阅 `SkillEvent` 的 Observer 里。
+
+### `ActionTemplate` 资产图：🚫 **审计结论：现在不建**（2026-09）
+
+`TODO.md` 里那条"动作的静态定义（相位 / 消耗 / 效果 / 可取消规则）资产化，
+按**边条件在图上转移**"，逐项查下来**四样已经都在、第五样没有消费者**：
+
+| `ActionTemplate` 想说 | 现在由谁回答 |
+| :--- | :--- |
+| 相位 | `ActionTiming { windup, recovery }`（固定三段：前摇 → 执行 → 后摇） |
+| 消耗 | `AbilityDef.cost: ResourceCost` |
+| 效果 | `AbilityDef.power` + 各域的载荷组件 |
+| 可取消规则 | **两个独立的轴**：`CombatTags`（能不能被**打断**）与 `Uncancellable`（能不能被**撤销**） |
+| 按边条件在图上转移 | **没有**——每条行动只有一个 `execute_at`、固定三段、**没有分支** |
+
+**"资产化"那一半也已落地**：`config/actions.ron` 把 9 个动作的前摇 / 后摇 /
+打断抗性 / 消耗 / 威力 / 帧全外置了（见 `docs/config.md`）。剩下的只有"图"这一层，
+而它要的**边条件**来自"一条行动打多个落地时刻 / 按条件跳阶段"——那正是
+`PendingHit` 的触发条件（多段技能），而 `PendingHit` 的审计结论同样是"现在不建"。
+先造一张没有边的图就是为假想的需求设计。
+
+**两个轴别混**（这条审计顺带纠正了一处注释漂移）：`CombatTags` 管"**能不能被
+打断**"，`Uncancellable` 管"**能不能被撤销**"。跳跃两个都占（前摇里也撤不掉）；
+**冲刺 / 翻滚只有前者**——"蹬出去收不回来"说的是不再受打断，它们照旧可以右键撤掉。
+
+**触发条件**：① 出现多段 / 分阶段技能（连击三下、蓄力两段）；② 效果要按条件转移
+（命中就追击、落空就收招）；③ 动作需要工具生成 / 图形化编辑。届时最小形态就是
+本节那个 `Phase` + 让 `ScheduledAction` 支持多个落地时刻。
 
 ## 八、加一个技能要动哪里
 

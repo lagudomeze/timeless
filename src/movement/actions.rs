@@ -139,7 +139,9 @@ pub fn dash_action_scene(
     schedule: ScheduledAction,
     actor: Entity,
 ) -> impl Scene {
-    // 对抗标签：冲刺是**起手就赌**的动作（蹬出去收不回来），与跳跃 / 翻滚同为 COMMITTED
+    // 对抗标签：冲刺是**起手就赌**的动作（蹬地之后不再受打断），与跳跃 / 翻滚同为 COMMITTED。
+    // ⚠️ `COMMITTED` 说的是「**不能被打断**」，不是「不能撤销」——冲刺**可以**右键撤掉
+    // （它没有 `Uncancellable`）；撤销不会被退款，见 `dash_action_executor_system`。
     let tags = super::abilities::DASH_ABILITY.combat;
     bsn! {
         template_value(tags)
