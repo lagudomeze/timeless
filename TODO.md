@@ -474,7 +474,14 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       **验过不是空跑**（让 `melee_timing` 忽略配置后，第三段立刻转红，
       报"实际 [0.35]"）。
       **仍未做**：热重载（改文件要重启）、`ActionRegistry` 让 HUD 从注册表读
-      （现在仍是 `SKILLS` 数组）、伤害数值（`PhysicalDamage` 仍写在各载荷里）。
+      （现在仍是 `SKILLS` 数组）。
+      **伤害数值已外置**（本次）：三个攻击执行器（近战 / 箭矢 / 火球）现在从
+      `ActionConfig` 的 `power` 取基础伤害（`melee_damage` / `arrow_damage` /
+      `fireball_damage`，缺省 = 各域常量），改配置真的改扣血；武器加成仍由执行器
+      生成时叠上（装备域不认识配置）。
+      验收：`a_changed_config_reaches_the_damage_formula`——近战威力调成 23，
+      按近战热键打一发，敌人**恰好**掉 23；**验过不是空跑**（执行器退回常量 15 后
+      转红，报实际掉 15）。
 - [x] **死代码清理**：删除 `defense/actions.rs` 里重复且未注册的
       `expire_defense_markers_system`、`lifecycle::manage_projectile_hits_system`、
       写而无消费的 `AttackResolved`。剩下的 `declare_skill_system` / `arrow_scene`

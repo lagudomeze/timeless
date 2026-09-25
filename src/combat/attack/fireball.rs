@@ -76,6 +76,14 @@ pub const FIREBALL_SPEED: f32 = 8.0;
 pub const SHOOT_HEIGHT: f32 = 0.9;
 /// 火球爆炸伤害。
 pub const FIREBALL_DAMAGE: i32 = 12;
+
+/// 从配置取火球伤害（缺省 = 常量）。
+pub fn fireball_damage(config: Option<&crate::config::ActionConfig>) -> i32 {
+    config
+        .map(|config| config.fireball.power)
+        .unwrap_or(FIREBALL_DAMAGE)
+}
+
 /// 爆炸半径（世界单位）：1.5 格。
 pub const FIREBALL_RADIUS: f32 = 3.0;
 /// 火球的节奏：出手慢、后摇长、威力大。
@@ -369,6 +377,7 @@ pub fn declare_fireball_at(
 pub fn fireball_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
+    config: Option<Res<crate::config::ActionConfig>>,
     actions: Query<(
         Entity,
         &ActionTiming,
@@ -396,7 +405,7 @@ pub fn fireball_action_executor_system(
             effect_delay = flight_time(origin, action.target_cell);
             // 武器加成在生成时算好：攻击实体自己不认识"装备"（见 `melee_scene`）
             let damage = crate::equipment::weapon_damage(
-                FIREBALL_DAMAGE,
+                fireball_damage(config.as_deref()),
                 equipment
                     .get(actor)
                     .map(|bonus| bonus.damage())

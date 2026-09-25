@@ -23,8 +23,7 @@ use crate::timeline::{
     ScheduledAction, Target,
 };
 
-use super::MELEE_DAMAGE;
-use super::arrow::{ARROW_DAMAGE, ARROW_SPEED, arrow_scene};
+use super::arrow::{ARROW_SPEED, arrow_scene};
 use super::events::ShootCommand;
 use super::melee::melee_scene;
 
@@ -239,6 +238,7 @@ pub fn declare_melee_at(
 pub fn shoot_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
+    config: Option<Res<crate::config::ActionConfig>>,
     actions: Query<(
         Entity,
         &ActionTiming,
@@ -266,7 +266,7 @@ pub fn shoot_action_executor_system(
                 effect_delay = to_target.length() / ARROW_SPEED;
                 // 武器加成在生成时算好：攻击实体自己不认识"装备"
                 let damage = crate::equipment::weapon_damage(
-                    ARROW_DAMAGE,
+                    super::arrow::arrow_damage(config.as_deref()),
                     equipment
                         .get(actor)
                         .map(|bonus| bonus.damage())
@@ -292,6 +292,7 @@ pub fn shoot_action_executor_system(
 pub fn melee_action_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
+    config: Option<Res<crate::config::ActionConfig>>,
     actions: Query<(
         Entity,
         &ActionTiming,
@@ -317,7 +318,7 @@ pub fn melee_action_executor_system(
                     .normalize_or_zero();
                 // 武器加成在生成时算好：攻击实体自己不认识"装备"
                 let damage = crate::equipment::weapon_damage(
-                    MELEE_DAMAGE,
+                    super::melee::melee_damage(config.as_deref()),
                     equipment
                         .get(actor)
                         .map(|bonus| bonus.damage())

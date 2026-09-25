@@ -8,6 +8,14 @@ use crate::combat::attributes::{AttackFrame, HitRadius, InterruptPower, Physical
 pub const ARROW_FRAME: u32 = 4;
 /// 箭矢伤害（**单体**：与火球的 AoE 12 点相对——单体更高，这是两种投射物的分工）。
 pub const ARROW_DAMAGE: i32 = 10;
+
+/// 从配置取箭矢伤害（缺省 = 常量）。
+pub fn arrow_damage(config: Option<&crate::config::ActionConfig>) -> i32 {
+    config
+        .map(|config| config.shoot.power)
+        .unwrap_or(ARROW_DAMAGE)
+}
+
 /// 箭矢花多少**弹药**：单体、快，所以比重击（火球）便宜。
 pub const ARROW_COST: u32 = 1;
 /// 箭矢的打断力度：轻，但快（见 `ARROW_FRAME`）。
