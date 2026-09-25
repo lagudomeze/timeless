@@ -156,7 +156,8 @@ HUD 只读 `ReactionSlot`，不认识 `CounterCost` 的语义——它只画
 | 组件 | 说明 |
 | :--- | :--- |
 | `Health { current, max }` | 唯一的生命真相 |
-| `Stamina { current, max }` | 动作消耗；**后摇结束时回 1 点**（订阅 `DecisionReady`） |
+| `Stamina { current, max }` | **精力**：防御 / 机动的货币（翻滚 / 招架 / 冲刺）；**后摇结束时回 1 点**（订阅 `DecisionReady`） |
+| `Ammo { current, max }` ✅ | **弹药**：远程 / 重击的货币（火球 / 箭矢）；每 `AMMO_RECOVER_INTERVAL = 6.0` 虚拟秒回 1 点、上限 3。**两条线恢复速度不同**，所以伤害是"攒出来的"、防御是"每一手都能用的"；**平 A 免费**是安全阀 |
 | `Focus { current, max }` | **反制资源** ✅：1 点把一次声明的前摇归零（`FOCUS_MAX = 3`，每 `FOCUS_RECOVER_INTERVAL = 10.0` 虚拟秒回 1 点）。付 `CounterCost::Resource` 🚧 还没落地 |
 | `BlockChance(f32)` ✅ | 格挡率**基础值**；有效值 = 基础 + 装备加成（`equipment` 域，M27 已落地）。管线第 ③ 关读**有效值** |
 | `Faction { Player \| Enemy }` | **只管战斗目标过滤**，不代表"谁在操作"（那是 `InputDriven`） |

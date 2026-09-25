@@ -62,8 +62,10 @@ impl ActionBlocked {
 pub enum BlockReason {
     /// 决策槽被占着（前摇 / 后摇：见 [`DecisionSlot`](super::DecisionSlot)）
     Busy,
-    /// 精力不够
+    /// 精力不够（防御 / 机动那条线）
     NotEnoughEnergy,
+    /// 弹药不够（远程 / 重击那条线）
+    NotEnoughAmmo,
 }
 
 /// 玩家请求撤销**那条还没到点的玩家行动**。

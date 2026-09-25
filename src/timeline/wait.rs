@@ -66,7 +66,7 @@ impl WaitConfig {
             category: crate::skills::AbilityCategory::Posture,
             timing: self.timing(),
             targeting: crate::skills::TargetSelector::SelfOnly,
-            cost: 0,
+            cost: crate::skills::ResourceCost::Free,
             requirements: &[],
             combat: crate::skills::CombatTags::COMMITTED,
             counter: None,

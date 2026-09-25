@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 
 use crate::ai::Tactic;
+use crate::combat::Ammo;
 use crate::combat::defense::Stamina;
 use crate::combat::{Faction, Health};
 use crate::movement::Cell;
@@ -33,6 +34,8 @@ pub struct UnitRow {
     pub faction: Faction,
     pub health: Health,
     pub stamina: Option<Stamina>,
+    /// 弹药（远程 / 重击那条线）：`None` = 这个单位没有弹药组件
+    pub ammo: Option<Ammo>,
     pub cell: Cell,
     pub position: Vec3,
     /// 决策槽：`Empty` = 现在能决策（面板显示 `ready`）
@@ -215,6 +218,10 @@ impl UnitRow {
             self.cell.x, self.cell.z
         );
         // 有效护甲（基础 + 装备加成）：装备一穿一脱，这个数立刻跟着变
+        // 弹药（远程线）：**与精力并列的一条资源**，读作 `ammo 2/3`
+        if let Some(ammo) = self.ammo {
+            line.push_str(&format!(" · ammo {}/{}", ammo.current, ammo.max));
+        }
         if let Some(armor) = self.armor {
             line.push_str(&format!(" · arm {armor}"));
         }
@@ -272,6 +279,7 @@ mod tests {
             faction,
             health: Health::new(50),
             stamina: Some(Stamina::new(3)),
+            ammo: Some(Ammo::new(3)),
             cell,
             position,
             slot: DecisionSlot::Idle { intent: None },
@@ -321,6 +329,26 @@ mod tests {
         without.armor = None;
         assert!(
             !without.state_line("ENEMY 1", None).contains("arm"),
+            "缺组件就不显示"
+        );
+    }
+
+    /// **弹药是面板上的一个读数**（资源分线之后玩家得看得见它）。
+    #[test]
+    fn the_state_line_carries_the_ammo() {
+        let mut unit = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        unit.ammo = Some(Ammo::new(3));
+        assert!(
+            unit.state_line("PLAYER", None).contains("ammo 3/3"),
+            "面板要显示弹药：{}",
+            unit.state_line("PLAYER", None)
+        );
+
+        // 没有弹药组件的单位不显示这一段
+        let mut without = row(Faction::Enemy, Cell::new(0, 0), Vec3::ZERO);
+        without.ammo = None;
+        assert!(
+            !without.state_line("ENEMY 1", None).contains("ammo"),
             "缺组件就不显示"
         );
     }

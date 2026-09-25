@@ -177,7 +177,7 @@ mod tests {
 
         assert_eq!(
             app.world().get::<Text>(badge).unwrap().0,
-            SKILLS[2].cost.to_string()
+            SKILLS[2].cost.amount().to_string()
         );
     }
 

@@ -244,7 +244,7 @@ mod tests {
             category: AbilityCategory::Movement,
             timing: TEST_TIMING,
             targeting: crate::skills::TargetSelector::SelfOnly,
-            cost: 0,
+            cost: crate::skills::ResourceCost::Free,
             requirements: &[],
             combat: CombatTags::COMMITTED,
             counter,

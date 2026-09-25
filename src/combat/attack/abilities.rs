@@ -8,15 +8,15 @@ use bevy::prelude::*;
 
 use crate::skills::{
     AbilityCategory, AbilityDef, AbilityId, CombatTags, CounterCost, RegisterAbility, Requirement,
-    TargetSelector,
+    ResourceCost, TargetSelector,
 };
 
 use crate::combat::defense::PARRY_COST;
 use crate::config::ActionConfig;
 
 use super::actions::{ARROW_TIMING, MELEE_TIMING};
-use super::arrow::ARROW_DAMAGE;
-use super::fireball::{FIREBALL_COST, FIREBALL_TIMING};
+use super::arrow::{ARROW_COST, ARROW_DAMAGE};
+use super::fireball::{FIREBALL_AMMO_COST, FIREBALL_TIMING};
 use super::melee::MELEE_DAMAGE;
 
 /// 近战横扫：射程内一圈，能被打断也能被反制。
@@ -25,8 +25,9 @@ pub const MELEE_ABILITY: AbilityDef = AbilityDef {
     category: AbilityCategory::Attack,
     timing: MELEE_TIMING,
     targeting: TargetSelector::MeleeArc,
-    cost: 0,
-    // 免费技能：不需要精力，因此没有这一条
+    // **平 A 免费**：两条线都空了也永远还有事可做（分线的安全阀）
+    cost: ResourceCost::Free,
+    // 免费技能：不需要资源，因此没有这一条
     requirements: &[],
     combat: CombatTags::STRIKE,
     counter: None,
@@ -43,9 +44,9 @@ pub const SHOOT_ABILITY: AbilityDef = AbilityDef {
     category: AbilityCategory::Attack,
     timing: ARROW_TIMING,
     targeting: TargetSelector::Direction,
-    cost: 0,
-    // 免费技能：不需要精力，因此没有这一条
-    requirements: &[],
+    // 箭矢花**弹药**（远程线）
+    cost: ResourceCost::Ammo(ARROW_COST),
+    requirements: &[Requirement::EnoughAmmo],
     combat: CombatTags::STRIKE,
     counter: None,
     power: ARROW_DAMAGE,
@@ -57,8 +58,9 @@ pub const FIREBALL_ABILITY: AbilityDef = AbilityDef {
     category: AbilityCategory::Spell,
     timing: FIREBALL_TIMING,
     targeting: TargetSelector::TargetCell,
-    cost: FIREBALL_COST,
-    requirements: &[Requirement::EnoughEnergy],
+    // 火球是**重击**：花弹药（远程线），比箭矢更贵
+    cost: ResourceCost::Ammo(FIREBALL_AMMO_COST),
+    requirements: &[Requirement::EnoughAmmo],
     combat: CombatTags::STRIKE,
     counter: None,
     power: super::FIREBALL_DAMAGE,
@@ -71,7 +73,7 @@ pub const PARRY_ABILITY: AbilityDef = AbilityDef {
     category: AbilityCategory::Posture,
     timing: crate::combat::defense::PARRY_TIMING,
     targeting: TargetSelector::TargetEntity,
-    cost: crate::combat::defense::PARRY_COST,
+    cost: ResourceCost::Energy(crate::combat::defense::PARRY_COST),
     requirements: &[Requirement::EnoughEnergy],
     combat: CombatTags::COMMITTED,
     counter: Some(CounterCost::Resource(PARRY_COST)),
@@ -91,31 +93,36 @@ pub fn abilities_from(config: &ActionConfig) -> [AbilityDef; 4] {
     [
         AbilityDef {
             timing: config.melee.timing(),
-            cost: config.melee.cost,
+            cost: ResourceCost::Free,
             power: config.melee.power,
             ..MELEE_ABILITY
         },
         AbilityDef {
             timing: config.shoot.timing(),
-            cost: config.shoot.cost,
+            cost: ResourceCost::Ammo(config.shoot.cost),
             power: config.shoot.power,
+            requirements: if config.shoot.cost == 0 {
+                &[]
+            } else {
+                &[Requirement::EnoughAmmo]
+            },
             ..SHOOT_ABILITY
         },
         AbilityDef {
             timing: config.fireball.timing(),
-            cost: config.fireball.cost,
+            cost: ResourceCost::Ammo(config.fireball.cost),
             power: config.fireball.power,
             // 花不花钱决定要不要这条条件（与 `SkillDef::as_ability` 同一判据）
             requirements: if config.fireball.cost == 0 {
                 &[]
             } else {
-                &[Requirement::EnoughEnergy]
+                &[Requirement::EnoughAmmo]
             },
             ..FIREBALL_ABILITY
         },
         AbilityDef {
             timing: config.parry.timing(),
-            cost: config.parry.cost,
+            cost: ResourceCost::Energy(config.parry.cost),
             counter: Some(CounterCost::Resource(config.parry.cost)),
             ..PARRY_ABILITY
         },
@@ -154,7 +161,7 @@ mod tests {
     fn parry_is_a_definition_without_a_menu_slot() {
         let parry = PARRY_ABILITY;
         assert_eq!(parry.targeting, TargetSelector::TargetEntity);
-        assert!(parry.cost > 0, "招架要花精力");
+        assert!(parry.cost.amount() > 0, "招架要花精力");
         assert_eq!(parry.category, AbilityCategory::Posture);
     }
 }

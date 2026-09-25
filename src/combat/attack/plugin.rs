@@ -54,6 +54,8 @@ impl Plugin for AttackPlugin {
                     ),
                     // 投射物飞行：到格就炸（本帧到达本帧结算）
                     (projectile_arrival_system, explosion_system),
+                    // 弹药缓慢回复（远程 / 重击那条线）：虚拟时间，冻结时不回
+                    super::ammo::recover_ammo_system,
                 )
                     .chain()
                     .in_set(AttackSet),

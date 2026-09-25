@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 
 use crate::ai::Tactic;
+use crate::combat::Ammo;
 use crate::combat::defense::{Dodging, Parrying, Stamina};
 use crate::combat::{Armor, Faction, Health};
 use crate::movement::{Cell, Jumping};
@@ -26,6 +27,7 @@ type UnitQuery<'w, 's> = Query<
         &'static Cell,
         &'static Transform,
         Option<&'static Stamina>,
+        Option<&'static Ammo>,
     ),
 >;
 
@@ -54,10 +56,11 @@ pub fn update_unit_panels_system(
     let rows_data: Vec<UnitRow> = units
         .iter()
         .map(
-            |(entity, faction, health, cell, transform, stamina)| UnitRow {
+            |(entity, faction, health, cell, transform, stamina, ammo)| UnitRow {
                 faction: *faction,
                 health: *health,
                 stamina: stamina.copied(),
+                ammo: ammo.copied(),
                 cell: *cell,
                 position: transform.translation,
                 slot: slots.get(entity).copied().unwrap_or_default(),

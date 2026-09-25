@@ -191,6 +191,7 @@ mod tests {
         ARROW_DAMAGE, ARROW_TIMING, FIREBALL_TIMING, FireballAction, fireball_action_scene,
     };
     use crate::combat::defense::{Dodging, Parrying, ROLL_COST, RollCommand, Stamina};
+    use crate::combat::{Ammo, AmmoRecoverTimer};
     use crate::combat::{
         Armor, Collidable, DamageEvent, Faction, Fireball, HitOnce, HitRadius, InterruptEvent,
         InterruptPower, Lifetime, MeleeShape, PhysicalDamage, Projectile, Threatens,
@@ -342,6 +343,9 @@ mod tests {
                 Velocity(Vec3::ZERO),
                 MoveSpeed(5.0),
                 Stamina::default(),
+                // 弹药（远程线）：火球 / 箭矢的声明要它，缺了就一律被拒
+                Ammo::default(),
+                AmmoRecoverTimer::default(),
                 cell,
                 DecisionSlot::Idle { intent: None },
                 InputDriven,
@@ -363,6 +367,8 @@ mod tests {
                 Velocity(Vec3::ZERO),
                 MoveSpeed(2.0),
                 Stamina::default(),
+                Ammo::default(),
+                AmmoRecoverTimer::default(),
                 cell,
                 DecisionSlot::Idle { intent: None },
                 Transform::from_translation(world),
@@ -1154,19 +1160,27 @@ mod tests {
     /// （`ActionCancelled` → `combat::attack` 的退款 Observer）。
     ///
     /// 火球是「声明扣 2、撤销退 2 但收 2 的取消代价」→ 净额不变（3 点进 3 点出）。
+    ///
+    /// ⚠️ 火球花的是**弹药**（资源分线），不是精力：这条同时钉住"扣的是哪条线"
+    /// ——若把它算回精力，`Stamina` 会原地不动，断言立刻转红。
     #[test]
     fn undo_refunds_the_declared_cost_and_frees_the_slot() {
         let mut app = test_app();
         let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
         spawn_enemy(&mut app, Cell::new(2, 0), Vec3::new(5.0, 0.0, 1.0));
-        app.world_mut().get_mut::<Stamina>(player).unwrap().current = 3;
+        app.world_mut().get_mut::<Ammo>(player).unwrap().current = 3;
 
         press(&mut app, KeyCode::KeyQ);
         app.update();
         assert_eq!(
-            app.world().get::<Stamina>(player).unwrap().current,
+            app.world().get::<Ammo>(player).unwrap().current,
             1,
-            "声明火球时先扣掉 2 点精力"
+            "声明火球时先扣掉 2 点**弹药**"
+        );
+        assert_eq!(
+            app.world().get::<Stamina>(player).unwrap().current,
+            Stamina::default().current,
+            "火球不该动精力那条线（它花的是弹药）"
         );
         // 声明即排期：火球忙到「前摇 + 后摇」
         assert_eq!(
@@ -1187,7 +1201,7 @@ mod tests {
             "撤销之后立刻能改主意"
         );
         assert_eq!(
-            app.world().get::<Stamina>(player).unwrap().current,
+            app.world().get::<Ammo>(player).unwrap().current,
             1,
             "退 2 收 2：撤销一次的净额不变"
         );

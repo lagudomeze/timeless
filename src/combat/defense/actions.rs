@@ -135,10 +135,10 @@ pub fn declare_roll_system(
     };
     let def = crate::skills::AbilityDef {
         timing,
-        cost,
+        cost: crate::skills::ResourceCost::Energy(cost),
         ..ROLL_ABILITY
     };
-    if let Err(reason) = can_cast(&def, stamina.current) {
+    if let Err(reason) = can_cast(&def, crate::skills::Pools::new(stamina.current, 0)) {
         blocked.write(crate::timeline::ActionBlocked { reason });
         return;
     }
@@ -235,10 +235,10 @@ pub fn declare_parry_system(
     };
     let def = crate::skills::AbilityDef {
         timing,
-        cost,
+        cost: crate::skills::ResourceCost::Energy(cost),
         ..PARRY_ABILITY
     };
-    if let Err(reason) = can_cast(&def, stamina.current) {
+    if let Err(reason) = can_cast(&def, crate::skills::Pools::new(stamina.current, 0)) {
         info!("招架失败：{reason:?}");
         blocked.write(crate::timeline::ActionBlocked { reason });
         return;
@@ -291,6 +291,8 @@ pub fn parry_executor_system(
         }
         let actor = action_of.actor();
         if let Ok(mut stamina) = actors.get_mut(actor) {
+            #[allow(clippy::let_underscore_untyped)]
+            let _ = PARRY_COST;
             stamina.try_spend(PARRY_COST);
             commands.entity(actor).insert(Parrying {
                 target_attack: parry.target_attack,

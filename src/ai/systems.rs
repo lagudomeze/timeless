@@ -158,7 +158,9 @@ pub fn enemy_declare_system(
         }
         // 精力不够时不能真的闪：降级为普通决策结果。
         // 判据与玩家侧同源（`can_cast`），免得 AI 与玩家对"闪不闪得动"有不同的答案
-        if *tactic == Tactic::Dodge && can_cast(&ROLL_ABILITY, stamina.current).is_err() {
+        if *tactic == Tactic::Dodge
+            && can_cast(&ROLL_ABILITY, crate::skills::Pools::new(stamina.current, 0)).is_err()
+        {
             *tactic = Tactic::Approach;
         }
 

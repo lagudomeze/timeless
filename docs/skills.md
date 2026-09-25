@@ -82,6 +82,7 @@ pub struct RegisterAbility(pub AbilityDef);
 /// 里长出一堆永远为真的分支。
 pub enum Requirement {
     EnoughEnergy,
+    EnoughAmmo,   // 资源分线：远程 / 重击花弹药
 }
 
 /// 入参是**事实**（精力多少）而不是 `&World`：这一层零 Bevy、可脱离 App 单测，
@@ -91,12 +92,14 @@ pub fn can_cast(def: &AbilityDef, stamina: u32) -> Result<(), BlockReason>;
 
 | 早先设想 | 实际 | 为什么 |
 | :--- | :--- | :--- |
-| `Requirement` 十条（沉默 / 眩晕 / 冷却…） | **只有 `EnoughEnergy`** | 那些状态还不存在；等它们落地再加 |
+| `Requirement` 十条（沉默 / 眩晕 / 冷却…） | **只有 `EnoughEnergy` / `EnoughAmmo`** | 那些状态还不存在；等它们落地再加 |
+| 花费是一个 `u32` | **`ResourceCost` 枚举**（`Free` / `Energy(n)` / `Ammo(n)`） | 资源分线之后"花哪条线"与"花多少"必须一起说——三处（定义 / 校验 / HUD）读同一个值，不会分叉。**条件与花费是两件事**：走一格要求有精力却**不花**精力 |
 | `can_cast(caster, ability, world)` | `can_cast(def, stamina)` | 拿 `&World` 会把它绑死 Bevy、没法纯测；事实由调用方读出来 |
 | 独立的 `CastFailReason` | 复用 `timeline::BlockReason` | 失败要驱动的提示条本来就是按它写的，平行枚举只会让两边同步维护 |
 
 **它真的成了唯一校验点**：`menu` 的过滤（`affordable_indices` / `SkillDef::affordable`）、
-`fireball` / `roll` / `parry` 的声明系统，连 **AI 判断"闪不闪得动"**都走它。
+`fireball` / `roll` / `parry` / `dash` 的声明系统，连 **AI 判断"闪不闪得动"**都走它。
+入参是两条资源线的**事实**（`Pools { energy, ammo }`），所以分线没有让它变形。
 剩下唯一的 `Stamina::can_afford` 是它自己的内部实现。
 
 - **在填意图之前跑一次**（见 [timeline.md](timeline.md) 第三节）；失败就写一条

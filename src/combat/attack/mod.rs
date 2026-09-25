@@ -17,6 +17,7 @@
 use bevy::prelude::*;
 pub mod abilities;
 pub mod actions;
+pub mod ammo;
 pub mod arrow;
 pub mod events;
 pub mod explosion;
@@ -34,11 +35,12 @@ pub use actions::{
     declare_shoot_at, declare_shoot_system, melee_action_executor_system, melee_action_scene,
     refund_melee_observer, shoot_action_executor_system, shoot_action_scene,
 };
-pub use arrow::{ARROW_DAMAGE, ARROW_FRAME, ARROW_POWER, ARROW_SPEED, arrow_scene};
+pub use ammo::{AMMO_MAX, AMMO_RECOVER_INTERVAL, Ammo, AmmoRecoverTimer, recover_ammo_system};
+pub use arrow::{ARROW_COST, ARROW_DAMAGE, ARROW_FRAME, ARROW_POWER, ARROW_SPEED, arrow_scene};
 pub use events::{FireCommand, MeleeCommand, ShootCommand};
 pub use explosion::{explosion_system, radial_damage_units};
 pub use fireball::{
-    ARRIVAL_TOLERANCE, FIREBALL_COST, FIREBALL_DAMAGE, FIREBALL_FRAME, FIREBALL_POWER,
+    ARRIVAL_TOLERANCE, FIREBALL_AMMO_COST, FIREBALL_DAMAGE, FIREBALL_FRAME, FIREBALL_POWER,
     FIREBALL_RADIUS, FIREBALL_SPEED, FIREBALL_TIMING, Fireball, FireballAction, ProjectileArrived,
     declare_fireball_at, declare_fireball_system, declare_melee_system,
     fireball_action_executor_system, fireball_action_scene, fireball_scene,

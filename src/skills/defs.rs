@@ -166,15 +166,67 @@ pub enum CounterCost {
     CancelDecision,
 }
 
+/// 这一手**花什么、花多少**——花费的唯一真相。
+///
+/// **为什么是一个枚举而不是"数字 + 资源种类"两个字段**：两个字段必须互相吻合，
+/// 而三处（定义 / 校验 / HUD）都要读它——一个枚举让"花什么"只有一种说法。
+///
+/// **资源分线**（`TODO.md` 的「资源分线」）：
+///
+/// | 池子 | 服务什么 | 恢复 |
+/// | :--- | :--- | :--- |
+/// | [`Self::Energy`] | **防御与机动**（翻滚 / 招架 / 冲刺） | 每次重新可决策 +1（快） |
+/// | [`Self::Ammo`] | **远程与重击**（火球 / 箭矢） | 每几秒 +1（慢） |
+///
+/// 两条线**恢复速度不同**，这才是分线的意义：伤害手段是"这局还能开几炮"的预算，
+/// 防御手段是"这一回合能不能再滚一次"的即时取舍。同一条池子里做不出这两种手感。
+///
+/// **平 A 免费**：近战横扫是 [`Self::Free`]，因此"没资源了"永远还有事可做。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceCost {
+    /// 免费（平 A）
+    #[default]
+    Free,
+    /// 精力：**防御 / 机动的货币**，回得快
+    Energy(u32),
+    /// 弹药：**远程 / 重击的货币**，回得慢
+    Ammo(u32),
+}
+
+impl ResourceCost {
+    /// 要花多少（`Free` 是 0）。HUD 的角标与 tooltip 直接显示它。
+    pub fn amount(self) -> u32 {
+        match self {
+            Self::Free => 0,
+            Self::Energy(amount) | Self::Ammo(amount) => amount,
+        }
+    }
+
+    /// HUD 用的短名（`-` / `EN` / `AMMO`）。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Free => "-",
+            Self::Energy(_) => "EN",
+            Self::Ammo(_) => "AMMO",
+        }
+    }
+}
+
 /// 释放条件：**技能自己的那几条**（类别共享的那条另算，见 [`AbilityCategory::shared_requirement`]）。
 ///
-/// ⚠️ **只列真的会被检查的条件**：现在只有精力。沉默 / 眩晕 / 冷却这些等它们
-/// 真的存在了再加——预先堆一个用不上的枚举，只会让 `can_cast` 里长出一堆
-/// 永远为真的分支（`docs/skills.md` 第三节的"现在不预先抽象"）。
+/// ⚠️ **只列真的会被检查的条件**：沉默 / 眩晕 / 冷却这些等它们真的存在了再加——
+/// 预先堆一个用不上的枚举，只会让 `can_cast` 里长出一堆永远为真的分支
+/// （`docs/skills.md` 第三节的"现在不预先抽象"）。
+///
+/// **条件与花费是两件事**：条件问"够不够"，花费说"扣哪个池子"。所以
+/// Movement 类要求有精力（[`AbilityCategory::shared_requirement`]）却**不花**精力
+/// （走一格是免费的）——两者必须分开表达。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requirement {
-    /// 精力够 `cost`
+    /// 精力够这一手要花的量
     EnoughEnergy,
+    /// 弹药够这一手要花的量
+    EnoughAmmo,
 }
 
 /// 类别共享的条件：`can_cast` **先按类别判一次**，技能只写自己那几条。
@@ -200,8 +252,8 @@ pub struct AbilityDef {
     /// 前摇 / 后摇 / 打断抗性（数值仍由各域给出，这里只聚合）
     pub timing: ActionTiming,
     pub targeting: TargetSelector,
-    /// 精力消耗
-    pub cost: u32,
+    /// **花什么、花多少**（`Free` = 平 A）
+    pub cost: ResourceCost,
     /// 释放条件（类别共享条件之外的）
     pub requirements: &'static [Requirement],
     /// 能不能被反制，以及当反制要付什么（见 `docs/skills.md` 第四节）
