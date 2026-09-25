@@ -1689,6 +1689,122 @@ mod tests {
         );
     }
 
+    /// **伤害数值也从配置读**：改 `melee.power` 之后，命中公式扣的正是配置里那个数。
+    ///
+    /// 与节奏那条（`a_changed_config_reaches_the_catalogue_and_the_declaration`）
+    /// 同一条路子，只是判据换成**实际掉血**：轨迹是"配置 → 执行器 → 攻击实体 →
+    /// 命中管线"，任何一段漏读配置，这里都会红。
+    ///
+    /// 用轻量夹具（场上只有自己摆的两个单位，不受开局组装出的单位干扰），
+    /// 判据是确切数值而不是上界——上界那种写法在"公式根本没读配置"时也成立，等于空跑。
+    #[test]
+    fn a_changed_config_reaches_the_damage_formula() {
+        let mut app = test_app();
+        // 近战威力改成一个远离默认值 15 的数（`test_app` 没有 `ConfigPlugin`，
+        // 没有这一份资源时各域退回常量——所以必须手动注入）
+        app.insert_resource(crate::config::ActionConfig {
+            melee: crate::config::ActionNumbers {
+                windup: 0.2,
+                recovery: 0.35,
+                interrupt_resist: 3,
+                cost: 0,
+                power: 23,
+                frame: 5,
+            },
+            ..Default::default()
+        });
+
+        // 玩家与敌人贴脸：近战热键 `W` 直接打最近的那个敌人
+        spawn_player(&mut app, Cell::new(0, 0), Vec3::new(0.0, 0.0, 0.0));
+        let enemy = spawn_enemy(&mut app, Cell::new(1, 0), Vec3::new(2.0, 0.0, 0.0));
+        app.world_mut()
+            .entity_mut(enemy)
+            .insert(crate::combat::Armor(0));
+
+        press(&mut app, KeyCode::KeyW);
+        for _ in 0..8 {
+            app.update();
+        }
+
+        let taken = 50 - app.world().get::<Health>(enemy).unwrap().current;
+        assert_eq!(
+            taken, 23,
+            "近战应当扣配置里的 23 点，而不是载荷常量 15（公式没读配置的话会掉满 15）"
+        );
+    }
+
+    /// 箭矢（另一条执行器）同样从配置读伤害：`shoot.power` 改了就改扣血。
+    ///
+    /// 三条攻击执行器各读各的字段，所以每条都要有自己的判据——只钉近战的话，
+    /// 箭矢 / 火球里漏读配置不会被发现。
+    #[test]
+    fn a_changed_config_reaches_the_arrow_damage() {
+        let mut app = test_app();
+        app.insert_resource(crate::config::ActionConfig {
+            shoot: crate::config::ActionNumbers {
+                windup: 0.3,
+                recovery: 0.5,
+                interrupt_resist: 2,
+                cost: 0,
+                power: 31,
+                frame: 4,
+            },
+            ..Default::default()
+        });
+
+        spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        let enemy = spawn_enemy(&mut app, Cell::new(3, 0), Vec3::new(7.0, 0.0, 1.0));
+        app.world_mut()
+            .entity_mut(enemy)
+            .insert(crate::combat::Armor(0));
+
+        // 第 5 格 = 箭矢
+        press(&mut app, KeyCode::Digit5);
+        for _ in 0..20 {
+            app.update();
+        }
+
+        let taken = 50 - app.world().get::<Health>(enemy).unwrap().current;
+        assert_eq!(
+            taken, 31,
+            "箭矢应当扣配置里的 31 点，而不是常量 10（漏读配置会掉满 10）"
+        );
+    }
+
+    /// 火球（第三条执行器）同样从配置读伤害。
+    #[test]
+    fn a_changed_config_reaches_the_fireball_damage() {
+        let mut app = test_app();
+        app.insert_resource(crate::config::ActionConfig {
+            fireball: crate::config::ActionNumbers {
+                windup: 0.3,
+                recovery: 0.5,
+                interrupt_resist: 2,
+                cost: 2,
+                power: 27,
+                frame: 7,
+            },
+            ..Default::default()
+        });
+
+        spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        let enemy = spawn_enemy(&mut app, Cell::new(2, 0), Vec3::new(5.0, 0.0, 1.0));
+        app.world_mut()
+            .entity_mut(enemy)
+            .insert(crate::combat::Armor(0));
+
+        press(&mut app, KeyCode::KeyQ);
+        for _ in 0..18 {
+            app.update();
+        }
+
+        let taken = 50 - app.world().get::<Health>(enemy).unwrap().current;
+        assert_eq!(
+            taken, 27,
+            "火球爆炸应当扣配置里的 27 点，而不是常量 12（漏读配置会掉满 12）"
+        );
+    }
+
     /// **战斗状态必须能被 BRP 读到**：没注册反射的组件在远程协议里等于不存在
     /// （`world.query` 既不能拿它当过滤器，也取不到数据）。
     ///

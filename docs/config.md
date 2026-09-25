@@ -70,6 +70,24 @@ ActionConfig（资源，来自 .ron 或默认值）
 | 缺口 | 说明 |
 | :--- | :--- |
 | **热重载** | 改完文件要重启。要做得挂一个文件监视器（`hot-reload` feature 那套可以复用） |
-| **伤害数值** | `PhysicalDamage` 仍写在各载荷的工厂里（`melee_scene` 的字面量）。要把它们也接到配置，得让工厂接收数值参数 |
 | **`ActionRegistry`** | HUD 仍读 `SKILLS` 数组而非技能目录（见 `TODO.md` 的 M24c 审计结论） |
 | **地形 / 相机等数值** | 本次只做了**动作**相关；`TerrainConfig` 等已有自己的资源，外置与否另说 |
+
+### 伤害数值 ✅ 已外置
+
+`power` 不再只是展示用的读数——三个执行器（近战 / 箭矢 / 火球）现在都从
+**配置**取伤害（`melee_damage(config)` / `arrow_damage(config)` / `fireball_damage(config)`，
+缺省 = 各域常量），于是改 `config/actions.ron` 的 `power` **真的改掉扣血**：
+
+```text
+配置 melee.power ──▶ 近战执行器 ──▶ 攻击实体 PhysicalDamage ──▶ 命中公式（扣多少血）
+```
+
+**一处真相仍然成立**：技能目录的 `power` 与载荷的伤害是**同一次读配置**的结果
+（`abilities_from(&config)` 与执行器读同一个字段），`menu_matches_the_catalogue`
+钉住两边不许分叉。武器加成仍由执行器在生成时加上
+（`equipment::weapon_damage(基础, 加成)`），装备域不认识配置。
+
+验收：`a_changed_config_reaches_the_damage_formula`——把 `melee.power` 调成 23，
+按近战热键打一发，敌人**恰好**掉 23 点；**验过不是空跑**（让执行器忽略配置、
+退回 `MELEE_DAMAGE`(15) 后转红，报实际掉 15）。

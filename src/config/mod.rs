@@ -62,7 +62,10 @@ pub struct ActionNumbers {
     pub interrupt_resist: i32,
     /// 资源消耗的**数量**（花哪条线由各域的技能定义 `ResourceCost` 决定）
     pub cost: u32,
-    /// 大致威力（**展示 + 个体伤害**：命中数值仍归载荷的 `PhysicalDamage`）
+    /// 威力：**展示读数 + 真正的伤害**。
+    ///
+    /// 三个攻击执行器（近战 / 箭矢 / 火球）从它取基础伤害，武器加成再由执行器叠上
+    /// （见 `docs/config.md` 的「伤害数值」）——所以改它真的改扣血，不只是改面板数字。
     pub power: i32,
     /// 速度帧（信息层读数："谁先动"）
     pub frame: u32,
