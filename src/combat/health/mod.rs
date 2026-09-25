@@ -45,8 +45,8 @@ impl Health {
 pub struct DeathEvent {
     /// 阵亡的实体
     pub entity: Entity,
-    /// 击杀者（伤害来源；环境伤害可以是 `None`）
-    pub killer: Option<Entity>,
+    /// 击杀者的**阵营**（环境伤害可以是 `None`）
+    pub killer: Option<super::Faction>,
     /// **虚拟时刻**（秒）：致命一击落下的时刻（从那条 [`DamageEvent`] 继承，
     /// 因此死亡与命中在日志里带同一个时刻戳）。
     pub at: f32,
@@ -59,11 +59,21 @@ pub struct DeathEvent {
 /// 消费：[`apply_damage_system`](crate::combat::health::apply_damage_system)（唯一的扣血点）、
 /// 战斗日志（[`crate::presentation::BattleLog`]）。
 ///
-/// `source` 只为复盘 / 击杀归属存在（死亡消息要写清"谁杀的"），结算本身不看它。
+/// `attacker` 只为复盘 / 击杀归属存在（死亡消息要写清"谁杀的"），结算本身不看它。
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct DamageEvent {
-    /// 伤害来源（攻击实体 / 施法者；环境伤害可以是 `None`）
+    /// 伤害来源实体（攻击实体 / 施法者；环境伤害可以是 `None`）。
+    /// ⚠️ **不要拿它去查表**：攻击实体是短命的（箭矢命中即销毁、火球落地即销毁），
+    /// 等表现层读到这条消息时它往往已经不存在了。要"谁打的"就读 [`Self::attacker`]。
     pub source: Option<Entity>,
+    /// **出手方的阵营**（**不要**拿 `source` 现场查——见上）。
+    ///
+    /// 由**写方**在构造时从攻击实体的 `Faction` 读出：写方就在结算那一帧，
+    /// 攻击实体那时还活着，这是唯一拿得到的时机。
+    /// 战斗日志靠它写出「谁打的谁」——从前它按 `source` 查 `Faction`，于是
+    /// 火球 / 箭矢那两行**永远丢掉出手方**（攻击实体已销毁），读出来是
+    /// 「敌人 受到 13 点伤害」而不是「玩家 命中 敌人」。有整机测试钉住。
+    pub attacker: Option<super::Faction>,
     /// 被打的目标
     pub target: Entity,
     /// 扣多少血
@@ -102,7 +112,8 @@ pub fn apply_damage_system(
             info!("☠ {:?} 生命归零，发出 DeathEvent", damage.target);
             deaths.write(DeathEvent {
                 entity: damage.target,
-                killer: damage.source,
+                // 击杀者继承出手方的阵营（那时攻击实体可能已经销毁，见 `DamageEvent`）
+                killer: damage.attacker,
                 // 死亡与命中带同一个时刻戳（复盘里这两行必须对得上）
                 at: damage.at,
             });
@@ -146,6 +157,7 @@ mod tests {
 
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target: victim,
             amount: 12,
             at: 0.0,
@@ -179,6 +191,7 @@ mod tests {
 
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target: victim,
             amount: 12,
             at: 4.75,
@@ -212,6 +225,7 @@ mod tests {
         for _ in 0..2 {
             app.world_mut().write_message(DamageEvent {
                 source: None,
+                attacker: None,
                 target: victim,
                 amount: 12,
                 at: 0.0,

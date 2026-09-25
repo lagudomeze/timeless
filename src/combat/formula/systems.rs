@@ -61,6 +61,8 @@ pub fn apply_physical_hits_system(
     blockers: Query<&BlockChance>,
     // 装备加成：有效护甲 / 格挡率 = 基础 + 加成（见 `docs/equipment.md` 第五节）
     equipment: Query<&crate::equipment::EquipmentBonus>,
+    // 出手方的阵营：**在这里读**（攻击实体还活着），不留给表现层回头查
+    factions: Query<&crate::combat::Faction>,
     mut hit_once: Query<&mut HitOnce>,
     mut projectiles: Query<(&mut Projectile, Option<&mut Velocity>)>,
 ) {
@@ -115,6 +117,9 @@ pub fn apply_physical_hits_system(
         if amount > 0 {
             damage_events.write(DamageEvent {
                 source: Some(attack),
+                // **在攻击实体还活着的时候**读出出手方：它下一帧就可能被销毁，
+                // 表现层那时再查就查不到了（见 `DamageEvent::attacker`）
+                attacker: factions.get(attack).ok().copied(),
                 target,
                 amount,
                 at: now,
@@ -123,7 +128,9 @@ pub fn apply_physical_hits_system(
         // 招架反制：回敬攻击实体一半伤害（向上取整，至少 1 点）
         if outcome == DefenseOutcome::Parried {
             damage_events.write(DamageEvent {
+                // 反制伤害的出手方是**招架者**（也就是被打的目标）
                 source: Some(target),
+                attacker: factions.get(target).ok().copied(),
                 target: attack,
                 amount: counter_damage(damage.0),
                 at: now,

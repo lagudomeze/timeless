@@ -170,6 +170,7 @@ mod tests {
 
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target,
             amount: 12,
             at: 0.0,
@@ -202,6 +203,7 @@ mod tests {
             .id();
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target,
             amount: 1,
             at: 0.0,
@@ -236,6 +238,7 @@ mod tests {
         let mut app = effect_app();
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target: Entity::PLACEHOLDER,
             amount: 5,
             at: 0.0,
@@ -254,6 +257,7 @@ mod tests {
             .id();
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target,
             amount: 1,
             at: 0.0,
