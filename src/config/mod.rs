@@ -37,6 +37,9 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub mod plugin;
+/// 配置热重载（只在 `hot-reload` feature 下编译）。
+#[cfg(feature = "hot-reload")]
+pub mod reload;
 
 pub use plugin::ConfigPlugin;
 

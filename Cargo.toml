@@ -7,7 +7,10 @@ edition = "2024"
 # 开发期热重载：改 `assets/` 里的文件存盘后自动重新加载，不用重启。
 # 生产构建不带它（它会把文件监视器拉进依赖树）。
 #   cargo run --features hot-reload
-hot-reload = ["bevy/file_watcher"]
+#
+# `dep:notify-debouncer-full` 是 `config/actions.ron` 的热重载（数值不走资产管线，
+# bevy 的 `file_watcher` 看不到它），见 `src/config/reload.rs`。
+hot-reload = ["bevy/file_watcher", "dep:notify-debouncer-full"]
 
 [dependencies]
 rand = "0.10"
@@ -21,6 +24,13 @@ ron = "0.12"
 # 它本来就在 bevy_text 的依赖树里，这里只是把它提成直接依赖。
 [dev-dependencies]
 skrifa = "0.44"
+
+# `config/actions.ron` 的热重载（只在 `hot-reload` feature 下编译）：
+# 用它的 `Debouncer` 监视那个目录，存盘后重读数值。
+# ⚠️ 它本来就在 bevy `file_watcher` 的依赖树里，但要用它的类型就得直接依赖。
+[dependencies.notify-debouncer-full]
+version = "0.7"
+optional = true
 
 [dependencies.bevy]
 version = "0.19"

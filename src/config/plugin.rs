@@ -13,5 +13,8 @@ pub struct ConfigPlugin;
 impl Plugin for ConfigPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(PreStartup, load_action_config_system);
+        // 热重载只在开发期编译进来（`cargo run --features hot-reload`）
+        #[cfg(feature = "hot-reload")]
+        super::reload::plugin(app);
     }
 }

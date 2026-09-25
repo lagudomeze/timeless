@@ -473,8 +473,14 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
       三段分别钉**目录**、**行动实体**、**玩家按键声明**都拿到了配置里的值；
       **验过不是空跑**（让 `melee_timing` 忽略配置后，第三段立刻转红，
       报"实际 [0.35]"）。
-      **仍未做**：热重载（改文件要重启）、`ActionRegistry` 让 HUD 从注册表读
-      （现在仍是 `SKILLS` 数组）。
+      **热重载已补**（本次）：`cargo run --features hot-reload` 下改 `config/actions.ron`
+      存盘即生效——`src/config/reload.rs`（feature-gated）自挂 `notify-debouncer-full`
+      监视器（数值不走资产管线，bevy 的 `file_watcher` 看不到），重读 → 换
+      `ActionConfig` 资源 → 广播 `ReloadActionConfig` 让各域重注册定义；
+      解析失败**保留上一份好配置**（不崩）。
+      验收：`reload::tests` 三条分支；**实机**：改 `fireball.power` 12→40 存盘，
+      按 `Q` 敌人掉 41（40 + 武器 1）、血 50→9。
+      **仍未做**：`ActionRegistry` 让 HUD 从注册表读（现在仍是 `SKILLS` 数组）。
       **伤害数值已外置**（本次）：三个攻击执行器（近战 / 箭矢 / 火球）现在从
       `ActionConfig` 的 `power` 取基础伤害（`melee_damage` / `arrow_damage` /
       `fireball_damage`，缺省 = 各域常量），改配置真的改扣血；武器加成仍由执行器
@@ -993,7 +999,7 @@ cargo run                                   # 冒烟：体素地形 + 世界空�
 | bevy | 0.19.1 | 引擎（`Cargo.toml` 写 `0.19`，`Cargo.lock` 锁 0.19.1） |
 | rand | 0.10.2 | 装饰物随机摆放 |
 | bevy_brp_extras | 0.22 | 运行时调试协议扩展：截图 / 输入模拟 / 干净退出 |
-| notify-debouncer-full | 0.7.0 | `hot-reload` feature 的传递依赖（`bevy/file_watcher`） |
+| notify-debouncer-full | 0.7.0 | `hot-reload` feature：`config/actions.ron` 的热重载（数值不走资产管线） |
 | serde + ron | 未引入 | 配置序列化（「动作数值外置」时引入） |
 
 引擎官方文档：<https://bevy.org/learn/> ·
