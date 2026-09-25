@@ -59,6 +59,8 @@ pub fn explosion_system(
             debug!("💥 爆炸命中 {:?}（距离 {distance:.2}）", target);
             damage_events.write(DamageEvent {
                 source: Some(blast.projectile),
+                // 出手方 = 投掷方的阵营（**就在这里定下来**：投射物随后就被销毁）
+                attacker: Some(blast.faction),
                 target: *target,
                 amount: blast.damage,
                 at: now,

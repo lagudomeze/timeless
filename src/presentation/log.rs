@@ -40,10 +40,10 @@ impl BattleLog {
 /// 消费伤害 / 死亡消息，写入可读文本（当前同时输出到控制台）。
 ///
 /// **写出「谁打的谁」**（死亡复盘的底子，见 `docs/game-design.md`「信息即力量」）：
-/// 伤害的来源 `DamageEvent.source` 是**攻击实体**（箭 / 横扫 / 火球），
-/// 它身上挂着投掷方的 `Faction` 而不是 `Health`，所以这里读的是**出手方的阵营**
-/// ——"敌人打了你"比"某个实体打了你"更像玩家想看的那句话。
-/// 环境伤害（`source: None`）不带主，照旧只写受击方。
+/// 出手方直接读 [`DamageEvent::attacker`]（**阵营**，由写方在攻击实体还活着时读好），
+/// 不去查 `source` 那个实体——它下一帧就可能被销毁，表现层再查只会拿到 `None`
+/// （**踩过**：火球 / 箭矢的两行因此永远丢掉出手方，读出来是「敌人 受到 13 点伤害」）。
+/// 环境伤害（`attacker: None`）不带主，照旧只写受击方。
 ///
 /// **时刻戳来自消息本身**（`DamageEvent.at`，由写方在结算那一帧记下）：
 /// 复盘要的正是"**哪个时刻**命中了谁"。日志不自己读时钟——那样写出来的是
@@ -55,7 +55,7 @@ pub fn battle_log_system(
     faction_q: Query<&Faction>,
     mut log: ResMut<BattleLog>,
 ) {
-    // 攻击实体（来源）与单位（目标）都在这个查询里——两者都带 `Faction`
+    // 受击方仍然按实体查（它是**单位**，不会消失得那么快）
     let side = |entity: Entity| faction_q.get(entity).map(faction_label).ok();
     for damage in damages.read() {
         // 伤害类型不再是一个中心枚举：每种伤害有各自的组件与系统，
@@ -67,7 +67,7 @@ pub fn battle_log_system(
         // 读出来是「敌人玩家 命中，受到 16 点伤害」（受击方在前、出手方在后，
         // 中间连空格都没有）。实机打一场就能看见，四条单测全都漏了它
         // （它们只断言"两个标签都出现"，不检查语序与分隔）。
-        let text = match damage.source.and_then(side) {
+        let text = match damage.attacker.as_ref().map(faction_label) {
             Some(attacker) => format!("{attacker} 命中 {who}，造成 {} 点伤害", damage.amount),
             None => format!("{who} 受到 {} 点伤害", damage.amount),
         };
@@ -78,7 +78,7 @@ pub fn battle_log_system(
     }
     for death in deaths.read() {
         let who = side(death.entity).unwrap_or("单位");
-        let text = match death.killer.and_then(side) {
+        let text = match death.killer.as_ref().map(faction_label) {
             Some(killer) => format!("{who} 被{killer}击杀"),
             None => format!("{who} 阵亡"),
         };
@@ -102,8 +102,9 @@ pub fn faction_label(faction: &Faction) -> &'static str {
 mod tests {
     use super::*;
 
-    /// 攻击实体带 `Faction` 但不带 `Health`——日志靠这一点认出"谁出手的"。
-    fn log_app() -> (App, Entity, Entity) {
+    /// 受击方是一个带 `Faction` 的单位；出手方**不再是一个实体**——
+    /// 它是消息里的 `attacker` 阵营（写下这条消息时那个攻击实体多半已经销毁了）。
+    fn log_app() -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<BattleLog>()
@@ -111,8 +112,7 @@ mod tests {
             .add_message::<DeathEvent>()
             .add_systems(Update, battle_log_system);
         let player = app.world_mut().spawn(Faction::Player).id();
-        let attack = app.world_mut().spawn(Faction::Enemy).id(); // 攻击实体：只有阵营
-        (app, player, attack)
+        (app, player)
     }
 
     fn last(app: &App) -> String {
@@ -133,9 +133,10 @@ mod tests {
     /// 现在钉住**确切的那句**：语序（出手方在前）与分隔（`命中 {who}` 之间有空格）。
     #[test]
     fn a_hit_names_the_side_that_struck() {
-        let (mut app, player, attack) = log_app();
+        let (mut app, player) = log_app();
         app.world_mut().write_message(DamageEvent {
-            source: Some(attack),
+            source: None,
+            attacker: Some(Faction::Enemy),
             target: player,
             amount: 12,
             at: 3.5,
@@ -153,9 +154,10 @@ mod tests {
     /// 而不是"记录日志的那一刻"含糊过去。
     #[test]
     fn a_line_is_stamped_with_the_moment_it_happened() {
-        let (mut app, player, attack) = log_app();
+        let (mut app, player) = log_app();
         app.world_mut().write_message(DamageEvent {
-            source: Some(attack),
+            source: None,
+            attacker: Some(Faction::Enemy),
             target: player,
             amount: 7,
             at: 12.3,
@@ -174,9 +176,10 @@ mod tests {
     /// 单独一条守着这个形状：两方标签相邻时（"敌人玩家"）必然是漏了分隔。
     #[test]
     fn the_two_side_labels_are_never_glued_together() {
-        let (mut app, player, attack) = log_app();
+        let (mut app, player) = log_app();
         app.world_mut().write_message(DamageEvent {
-            source: Some(attack),
+            source: None,
+            attacker: Some(Faction::Enemy),
             target: player,
             amount: 1,
             at: 0.0,
@@ -195,9 +198,10 @@ mod tests {
     /// 环境伤害（`source: None`）没有出手方，照旧只写受击方——不能 panic 也不能写"被未知"。
     #[test]
     fn environmental_damage_has_no_attacker() {
-        let (mut app, player, _) = log_app();
+        let (mut app, player) = log_app();
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target: player,
             amount: 3,
             at: 0.0,
@@ -215,10 +219,10 @@ mod tests {
     /// **死亡复盘**：阵亡那一行要说清是被谁击杀的（`DeathEvent.killer` 一直被忽略）。
     #[test]
     fn a_death_names_the_killer() {
-        let (mut app, player, attack) = log_app();
+        let (mut app, player) = log_app();
         app.world_mut().write_message(DeathEvent {
             entity: player,
-            killer: Some(attack),
+            killer: Some(Faction::Enemy),
             at: 8.0,
         });
         app.update();
@@ -230,7 +234,7 @@ mod tests {
     /// 没有击杀者（环境致死）时退回"阵亡"，不写"被未知击杀"。
     #[test]
     fn a_death_without_a_killer_stays_plain() {
-        let (mut app, player, _) = log_app();
+        let (mut app, player) = log_app();
         app.world_mut().write_message(DeathEvent {
             entity: player,
             killer: None,

@@ -1521,6 +1521,7 @@ mod tests {
         // 施法者被击杀：写一条足以致命的伤害，走通用死亡链路
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target: player,
             amount: 999,
             at: 0.0,
@@ -1552,6 +1553,7 @@ mod tests {
         for _ in 0..3 {
             app.world_mut().write_message(DamageEvent {
                 source: None,
+                attacker: None,
                 target: victim,
                 amount: 999,
                 at: 0.0,
@@ -1589,6 +1591,7 @@ mod tests {
 
         app.world_mut().write_message(DamageEvent {
             source: None,
+            attacker: None,
             target: enemy,
             amount: 999,
             at: 0.0,
@@ -1856,6 +1859,49 @@ mod tests {
         assert!(
             stamp >= 1.0,
             "时刻应当是命中那一刻的世界时间（空转 1s 后才出手），实际 {stamp}（日志行：{line}）"
+        );
+    }
+
+    /// **远程命中的日志行不许丢掉出手方**（实机发现的显示 bug）。
+    ///
+    /// 火球 / 箭矢的**攻击实体是短命的**：爆炸系统在结算那一帧就把投射物销毁了，
+    /// 而战斗日志跑在表现层（`PresentationSet`，晚于 `CombatSet`）。从前日志按
+    /// `DamageEvent.source` 那个实体去查 `Faction`，于是远程命中那两行**永远**读成
+    /// 「敌人 受到 13 点伤害」——丢了"谁打的"，正好废掉复盘最想要的那半句。
+    /// 单测抓不到，因为它把日志排在了结算同帧（那时投射物还在）。
+    ///
+    /// 现在出手方是**消息自带的阵营**（写方在投射物还活着时读好）。判据是
+    /// **整句**：必须同时出现出手方与受击方，且是「玩家 命中 敌人」这个语序。
+    #[test]
+    fn a_ranged_hit_keeps_the_attacker_in_the_log() {
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        for _ in 0..8 {
+            app.update(); // 让关卡组装与敌人各就位（真实流水线顺序）
+        }
+
+        // 火球（锁格 → 飞到落点 → 爆炸），键盘路径自动打最近敌人
+        press(&mut app, KeyCode::KeyQ);
+        for _ in 0..15 {
+            app.update();
+        }
+
+        let lines: Vec<String> = app
+            .world()
+            .resource::<crate::presentation::BattleLog>()
+            .entries()
+            .map(str::to_string)
+            .collect();
+        assert!(!lines.is_empty(), "火球应当打中并留下日志");
+        let hit = lines
+            .iter()
+            .find(|line| line.contains("命中"))
+            .unwrap_or_else(|| panic!("远程命中要有「命中」那一句，实际：{lines:?}"));
+        assert!(
+            hit.contains("玩家 命中 敌人"),
+            "远程命中的日志要写出出手方（玩家）与受击方（敌人），实际：{hit}"
         );
     }
 
