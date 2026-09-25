@@ -1985,6 +1985,53 @@ mod tests {
         );
     }
 
+    /// **威胁格画的是"敌人瞄着的那一格"**：一条敌方（有 `ActionOf` 指向敌对单位）
+    /// 前摇中的行动，它的落点格上必须有一块**可见**的薄片。
+    ///
+    /// 这条走**整机流水线**（`headless_app`）：确认 `presentation` 的威胁格系统
+    /// 真的挂在流水线上，且判据用**格中心反查**而不是"有没有东西可见"——
+    /// 后者画错格也会绿。
+    ///
+    /// 行动实体自己摆（不靠 AI 随机声明），所以这条是**确定的**，不会偶尔空跑。
+    #[test]
+    fn the_threat_grid_paints_the_cell_the_enemy_aims_at() {
+        use crate::presentation::ThreatTile;
+
+        let mut app = crate::test_support::headless_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        app.update(); // Startup：威胁格池建好
+
+        // 一个敌对单位 + 一条还在前摇、威胁着 (2,0) 的行动
+        let enemy = spawn_enemy(&mut app, Cell::new(2, 0), Vec3::new(5.0, 0.0, 0.0));
+        let aimed = Cell::new(2, 0);
+        app.world_mut().spawn((
+            ActionOf(enemy),
+            Threatens {
+                cells: vec![Cell::new(1, 0), aimed],
+            },
+            crate::timeline::ActionTiming::new(0.2, 0.3, 3),
+            ScheduledAction::default(),
+        ));
+
+        app.update();
+
+        let center = aimed.center();
+        let mut tiles = app
+            .world_mut()
+            .query::<(&ThreatTile, &Transform, &Visibility)>();
+        let painted = tiles.iter(app.world()).any(|(_, transform, visibility)| {
+            *visibility == Visibility::Visible
+                && (transform.translation.x - center.x).abs() < 0.01
+                && (transform.translation.z - center.y).abs() < 0.01
+        });
+        assert!(
+            painted,
+            "敌人瞄着 {aimed:?}（中心 {center:?}），那里应当有一块可见的威胁格薄片"
+        );
+    }
+
     /// **战斗状态必须能被 BRP 读到**：没注册反射的组件在远程协议里等于不存在
     /// （`world.query` 既不能拿它当过滤器，也取不到数据）。
     ///
