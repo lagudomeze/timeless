@@ -1523,6 +1523,7 @@ mod tests {
             source: None,
             target: player,
             amount: 999,
+            at: 0.0,
         });
         app.update();
         assert!(
@@ -1553,6 +1554,7 @@ mod tests {
                 source: None,
                 target: victim,
                 amount: 999,
+                at: 0.0,
             });
             app.update();
         }
@@ -1589,6 +1591,7 @@ mod tests {
             source: None,
             target: enemy,
             amount: 999,
+            at: 0.0,
         });
         app.update(); // 扣血 → DeathEvent → despawn_dead
 
@@ -1802,6 +1805,57 @@ mod tests {
         assert_eq!(
             taken, 27,
             "火球爆炸应当扣配置里的 27 点，而不是常量 12（漏读配置会掉满 12）"
+        );
+    }
+
+    /// **日志里的时刻是"命中那一刻"的真实虚拟时间**，不是 0、也不是"记录日志的时刻"。
+    ///
+    /// 生产写方（`apply_physical_hits_system` / `explosion_system`）在结算那一帧从
+    /// `Time<Virtual>` 取时刻。判据是**那一刻的世界时间**：先让世界空转一段
+    /// （虚拟时间必然 > 0），再出手，日志行的前缀必须落在出手之后的时间窗里——
+    /// 写方若漏了时刻或写死 0，这里会红。
+    #[test]
+    fn a_hit_is_logged_at_the_moment_it_landed() {
+        let mut app = test_app();
+        app.init_resource::<crate::presentation::BattleLog>();
+        app.add_systems(
+            Update,
+            crate::presentation::battle_log_system.after(crate::combat::formula::FormulaSet),
+        );
+
+        // 先空转 1 秒：世界时间不再是 0，前缀就不可能靠一个常量伪造出来
+        for _ in 0..10 {
+            app.update();
+        }
+
+        spawn_player(&mut app, Cell::new(0, 0), Vec3::new(0.0, 0.0, 0.0));
+        let enemy = spawn_enemy(&mut app, Cell::new(1, 0), Vec3::new(2.0, 0.0, 0.0));
+        app.world_mut()
+            .entity_mut(enemy)
+            .insert(crate::combat::Armor(0));
+
+        press(&mut app, KeyCode::KeyW);
+        for _ in 0..8 {
+            app.update();
+        }
+
+        let line = app
+            .world()
+            .resource::<crate::presentation::BattleLog>()
+            .entries()
+            .last()
+            .expect("打中了就该有日志")
+            .to_string();
+        // 前缀形如 `[1.2s]`：取出那个数，确认它是**世界时间**而不是 0
+        let stamp: f32 = line
+            .trim_start_matches('[')
+            .split('s')
+            .next()
+            .and_then(|digits| digits.parse().ok())
+            .unwrap_or_else(|| panic!("日志行的时刻格式不对：{line}"));
+        assert!(
+            stamp >= 1.0,
+            "时刻应当是命中那一刻的世界时间（空转 1s 后才出手），实际 {stamp}（日志行：{line}）"
         );
     }
 

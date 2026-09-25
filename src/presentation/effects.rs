@@ -172,6 +172,7 @@ mod tests {
             source: None,
             target,
             amount: 12,
+            at: 0.0,
         });
         app.update();
         assert_eq!(
@@ -203,6 +204,7 @@ mod tests {
             source: None,
             target,
             amount: 1,
+            at: 0.0,
         });
         app.update();
 
@@ -236,6 +238,7 @@ mod tests {
             source: None,
             target: Entity::PLACEHOLDER,
             amount: 5,
+            at: 0.0,
         });
         app.update();
         assert_eq!(particle_count(&mut app), 0, "目标不在就不该有特效");
@@ -253,6 +256,7 @@ mod tests {
             source: None,
             target,
             amount: 1,
+            at: 0.0,
         });
         app.update();
 

@@ -46,6 +46,7 @@ pub fn physical_damage(raw: i32, armor: i32) -> i32 {
 #[allow(clippy::too_many_arguments)]
 pub fn apply_physical_hits_system(
     mut commands: Commands,
+    time: Res<Time<Virtual>>,
     mut damage_events: MessageWriter<DamageEvent>,
     attacks: Query<(
         Entity,
@@ -63,6 +64,8 @@ pub fn apply_physical_hits_system(
     mut hit_once: Query<&mut HitOnce>,
     mut projectiles: Query<(&mut Projectile, Option<&mut Velocity>)>,
 ) {
+    // 这一击的时刻：结算系统的"现在"就是命中时刻
+    let now = time.elapsed_secs();
     for (attack, damage, marker, power) in &attacks {
         // 已经结束的射弹不再结算（它正等着被清理）
         if projectiles
@@ -114,6 +117,7 @@ pub fn apply_physical_hits_system(
                 source: Some(attack),
                 target,
                 amount,
+                at: now,
             });
         }
         // 招架反制：回敬攻击实体一半伤害（向上取整，至少 1 点）
@@ -122,6 +126,7 @@ pub fn apply_physical_hits_system(
                 source: Some(target),
                 target: attack,
                 amount: counter_damage(damage.0),
+                at: now,
             });
         }
         // 打断：打中了才有对抗可言。**格挡照常触发**——它是减伤不是免伤，
