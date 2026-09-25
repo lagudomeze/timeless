@@ -93,6 +93,18 @@ pub const FIREBALL_TIMING: ActionTiming = ActionTiming::new(0.30, 0.50, 2);
 /// ⚠️ 它曾经是"精力 2"——资源分线（`TODO.md`）把它挪到了**弹药**线上：
 /// 伤害手段靠攒（弹药慢回），防御手段靠节奏（精力快回）。
 pub const FIREBALL_AMMO_COST: u32 = 2;
+
+/// 从配置取火球的花费（缺省 = 常量）——**声明扣费、退款、菜单显示读同一份**。
+///
+/// ⚠️ **曾经只在校验里读配置**：`declare_fireball_at` 扣的是常量 `FIREBALL_AMMO_COST`，
+/// 菜单的角标与 `can_cast` 也读常量，于是改 `config/actions.ron` 的 `fireball.cost`
+/// **完全不生效**（"改了配置没反应"是最难查的一类）。现在与节奏 / 伤害一样，
+/// 花费也只有一处取数。
+pub fn fireball_ammo_cost(config: Option<&crate::config::ActionConfig>) -> u32 {
+    config
+        .map(|config| config.fireball.cost)
+        .unwrap_or(FIREBALL_AMMO_COST)
+}
 /// 火球的速度帧（**信息层读数**："谁先动"；越小越快）。
 pub const FIREBALL_FRAME: u32 = 7;
 /// 火球的打断力度：出手重，但正在前摇时最怕被打断（见 [`FIREBALL_TIMING`]）。
@@ -128,17 +140,20 @@ pub fn fireball_action_scene(
 /// [`ActionCancelled`](crate::timeline::ActionCancelled)，这里自己认载荷。
 pub fn refund_fireball_observer(
     cancelled: On<crate::timeline::ActionCancelled>,
+    config: Option<Res<crate::config::ActionConfig>>,
     actions: Query<(), With<FireballAction>>,
     mut units: Query<&mut super::ammo::Ammo>,
 ) {
     if actions.get(cancelled.entity).is_err() {
         return; // 被撤的不是火球
     }
+    // 退多少与声明时扣的是同一处（见 `fireball_ammo_cost`）
+    let cost = fireball_ammo_cost(config.as_deref());
     let Ok(mut ammo) = units.get_mut(cancelled.actor) else {
         return; // 行动者可能已经阵亡
     };
-    ammo.regen(FIREBALL_AMMO_COST);
-    ammo.try_spend(FIREBALL_AMMO_COST);
+    ammo.regen(cost);
+    ammo.try_spend(cost);
 }
 
 /// 火球实体工厂：朝目标格飞行的投射物（到达后由到达系统广播）。
@@ -238,9 +253,21 @@ pub fn declare_fireball_system(
     else {
         return; // 忙或没有玩家
     };
+    // 花费从配置取（缺省 = 常量）：校验、扣费、退款读**同一处**
+    let cost = fireball_ammo_cost(config.as_deref());
+    let def = crate::skills::AbilityDef {
+        cost: crate::skills::ResourceCost::Ammo(cost),
+        // 花费为 0 时不需要"有弹药"这条条件（与 `abilities_from` 同一判据）
+        requirements: if cost == 0 {
+            &[]
+        } else {
+            &[crate::skills::Requirement::EnoughAmmo]
+        },
+        ..FIREBALL_ABILITY
+    };
     // 条件校验的唯一入口（类别共享条件 + 技能自己的 requirements）
     let pools = crate::skills::Pools::new(0, ammo.current);
-    if let Err(reason) = can_cast(&FIREBALL_ABILITY, pools) {
+    if let Err(reason) = can_cast(&def, pools) {
         blocked.write(crate::timeline::ActionBlocked { reason });
         info!("火球失败：{reason:?}");
         return;
@@ -262,7 +289,7 @@ pub fn declare_fireball_system(
             .unwrap_or(*cell)
     });
 
-    ammo.try_spend(FIREBALL_AMMO_COST);
+    ammo.try_spend(cost);
     // 武器节奏：只有攻击动作吃它（移动 / 翻滚与手上的东西无关）
     let timing = crate::equipment::weapon_timing(
         fireball_timing(config.as_deref()),

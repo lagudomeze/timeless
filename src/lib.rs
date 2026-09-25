@@ -1811,6 +1811,86 @@ mod tests {
         );
     }
 
+    /// **花费也只有一处真相**：把 `roll.cost` 调成 3，翻滚**执行时真的扣 3 点**。
+    ///
+    /// 这条钉住一个真 bug（接线热重载时发现）：`declare_roll_system` 按配置校验、
+    /// 而 `roll_executor_system` 扣的还是常量 `ROLL_COST`(1)——
+    /// 默认配置下两边相等所以看不出来，一改配置就变成"能放出来但只扣 1 点"。
+    /// 判据是**实际扣掉的精力**，不是"能不能放出来"（后者旧代码也满足，等于空跑）。
+    #[test]
+    fn a_changed_config_reaches_the_roll_cost() {
+        let mut app = test_app();
+        app.insert_resource(crate::config::ActionConfig {
+            roll: crate::config::ActionNumbers {
+                windup: 0.05,
+                recovery: 0.3,
+                interrupt_resist: 1,
+                cost: 3,
+                power: 0,
+                frame: 0,
+            },
+            ..Default::default()
+        });
+
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        app.world_mut().get_mut::<Stamina>(player).unwrap().current = 5;
+        // 威胁在东侧，翻滚才会朝西退（没有威胁就不滚）
+        spawn_enemy(&mut app, Cell::new(5, 0), Vec3::new(10.0, 0.0, 0.0));
+
+        app.world_mut().write_message(RollCommand);
+        // 观测落地那一帧的精力：后摇一到点就会回 1 点，再往后看就分不清"扣没扣"
+        let mut spent_on_arrival = None;
+        for _ in 0..8 {
+            app.update();
+            if app.world().get::<Dodging>(player).is_some() {
+                spent_on_arrival = app.world().get::<Stamina>(player).map(|s| s.current);
+                break;
+            }
+        }
+
+        assert_eq!(
+            spent_on_arrival,
+            Some(2),
+            "翻滚执行时应当扣配置里的 3 点（5 - 3 = 2），而不是常量 1 点（那会剩 4）"
+        );
+    }
+
+    /// **火球的花费也读配置**：`fireball.cost` 调成 3，声明时真的扣 3 点弹药。
+    ///
+    /// 钉住另一个真 bug：火球从前**完全不读** `config.cost`——校验、扣费、退款
+    /// 全用常量 `FIREBALL_AMMO_COST`，于是改配置"没反应"。
+    #[test]
+    fn a_changed_config_reaches_the_fireball_cost() {
+        let mut app = test_app();
+        app.insert_resource(crate::config::ActionConfig {
+            fireball: crate::config::ActionNumbers {
+                windup: 0.3,
+                recovery: 0.5,
+                interrupt_resist: 2,
+                cost: 3,
+                power: 12,
+                frame: 7,
+            },
+            ..Default::default()
+        });
+
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::new(1.0, 0.0, 1.0));
+        spawn_enemy(&mut app, Cell::new(2, 0), Vec3::new(5.0, 0.0, 1.0));
+
+        press(&mut app, KeyCode::KeyQ);
+        app.update();
+
+        let ammo = app
+            .world()
+            .get::<crate::combat::Ammo>(player)
+            .expect("玩家有弹药槽");
+        assert_eq!(
+            ammo.current,
+            crate::combat::attack::ammo::AMMO_MAX - 3,
+            "声明火球应当扣配置里的 3 点弹药，而不是常量 2 点"
+        );
+    }
+
     /// **日志里的时刻是"命中那一刻"的真实虚拟时间**，不是 0、也不是"记录日志的时刻"。
     ///
     /// 生产写方（`apply_physical_hits_system` / `explosion_system`）在结算那一帧从

@@ -51,9 +51,7 @@ pub use menu::{
     CycleSkill, MELEE_REACH, MenuSelection, SelectSkill, UseSelectedSkill, cycle_skill_system,
     select_skill_system, skill_line, use_selected_skill_system,
 };
-pub use registry::{
-    PARRY_COST_DISPLAY, SKILLS, SkillDef, SkillKind, affordable_indices, index_of, skill,
-};
+pub use registry::{SKILLS, SkillDef, SkillKind, affordable_indices, index_of, skill};
 
 pub mod plugin;
 pub use plugin::AttackPlugin;

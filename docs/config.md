@@ -71,6 +71,22 @@ ActionConfig（资源，来自 .ron 或默认值）
 | :--- | :--- |
 | **`ActionRegistry`** | HUD 仍读 `SKILLS` 数组而非技能目录（见 `TODO.md` 的 M24c 审计结论） |
 | **地形 / 相机等数值** | 本次只做了**动作**相关；`TerrainConfig` 等已有自己的资源，外置与否另说 |
+| **菜单的 `cost` 显示** | `SKILLS` 数组仍是常量表（角标 / tooltip 读它），改配置后**玩法生效但角标不跟着变**——属 `ActionRegistry` 那一条 |
+
+### 花费也只有一处真相 ✅（本次修）
+
+**修复前的真 bug**：`roll` / `parry` / `dash` 的**声明系统按配置校验花费**，
+而**执行器扣的是常量**（`ROLL_COST` / `PARRY_COST` / `DASH_COST`）；火球更彻底——
+**完全不读** `config.cost`（校验、扣费、退款全用常量）。默认配置下数值相等所以看不出来，
+但一改 `config/actions.ron` 就会出现"界面说花 3 点、实际扣 1 点"或"改了配置没反应"。
+
+**修法**：每个花费多一个取值函数（`roll_cost` / `parry_cost` / `fireball_ammo_cost`，
+缺省 = 常量），**声明校验与执行扣费读同一份**——与节奏（`*_timing`）、
+伤害（`*_damage`）完全同形。顺带删掉死别名 `PARRY_COST_DISPLAY`（定义 + 再导出，零读者）。
+
+验收：`a_changed_config_reaches_the_roll_cost`（`roll.cost=3` → 执行时真的从 5 扣到 2）
+与 `a_changed_config_reaches_the_fireball_cost`（`fireball.cost=3` → 声明时扣 3 弹药）；
+两条都**验过不是空跑**（把执行器/声明退回常量后分别转红）。
 
 ### 热重载 ✅ 已落地
 

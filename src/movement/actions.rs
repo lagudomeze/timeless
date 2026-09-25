@@ -452,6 +452,11 @@ pub fn dash_action_executor_system(
         .as_deref()
         .map(|config| config.speeds.dash)
         .unwrap_or(DASH_SPEED);
+    // 扣费与声明校验**读同一份配置**（声明侧见 `declare_dash_system`）
+    let cost = config
+        .as_deref()
+        .map(|config| config.dash.cost)
+        .unwrap_or(DASH_COST);
     for (entity, action, timing, schedule, action_of) in &actions {
         if !schedule.due(now) {
             continue;
@@ -460,7 +465,7 @@ pub fn dash_action_executor_system(
         let mut effect_delay = 0.0;
         if let Ok((transform, mut velocity, mut stamina)) = actors.get_mut(actor) {
             // 执行时才扣：撤销不退款（还没花），与翻滚同一条约定
-            stamina.try_spend(DASH_COST);
+            stamina.try_spend(cost);
             let to_goal = action.to_cell.center() - transform.translation.xz();
             velocity.0 = ground_direction(to_goal) * speed;
             effect_delay = to_goal.length() / speed.max(f32::EPSILON);
