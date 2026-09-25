@@ -3,6 +3,7 @@
 //! 只**建**实体，不读游戏状态——每帧把读数写进去的是 [`super::system`]。
 
 use bevy::prelude::*;
+use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 
 use crate::combat::Faction;
 
@@ -149,6 +150,9 @@ pub fn unit_panel(font: &Handle<Font>, portrait: Handle<Image>) -> impl Bundle {
     (
         Name::new("PlayerPanel"),
         UnitPanel { slot },
+        // 吃掉指针：光标压在这一块上时世界不该收到鼠标（见 `interaction::ui_capture`）
+        FocusPolicy::Block,
+        RelativeCursorPosition::default(),
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(14.0),
@@ -193,6 +197,11 @@ pub fn unit_panel(font: &Handle<Font>, portrait: Handle<Image>) -> impl Bundle {
 pub fn enemy_column() -> impl Bundle {
     (
         Name::new("EnemyPanels"),
+        // 吃掉指针：整列（含行间空隙）都算压在 UI 上。
+        // 只声明**列**不声明每行：行会被 `display: None` 收起来，而
+        // `ui_focus_system` 对不可见节点不写 `cursor_over`，那一行会留下过期值。
+        FocusPolicy::Block,
+        RelativeCursorPosition::default(),
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(14.0),

@@ -9,6 +9,7 @@
 //! 三条竖列天然对齐：第 N 行的方块 / 色块 / 候场块永远在同一水平线上。
 
 use bevy::prelude::*;
+use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 // 指示圈不该投影：它只是一层指示，投出影子反而像实体
 use bevy::light::NotShadowCaster;
 
@@ -93,6 +94,10 @@ pub fn spawn_timeline(commands: &mut Commands, font: &Handle<Font>) -> Entity {
     let root = commands
         .spawn((
             Name::new("Timeline"),
+            // 吃掉指针：色块上挂着 `Interaction`（悬停读数用），但**光有它挡不住
+            // 世界**——顶部这一条必须自己声明成“吃指针”的区域（见 `interaction::ui_capture`）。
+            FocusPolicy::Block,
+            RelativeCursorPosition::default(),
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(10.0),

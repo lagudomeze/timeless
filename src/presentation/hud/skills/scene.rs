@@ -5,6 +5,7 @@
 //! 威力）。外观怎么随状态变在 [`super::model`]，每帧写进去在 [`super::system`]。
 
 use bevy::prelude::*;
+use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 
 use crate::combat::attack::SKILLS;
 
@@ -150,6 +151,10 @@ pub fn skill_bar(font: &Handle<Font>, assets: &AssetServer) -> impl Bundle {
         },
         children![(
             Name::new("SkillBarPanel"),
+            // 吃掉指针：整个技能栏是一块可点的区域（槽位本身是 `Button`，
+            // 已是 `Block`；这里管的是槽位之间的空隙）
+            FocusPolicy::Block,
+            RelativeCursorPosition::default(),
             Node {
                 padding: UiRect::all(Val::Px(6.0)),
                 column_gap: Val::Px(8.0),

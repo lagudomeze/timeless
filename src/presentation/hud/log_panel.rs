@@ -4,6 +4,7 @@
 //! 这里只负责显示最后 [`LOG_LINES`] 行，并把折叠状态记在面板实体上。
 
 use bevy::prelude::*;
+use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 
 use super::super::BattleLog;
 use super::{HudCache, PANEL_BG, hud_text_tinted};
@@ -56,6 +57,9 @@ pub fn log_panel(font: &Handle<Font>) -> impl Bundle {
         Name::new("CombatLog"),
         LogPanel,
         LogCollapsed(false),
+        // 吃掉指针：日志面板（含标题条）不接受世界点击
+        FocusPolicy::Block,
+        RelativeCursorPosition::default(),
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(14.0),

@@ -4,6 +4,7 @@
 //! 由本系统消费——「UI 输入只翻译、不执行」。
 
 use bevy::prelude::*;
+use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 
 use super::hud_text;
 
@@ -61,6 +62,9 @@ pub fn help_panel(font: &Handle<Font>) -> impl Bundle {
     (
         Name::new("HelpPanel"),
         HelpPanel,
+        // 吃掉指针：面板压住战场，点它（不关掉的话）不该顺手把人走一格
+        FocusPolicy::Block,
+        RelativeCursorPosition::default(),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Percent(12.0),

@@ -22,17 +22,32 @@ use crate::world::{TerrainConfig, ground_position};
 use super::components::HoveredCell;
 use super::events::PointerCommand;
 use super::raycast::{cursor_ray, pick_cell};
+use super::ui_capture::PointerOverUi;
+
+/// 悬停格的判据：**指针被 UI 吃掉时一律没有悬停格**，否则才去拾取。
+///
+/// 抽成纯函数是为了能在单测里给出"本来拾取得到"的输入——否则
+/// "清空是因为 UI 门控"与"清空是因为没有窗口、拾取不到"根本分不开
+/// （测试 App 里没有相机，两种原因给的都是 `None`）。
+pub fn resolve_hovered_cell(over_ui: bool, picked: Option<Cell>) -> Option<Cell> {
+    if over_ui { None } else { picked }
+}
 
 /// 每帧：光标 → 世界格，只在变化时写资源。
 ///
 /// **不读任何 `Time`**：玩家等输入时虚拟时间是冻结的，但悬停必须照常响应。
+///
+/// 指针压在 HUD 上时**没有悬停格**（见 [`resolve_hovered_cell`]）：不清空的话，
+/// 上一次的格子连同它的高亮与预演会留在世界里——鼠标停在技能栏上，
+/// 战场却还亮着"我要打这里"。
 pub fn hover_cell_system(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    over: Res<PointerOverUi>,
     terrain: Res<TerrainConfig>,
     mut hovered: ResMut<HoveredCell>,
 ) {
-    let next = windows
+    let picked = windows
         .single()
         .ok()
         .and_then(|window| window.cursor_position())
@@ -41,6 +56,7 @@ pub fn hover_cell_system(
             cursor_ray(camera, transform, cursor)
         })
         .and_then(|ray| pick_cell(ray, &terrain));
+    let next = resolve_hovered_cell(over.0, picked);
 
     if hovered.0 != next {
         hovered.0 = next;
@@ -116,6 +132,10 @@ pub fn update_preview_readout_system(
 /// | 左键 | 点在空地上 | 走到这一格（`MoveToCommand`，可跨多格） |
 /// | 右键 | —— | 撤销最近一条未结算的玩家行动（`UndoCommand`） |
 ///
+/// **点在 HUD 上时不翻任何东西**：那一发点击是 UI 的（折叠日志、选技能…），
+/// 世界不该听到它——否则点一下日志标题会顺手把玩家走一格（见
+/// [`PointerOverUi`]）。
+///
 /// 左键同时写一条 [`PlayerTakeover`]：它是"玩家这一帧想做事"的输入层事实，
 /// 时间线靠它把玩家那条还没到点的行动撤掉，好让新的这一手抢到决策槽。
 /// 右键不必写——它本来就是一条撤销请求。
@@ -125,6 +145,7 @@ pub fn update_preview_readout_system(
 pub fn pointer_command_system(
     mut clicks: MessageReader<PointerCommand>,
     hovered: Res<HoveredCell>,
+    over: Res<PointerOverUi>,
     occupants: Query<(&Cell, &Faction)>,
     mut moves: MessageWriter<MoveToCommand>,
     mut skills: MessageWriter<UseSelectedSkill>,
@@ -132,6 +153,11 @@ pub fn pointer_command_system(
     mut answers: MessageWriter<ReactionAnswer>,
     mut takeovers: MessageWriter<PlayerTakeover>,
 ) {
+    // 指针压在 HUD 上：这一帧的所有点击都是 UI 的，一个也不翻
+    if over.0 {
+        clicks.clear();
+        return;
+    }
     for click in clicks.read() {
         match click {
             PointerCommand::Secondary => {
@@ -189,6 +215,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<HoveredCell>()
+            .init_resource::<PointerOverUi>()
             .init_resource::<Probes>()
             .add_message::<PointerCommand>()
             .add_message::<MoveToCommand>()
@@ -276,6 +303,87 @@ mod tests {
         assert!(
             text.contains("frame"),
             "预演读数应当带上速度帧（`AttackFrame` 的消费者），实际 {text:?}"
+        );
+    }
+
+    /// **回归：点在 HUD 上时，这一发点击不给世界下单。**
+    ///
+    /// 两半都要验：既不能走 / 打（`MoveToCommand` / `UseSelectedSkill`），
+    /// 也不能写 `PlayerTakeover`——那条消息会让时间线把**玩家当前那一手**撤掉，
+    /// 所以"点一下日志标题"曾经能把人手上的一手决策毁掉。
+    #[test]
+    fn a_click_over_the_hud_never_becomes_a_world_command() {
+        let mut app = click_app();
+        app.insert_resource(HoveredCell(Some(Cell::new(2, 2))));
+        app.insert_resource(PointerOverUi(true));
+        app.world_mut().write_message(PointerCommand::Primary);
+        app.world_mut().write_message(PointerCommand::Secondary);
+        app.update();
+
+        let probes = app.world().resource::<Probes>();
+        assert_eq!(
+            (probes.moves, probes.skills, probes.undos, probes.takeovers),
+            (0, 0, 0, 0),
+            "点在 HUD 上：不走、不打、不撤销、也不算「玩家动手了」——那一发点击是 UI 的"
+        );
+    }
+
+    /// 反证：同一个 `PointerCommand`，把判据关掉就照常落地。
+    ///
+    /// 没有这一条，上面那条测试可以靠"`PointerCommand` 根本没被处理"通过。
+    #[test]
+    fn the_same_click_lands_once_the_pointer_leaves_the_hud() {
+        let mut app = click_app();
+        app.insert_resource(HoveredCell(Some(Cell::new(2, 2))));
+        app.insert_resource(PointerOverUi(false));
+        app.world_mut().write_message(PointerCommand::Primary);
+        app.update();
+
+        let probes = app.world().resource::<Probes>();
+        assert_eq!((probes.moves, probes.skills), (1, 0), "点地板 = 走过去");
+        assert_eq!(probes.takeovers, 1, "左键算「玩家动手了」");
+    }
+
+    /// 门控必须**消费掉**那些点击：消息会活两帧，留着就会在指针离开 UI 之后的
+    /// 某一帧"补一发"已经不该生效的点击。
+    #[test]
+    fn clicks_landing_on_the_hud_are_consumed_not_deferred() {
+        let mut app = click_app();
+        app.insert_resource(HoveredCell(Some(Cell::new(2, 2))));
+        app.insert_resource(PointerOverUi(true));
+        app.world_mut().write_message(PointerCommand::Primary);
+        app.update();
+
+        // 下一帧：指针已经离开 UI，此时**不该**冒出上一帧那一发
+        app.insert_resource(PointerOverUi(false));
+        app.update();
+
+        let probes = app.world().resource::<Probes>();
+        assert_eq!(probes.moves, 0, "点在 HUD 上时被挡掉的点击不该稍后补上");
+    }
+
+    /// **UI 门控压过"拾取到了"**：指针在 HUD 上时没有悬停格。
+    ///
+    /// 给得出 `picked = Some(cell)` 是关键——否则"清空是因为 UI 门控"与
+    /// "清空是因为测试 App 没有相机、拾取不到"分不开，测试会靠后者空跑。
+    #[test]
+    fn the_ui_gate_wins_over_a_valid_pick() {
+        let picked = Some(Cell::new(3, 3));
+
+        assert_eq!(
+            resolve_hovered_cell(true, picked),
+            None,
+            "指针压在 HUD 上 → 即使拾取得到也不该有悬停格"
+        );
+        assert_eq!(
+            resolve_hovered_cell(false, picked),
+            picked,
+            "指针在战场上 → 拾取到什么就是什么"
+        );
+        assert_eq!(
+            resolve_hovered_cell(true, None),
+            None,
+            "两条原因都成立时也是没有悬停格"
         );
     }
 }

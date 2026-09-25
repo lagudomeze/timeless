@@ -8,6 +8,7 @@
 //! 锚在玩家面板上方既空着、又和「玩家现在能不能动」这件事最近。
 
 use bevy::prelude::*;
+use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 
 use crate::equipment::EquipmentRefused;
 use crate::movement::MoveRefused;
@@ -45,6 +46,9 @@ pub fn hint_panel(font: &Handle<Font>) -> impl Bundle {
     (
         Name::new("ActionHint"),
         ActionHint,
+        // 吃掉指针：提示条是给玩家读的，压在上面时不该把点击滤到地面
+        FocusPolicy::Block,
+        RelativeCursorPosition::default(),
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(14.0),

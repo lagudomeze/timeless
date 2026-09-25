@@ -36,6 +36,7 @@ pub mod events;
 pub mod plugin;
 pub mod pointer;
 pub mod raycast;
+pub mod ui_capture;
 pub mod visual;
 
 pub use components::{AoePreview, ConePreview, HoverHighlight, HoverTint, HoveredCell};
@@ -43,6 +44,7 @@ pub use events::PointerCommand;
 pub use plugin::InteractionPlugin;
 pub use pointer::{hover_cell_system, pointer_command_system, update_preview_readout_system};
 pub use raycast::{MAX_PICK_DISTANCE, PICK_STEP, cursor_ray, pick_cell};
+pub use ui_capture::{PointerOverUi, track_pointer_over_ui_system};
 pub use visual::{
     spawn_hover_highlight, spawn_preview_indicators, update_hover_highlight_system,
     update_preview_indicators_system,

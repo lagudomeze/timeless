@@ -2132,4 +2132,66 @@ mod tests {
             "箭矢是单体：旁边的敌人不该被蹭到（这一发是火球的话会一起掉血）"
         );
     }
+
+    /// **整机回归（#46）：点在 HUD 上不给世界下单。**
+    ///
+    /// 走真实流水线：`InteractionSet` 链首从 UI 节点算出 `PointerOverUi`，
+    /// 拾取与点击翻译都排在它后面。这里用一个带 `cursor_over` 的区域实体
+    /// 代表"光标正压在某块 HUD 上"——真机上那个值由 bevy_ui 的
+    /// `ui_focus_system` 写。
+    ///
+    /// 观测点选**右键（撤销）**：它不需要悬停格（测试 App 没有窗口与相机），
+    /// 却恰好是"点一下面板会毁掉你手上那一手"这个真实后果。
+    #[test]
+    fn a_click_while_the_pointer_is_over_the_hud_does_not_reach_the_world() {
+        use crate::interaction::PointerCommand;
+        use bevy::ui::RelativeCursorPosition;
+
+        let mut app = test_app();
+        let player = spawn_player(&mut app, Cell::new(0, 0), Vec3::ZERO);
+        // 先声明一手：撤销成功的前提是"有东西可撤"
+        press(&mut app, KeyCode::ArrowUp);
+        app.update();
+        assert_eq!(actions::<MoveAction>(&mut app), 1, "先声明一条移动");
+
+        // 指针压在 HUD 上：那一发右键不该传下去
+        let hud = app
+            .world_mut()
+            .spawn(RelativeCursorPosition {
+                cursor_over: true,
+                ..default()
+            })
+            .id();
+
+        app.world_mut().write_message(PointerCommand::Secondary);
+        app.update();
+
+        assert_eq!(
+            actions::<MoveAction>(&mut app),
+            1,
+            "光标压在 HUD 上：那一发右键是 UI 的，不该撤销玩家手上的一手"
+        );
+        assert_ne!(
+            slot_of(&app, player),
+            DecisionSlot::Idle { intent: None },
+            "手上那一手应当还在"
+        );
+
+        // 反证：指针离开 UI 之后，同一发右键必须真的撤销
+        *app.world_mut()
+            .get_mut::<RelativeCursorPosition>(hud)
+            .unwrap() = RelativeCursorPosition::default();
+        app.world_mut().write_message(PointerCommand::Secondary);
+        app.update();
+        assert_eq!(
+            actions::<MoveAction>(&mut app),
+            0,
+            "指针离开 UI 后右键应当撤销——证明上一条不是空跑"
+        );
+        assert_eq!(
+            slot_of(&app, player),
+            DecisionSlot::Idle { intent: None },
+            "撤销之后立刻能改主意"
+        );
+    }
 }
