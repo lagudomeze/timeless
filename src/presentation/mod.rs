@@ -18,6 +18,7 @@ pub mod hud;
 pub mod log;
 pub mod plugin;
 pub mod preload;
+pub mod threat_grid;
 pub mod unit_sprite;
 
 pub use camera::{PanCamera, ZoomCamera};
@@ -26,6 +27,7 @@ pub use effects::{EffectParticle, animate_hit_effects_system, spawn_hit_effects_
 pub use hud::{HudRoot, ToggleHelp, setup_hud, toggle_help_system};
 pub use log::{BattleLog, battle_log_system};
 pub use plugin::PresentationPlugin;
+pub use threat_grid::{ThreatTile, update_threat_grid_system};
 pub use unit_sprite::{UnitShadow, UnitSprite, UnitSprites};
 
 /// 表现域在 `Update` 中的系统集（整条游戏流水线之后：读结果、不改结果）。

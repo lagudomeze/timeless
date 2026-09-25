@@ -21,6 +21,7 @@ use super::hud::{
 };
 use super::log::{BattleLog, battle_log_system};
 use super::preload::preload;
+use super::threat_grid::{spawn_threat_tiles, update_threat_grid_system};
 use super::unit_sprite::{billboard_system, shadow_system};
 use crate::combat::Faction;
 
@@ -61,6 +62,7 @@ impl Plugin for PresentationPlugin {
             .register_type::<hud::timeline::TimelineReadout>()
             .register_type::<hud::timeline::TimelineReadoutText>()
             .register_type::<TimelineFocusRing>()
+            .register_type::<crate::presentation::ThreatTile>()
             .register_type::<hud::log_panel::LogPanel>()
             .register_type::<hud::log_panel::LogCollapsed>()
             .register_type::<hud::log_panel::LogHeaderButton>()
@@ -90,7 +92,11 @@ impl Plugin for PresentationPlugin {
             .add_systems(
                 Startup,
                 // HUD 用单位精灵当头像，必须跑在资源预载之后
-                (preload.in_set(PreloadSet), setup_hud.after(preload)),
+                (
+                    preload.in_set(PreloadSet),
+                    setup_hud.after(preload),
+                    spawn_threat_tiles,
+                ),
             )
             .add_systems(
                 Update,
@@ -103,6 +109,8 @@ impl Plugin for PresentationPlugin {
                     battle_log_system,
                     // 命中特效：读 `DamageEvent`，在被打中的单位身上冒一簇短命粒子
                     (spawn_hit_effects_system, animate_hit_effects_system).chain(),
+                    // 威胁格：把敌人这一手威胁到的格画在地面上（只读 `Threatens`）
+                    update_threat_grid_system,
                     update_unit_panels_system,
                     update_action_labels_system,
                     update_skill_bar_system,
