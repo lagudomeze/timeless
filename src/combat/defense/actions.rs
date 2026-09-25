@@ -34,6 +34,22 @@ pub const PARRY_TIMING: ActionTiming = ActionTiming::new(0.05, 0.25, 2);
 /// 翻滚的位移速度（世界单位 / 秒）：比走路快，但仍然是「退一格」。
 pub const ROLL_SPEED: f32 = 8.0;
 
+/// 从配置取翻滚的花费（缺省 = 常量）——**声明校验与执行扣费读同一份**。
+///
+/// ⚠️ **曾经分叉过**：声明按配置校验、执行扣的却是 [`ROLL_COST`] 常量。
+/// 默认配置下两边相等所以看不出来，但一改 `config/actions.ron` 的 `roll.cost`
+/// 就会出现"界面说花 3 点、实际扣 1 点"（或反过来）；热重载之后更是
+/// 声明与执行可能读到**不同版本**的配置。所以花费必须与节奏、伤害一样，
+/// **只有一处取数**（见 `docs/config.md`）。
+pub fn roll_cost(config: Option<&crate::config::ActionConfig>) -> u32 {
+    config.map(|config| config.roll.cost).unwrap_or(ROLL_COST)
+}
+
+/// 从配置取招架的花费（缺省 = 常量）。理由同 [`roll_cost`]。
+pub fn parry_cost(config: Option<&crate::config::ActionConfig>) -> u32 {
+    config.map(|config| config.parry.cost).unwrap_or(PARRY_COST)
+}
+
 /// 翻滚方向：远离最近的威胁（`threats` 给「位置 + 阵营」），没有威胁就不动。
 ///
 /// 纯函数：玩家与 AI 共用同一份"往哪滚"的规则，谁触发只在调用方区分。
@@ -172,6 +188,7 @@ pub fn declare_roll_system(
 pub fn roll_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
+    config: Option<Res<crate::config::ActionConfig>>,
     actions: Query<(
         Entity,
         &ActionTiming,
@@ -182,6 +199,8 @@ pub fn roll_executor_system(
     mut actors: Query<(&mut Velocity, &mut Stamina, &Transform), With<Cell>>,
 ) {
     let now = time.elapsed_secs();
+    // 扣费与声明校验**读同一份配置**（见 `roll_cost`）
+    let cost = roll_cost(config.as_deref());
     for (entity, timing, roll, schedule, action_of) in &actions {
         if !schedule.due(now) {
             continue;
@@ -189,7 +208,7 @@ pub fn roll_executor_system(
         let actor = action_of.actor();
         let mut effect_delay = 0.0;
         if let Ok((mut velocity, mut stamina, transform)) = actors.get_mut(actor) {
-            stamina.try_spend(ROLL_COST);
+            stamina.try_spend(cost);
             let to_goal = roll.to_cell.center() - transform.translation.xz();
             velocity.0 = ground_direction(to_goal) * ROLL_SPEED;
             effect_delay = to_goal.length() / ROLL_SPEED;
@@ -229,10 +248,12 @@ pub fn declare_parry_system(
     let Some((player, stamina, mut focus, _)) = players.iter_mut().first_ready(&mut blocked) else {
         return;
     };
-    let (timing, cost) = match config.as_deref() {
-        Some(config) => (config.parry.timing(), config.parry.cost),
-        None => (PARRY_TIMING, PARRY_COST),
-    };
+    // 节奏与花费**都从配置的同一处取**（花费见 `parry_cost`）
+    let timing = config
+        .as_deref()
+        .map(|config| config.parry.timing())
+        .unwrap_or(PARRY_TIMING);
+    let cost = parry_cost(config.as_deref());
     let def = crate::skills::AbilityDef {
         timing,
         cost: crate::skills::ResourceCost::Energy(cost),
@@ -275,6 +296,7 @@ pub fn declare_parry_system(
 pub fn parry_executor_system(
     mut commands: Commands,
     time: Res<Time<Virtual>>,
+    config: Option<Res<crate::config::ActionConfig>>,
     actions: Query<(
         Entity,
         &ActionTiming,
@@ -285,15 +307,15 @@ pub fn parry_executor_system(
     mut actors: Query<&mut Stamina>,
 ) {
     let now = time.elapsed_secs();
+    // 扣费与声明校验**读同一份配置**（见 `parry_cost`）
+    let cost = parry_cost(config.as_deref());
     for (entity, timing, parry, schedule, action_of) in &actions {
         if !schedule.due(now) {
             continue;
         }
         let actor = action_of.actor();
         if let Ok(mut stamina) = actors.get_mut(actor) {
-            #[allow(clippy::let_underscore_untyped)]
-            let _ = PARRY_COST;
-            stamina.try_spend(PARRY_COST);
+            stamina.try_spend(cost);
             commands.entity(actor).insert(Parrying {
                 target_attack: parry.target_attack,
                 expires_at: now + PARRY_SECS,

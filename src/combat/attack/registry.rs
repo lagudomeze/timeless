@@ -9,7 +9,7 @@ use crate::combat::attack::actions::{ARROW_TIMING, MELEE_TIMING};
 use crate::combat::attack::arrow::{ARROW_COST, ARROW_DAMAGE, ARROW_FRAME};
 use crate::combat::attack::fireball::{FIREBALL_AMMO_COST, FIREBALL_FRAME, FIREBALL_TIMING};
 use crate::combat::attack::melee::{MELEE_DAMAGE, MELEE_FRAME};
-use crate::combat::defense::{PARRY_COST, ROLL_COST};
+use crate::combat::defense::ROLL_COST;
 use crate::movement::ROLL_TIMING;
 use crate::timeline::ActionTiming;
 
@@ -175,10 +175,6 @@ pub const SKILLS: [SkillDef; 5] = [
         frame: ARROW_FRAME,
     },
 ];
-
-/// 招架不在 [`SKILLS`] 里（它需要「绑定的那次攻击」，是纯反应动作），
-/// 但消耗在这里登记，避免菜单与防御域各写一份。
-pub const PARRY_COST_DISPLAY: u32 = PARRY_COST;
 
 /// 按索引取条目。
 pub fn skill(index: usize) -> Option<&'static SkillDef> {
