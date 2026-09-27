@@ -21,8 +21,8 @@
 
 use bevy::prelude::*;
 
-use crate::combat::Faction;
 use crate::combat::attack::{MELEE_REACH, MenuSelection, SKILLS, SkillKind};
+use crate::combat::{Collidable, Faction};
 use crate::movement::Cell;
 use crate::world::{TerrainConfig, ground_position};
 
@@ -39,6 +39,7 @@ type PreviewUnitQuery<'w, 's> = Query<
     's,
     (&'static Cell, &'static Transform, &'static Faction),
     (
+        With<Collidable>,
         Without<AoePreview>,
         Without<ConePreview>,
         Without<HoverHighlight>,
@@ -137,7 +138,7 @@ pub fn update_preview_indicators_system(
 pub fn update_hover_highlight_system(
     hovered: Res<HoveredCell>,
     terrain: Res<TerrainConfig>,
-    occupants: Query<(&Cell, &Faction)>,
+    occupants: Query<(&Cell, &Faction), With<Collidable>>,
     mut highlights: Query<
         (
             &mut Transform,
@@ -172,7 +173,7 @@ pub fn update_hover_highlight_system(
 }
 
 /// 悬停色：空地上是青的；踩到单位就按那个单位的阵营上色。
-fn tint_for(cell: Cell, occupants: &Query<(&Cell, &Faction)>) -> Color {
+fn tint_for(cell: Cell, occupants: &Query<(&Cell, &Faction), With<Collidable>>) -> Color {
     occupants
         .iter()
         .find(|(occupied, _)| **occupied == cell)
@@ -258,7 +259,7 @@ mod tests {
         let cell = Cell::new(0, 2);
         let (mut app, entity) = highlight_app(Some(cell));
         app.world_mut()
-            .spawn((cell, Faction::Enemy, Transform::default()));
+            .spawn((cell, Faction::Enemy, Collidable, Transform::default()));
 
         app.update();
 
@@ -279,8 +280,12 @@ mod tests {
                 .resource_mut::<MenuSelection>()
                 .select(skill_index);
             // 玩家站在 (1,0)，悬停格离它够远
-            app.world_mut()
-                .spawn((Cell::new(1, 0), Faction::Player, Transform::default()));
+            app.world_mut().spawn((
+                Cell::new(1, 0),
+                Faction::Player,
+                Collidable,
+                Transform::default(),
+            ));
             let aoe = app
                 .world_mut()
                 .spawn((AoePreview, Transform::default(), Visibility::Hidden))

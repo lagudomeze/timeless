@@ -32,8 +32,8 @@ use std::collections::BTreeSet;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
-use crate::combat::Faction;
 use crate::combat::reaction::{ReactionSlot, TargetCell, Threatens};
+use crate::combat::{Collidable, Faction};
 use crate::movement::{CELL_SIZE, Cell};
 use crate::timeline::ActionOf;
 use crate::world::{TerrainConfig, ground_position};
@@ -184,7 +184,7 @@ pub fn update_threat_source_ring_system(
     threats: Query<(&Threatens, Option<&ActionOf>)>,
     // 两个查询都碰 `Transform`：用标记组件两两互斥（否则 Bevy 报 B0001）。
     // 单位带 `Faction`、池位带 `ThreatSourceRing`，两者不可能同时成立。
-    positions: Query<&Transform, (With<Faction>, Without<ThreatSourceRing>)>,
+    positions: Query<&Transform, (With<Collidable>, Without<ThreatSourceRing>)>,
     mut rings: Query<(&ThreatSourceRing, &mut Transform, &mut Visibility), Without<Faction>>,
 ) {
     // 一次只有一个窗口：取第一个（反应系统保证全局最多一个）
@@ -275,7 +275,7 @@ mod tests {
     fn the_source_ring_reads_the_same_window_as_the_threat_cells() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
-        let enemy = app.world_mut().spawn(Faction::Enemy).id();
+        let enemy = app.world_mut().spawn((Faction::Enemy, Collidable)).id();
         let action = app
             .world_mut()
             .spawn((
@@ -361,7 +361,11 @@ mod tests {
 
         let enemy = app
             .world_mut()
-            .spawn((Faction::Enemy, Transform::from_xyz(5.0, 0.0, 7.0)))
+            .spawn((
+                Faction::Enemy,
+                Collidable,
+                Transform::from_xyz(5.0, 0.0, 7.0),
+            ))
             .id();
         let action = app
             .world_mut()
@@ -504,7 +508,7 @@ mod tests {
     fn a_hostile_pending_action_paints_its_threatened_cells() {
         let mut app = grid_app();
         let tiles = spawn_tiles(&mut app);
-        let enemy = app.world_mut().spawn(Faction::Enemy).id();
+        let enemy = app.world_mut().spawn((Faction::Enemy, Collidable)).id();
         let action = app
             .world_mut()
             .spawn((
@@ -539,7 +543,7 @@ mod tests {
     fn the_players_own_action_paints_nothing() {
         let mut app = grid_app();
         let tiles = spawn_tiles(&mut app);
-        let player = app.world_mut().spawn(Faction::Player).id();
+        let player = app.world_mut().spawn((Faction::Player, Collidable)).id();
         app.world_mut().spawn((
             ActionOf(player),
             Threatens {
@@ -573,7 +577,7 @@ mod tests {
         );
 
         // 威胁格多到超过池子：只该画池子那么多，且不越界 panic
-        let enemy = app.world_mut().spawn(Faction::Enemy).id();
+        let enemy = app.world_mut().spawn((Faction::Enemy, Collidable)).id();
         let many: Vec<Cell> = (0..THREAT_TILE_POOL as i32 + 5)
             .map(|x| Cell::new(x, 0))
             .collect();

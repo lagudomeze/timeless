@@ -9,9 +9,9 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::combat::Faction;
 use crate::combat::attack::{MELEE_REACH, MenuSelection, SKILLS, SkillKind, UseSelectedSkill};
 use crate::combat::reaction::ReactionAnswer;
+use crate::combat::{Collidable, Faction};
 use crate::movement::Cell;
 use crate::movement::MoveToCommand;
 use crate::presentation::MainCamera;
@@ -71,7 +71,7 @@ pub fn update_preview_readout_system(
     hovered: Res<HoveredCell>,
     selection: Res<MenuSelection>,
     terrain: Res<TerrainConfig>,
-    units: Query<(&Transform, &Faction)>,
+    units: Query<(&Transform, &Faction), With<Collidable>>,
     mut readouts: MessageWriter<PreviewReadout>,
     mut last: Local<Option<String>>,
 ) {
@@ -146,7 +146,7 @@ pub fn pointer_command_system(
     mut clicks: MessageReader<PointerCommand>,
     hovered: Res<HoveredCell>,
     over: Res<PointerOverUi>,
-    occupants: Query<(&Cell, &Faction)>,
+    occupants: Query<(&Cell, &Faction), With<Collidable>>,
     mut moves: MessageWriter<MoveToCommand>,
     mut skills: MessageWriter<UseSelectedSkill>,
     mut undos: MessageWriter<UndoCommand>,
@@ -247,7 +247,7 @@ mod tests {
         let mut app = click_app();
         app.insert_resource(HoveredCell(Some(cell)));
         app.world_mut()
-            .spawn((cell, Faction::Enemy, Transform::default()));
+            .spawn((cell, Faction::Enemy, Collidable, Transform::default()));
         app.world_mut().write_message(PointerCommand::Primary);
         app.update();
         let probes = app.world().resource::<Probes>();
@@ -289,6 +289,7 @@ mod tests {
         // 玩家在原点，悬停一格之内的近处 → 「攻击」会派发成近战（frame 5）
         app.world_mut().spawn((
             crate::combat::Faction::Player,
+            Collidable,
             Transform::from_xyz(1.0, 0.0, 1.0),
         ));
         app.world_mut().resource_mut::<HoveredCell>().0 = Some(Cell::new(1, 0));

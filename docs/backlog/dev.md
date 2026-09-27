@@ -88,3 +88,35 @@
       单独为它开一轮不划算，但每拖一轮就多一处"屏幕或 AI 在说谎"。
       **验收**：每个改过的查询配一条"攻击实体不算单位"的测试（时间轴那条是范例）；
       外加实机：**射一支箭，看候场区/车道/镜头/悬停占位有没有多出东西**。
+
+### 已收口（2026-09-27，同一轮做完）
+
+判据统一成 **`With<Collidable>`**——仓库**已经有**这个标记，而且它**只在
+`spawn/unit.rs` 挂一处**，所以"单位 = `Collidable`"是现成且精确的，不必新造组件。
+这条约定写进了 [`src/combat/components.rs`](../../src/combat/components.rs) 的
+`Collidable` 文档（**一处真相源**），`Faction` 的文档也写明"`Faction` ≠ 单位"
+并列出那天抓到的三处 bug。
+
+| 位置 | 改法 |
+| :--- | :--- |
+| `presentation/camera.rs` | **`InputDriven`**（不是 `Collidable`：这里问的是"谁是玩家"） |
+| `presentation/hud/skills/system.rs` | 同上（`InputDriven`）——它原先靠"查询要求 `Stamina`"**碰巧**没错 |
+| `presentation/hud/timeline/system.rs`（roster） | `Collidable`（原先这轮用的是 `Health`，已统一） |
+| `presentation/hud/timeline/system.rs`（悬停兜底） | `Collidable`（抽成 `ReadoutUnitQuery` 别名，否则 clippy 报类型过复杂） |
+| `interaction/pointer.rs`（拾取 / 悬停占位） | `Collidable` |
+| `interaction/visual.rs`（悬停染色） | `Collidable`（含 `tint_for` 的签名） |
+| `combat/attack/actions.rs`、`fireball.rs`（找最近的敌人） | `Collidable` |
+| `combat/defense/actions.rs`（翻滚 / 招架范围） | `Collidable` |
+| `ai/systems.rs`（找目标） | `Collidable` |
+| `presentation/unit_sprite.rs`、`threat_grid.rs` | `Collidable` |
+
+**如实区分两类**（别把加固说成修 bug）：
+- **修掉的是有失败场景的 bug**：时间轴把箭当单位（round 11）、镜头追箭（round 12）——
+  两处都有**会咬的回归测试**（实测退回旧写法必红）。
+- **其余是收口 / 加固**：同一类隐患，但没有单独构造出"看得见"的失败场景。
+  例如 `unit_sprite` 的 `units` 只是**反查父实体**（遍历的是阴影），投射物本来就没有
+  阴影子节点，所以那处**没有可观测的行为变化**——它消掉的是"下次有人照着写"的风险。
+
+**测试夹具的连带改动**：约 10 处测试里的"单位"原先只写 `(Faction, …)`，
+现在补上标记（或 `InputDriven`）。**这不是负担而是校准**：那些夹具本来就该造"单位"，
+松着写才让这类 bug 长出来。

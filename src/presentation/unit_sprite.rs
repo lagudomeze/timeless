@@ -22,7 +22,7 @@
 use bevy::image::{ImageLoaderSettings, ImageSampler};
 use bevy::prelude::*;
 
-use crate::combat::Faction;
+use crate::combat::{Collidable, Faction};
 use crate::world::{TerrainConfig, surface_height_at};
 
 use super::components::MainCamera;
@@ -163,7 +163,7 @@ pub fn billboard_system(
 /// 站在矮一层的格子上都会让阴影变小，玩家一眼就能读出脚离地多远。
 pub fn shadow_system(
     terrain: Res<TerrainConfig>,
-    units: Query<&Transform, (With<Faction>, Without<UnitShadow>)>,
+    units: Query<&Transform, (With<Collidable>, Without<UnitShadow>)>,
     mut shadows: Query<(&UnitShadow, &ChildOf, &mut Transform), Without<Faction>>,
 ) {
     for (_, child_of, mut transform) in &mut shadows {
@@ -206,7 +206,11 @@ mod tests {
     fn spawn_unit_with_shadow(app: &mut App, position: Vec3) -> (Entity, Entity) {
         let unit = app
             .world_mut()
-            .spawn((Faction::Player, Transform::from_translation(position)))
+            .spawn((
+                Faction::Player,
+                Collidable,
+                Transform::from_translation(position),
+            ))
             .id();
         let shadow = app
             .world_mut()

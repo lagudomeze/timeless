@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::clock::PauseReasons;
 use crate::combat::reaction::{TargetCell, Threatens};
-use crate::combat::{Faction, Health};
+use crate::combat::{Collidable, Faction};
 use crate::movement::Cell;
 use crate::skills::CombatTags;
 use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, ScheduledAction};
@@ -121,7 +121,7 @@ pub fn update_timeline_system(
     // 三个单位全在忙，候场区却亮着一个 `E`）。
     // 判据用 `Health`：单位都有它，攻击实体都没有——`combat::attack::explosion`
     // 找"可被炸到的身体"用的也是同一条（`With<Health>`）。
-    actors: Query<(Entity, &Faction, Option<&DecisionSlot>), With<Health>>,
+    actors: Query<(Entity, &Faction, Option<&DecisionSlot>), With<Collidable>>,
     actions: Query<(Entity, &ScheduledAction, &ActionTiming, &ActionOf)>,
     mut cache: ResMut<HudCache>,
     mut layout: ResMut<TimelineLayout>,
@@ -270,6 +270,20 @@ pub fn update_timeline_system(
     }
 }
 
+/// 悬停读数兜底要用的"行动者在哪"：**只收单位**（`With<Collidable>`）。
+///
+/// 抽成别名是因为带上过滤之后类型长到 clippy 会抱怨 "very complex type"；
+/// 过滤本身不能省——`Faction` 会被箭矢 / 火球满足（见 `combat::components::Faction`）。
+type ReadoutUnitQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Faction,
+        Option<&'static Transform>,
+        Option<&'static Cell>,
+    ),
+    With<Collidable>,
+>;
 /// 悬停读数要读的那条行动：什么时候落地 + 归属 + 落点 + 对抗标签。
 type ReadoutActionQuery<'w, 's> = Query<
     'w,
@@ -298,7 +312,7 @@ pub fn update_timeline_readout_system(
     actions: ReadoutActionQuery<'_, '_>,
     // 行动者的位置：只在"这一手没有落点信息"时用来兜底显示它**在哪儿**
     // （移动 / 跳跃这类没有 `TargetCell` 也没有 `Threatens` 的动作）
-    units: Query<(&Faction, Option<&Transform>, Option<&Cell>)>,
+    units: ReadoutUnitQuery<'_, '_>,
     // 载荷名与面板读的是同一套判据（`presentation::hud::actions`）
     payloads: PayloadQueries<'_, '_>,
     mut state: ResMut<TimelineReadoutState>,
@@ -446,7 +460,7 @@ mod tests {
     fn the_state_line_shows_the_manual_pause() {
         let mut app = timeline_app();
         // 场上没有别人要停表：唯一的冻结来源就是玩家自己按的那一下
-        app.world_mut().spawn((Faction::Player, Health::new(50)));
+        app.world_mut().spawn((Faction::Player, Collidable));
         let state = app
             .world_mut()
             .spawn((TimelineStateLabel, Text::new("")))
@@ -475,14 +489,8 @@ mod tests {
     fn each_actor_draws_in_its_own_lane() {
         let mut app = timeline_app();
 
-        let player = app
-            .world_mut()
-            .spawn((Faction::Player, Health::new(50)))
-            .id();
-        let enemy = app
-            .world_mut()
-            .spawn((Faction::Enemy, Health::new(50)))
-            .id();
+        let player = app.world_mut().spawn((Faction::Player, Collidable)).id();
+        let enemy = app.world_mut().spawn((Faction::Enemy, Collidable)).id();
         let blocks: Vec<Entity> = (0..LANE_POOL)
             .flat_map(|lane| (0..BLOCK_POOL_PER_LANE).map(move |slot| (lane, slot)))
             .map(|(lane, slot)| {
@@ -560,7 +568,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Faction::Player,
-                Health::new(50),
+                Collidable,
                 DecisionSlot::Idle { intent: None },
             ))
             .id();
@@ -626,7 +634,7 @@ mod tests {
             .world_mut()
             .spawn((
                 Faction::Player,
-                Health::new(50),
+                Collidable,
                 DecisionSlot::Idle { intent: None },
             ))
             .id();
@@ -681,10 +689,7 @@ mod tests {
         let mut app = timeline_app();
         // 玩家等输入 → 虚拟时间冻结：这是 HUD 最常处的状态
         app.world_mut().resource_mut::<Time<Virtual>>().pause();
-        let player = app
-            .world_mut()
-            .spawn((Faction::Player, Health::new(50)))
-            .id();
+        let player = app.world_mut().spawn((Faction::Player, Collidable)).id();
         let state = app
             .world_mut()
             .spawn((TimelineStateLabel, Text::new("")))
@@ -730,10 +735,7 @@ mod tests {
     fn hidden_blocks_reset_their_geometry() {
         let mut app = timeline_app();
 
-        let player = app
-            .world_mut()
-            .spawn((Faction::Player, Health::new(50)))
-            .id();
+        let player = app.world_mut().spawn((Faction::Player, Collidable)).id();
         let block = app
             .world_mut()
             .spawn((
@@ -784,10 +786,7 @@ mod tests {
             .init_resource::<TimelineHover>()
             .add_systems(Update, update_timeline_readout_system);
 
-        let enemy = app
-            .world_mut()
-            .spawn((Faction::Enemy, Health::new(50)))
-            .id();
+        let enemy = app.world_mut().spawn((Faction::Enemy, Collidable)).id();
         // 一条正在前摇的火球：锁着 (3,1)，对抗标签是普通攻击
         let action = app
             .world_mut()
@@ -885,10 +884,7 @@ mod tests {
             .init_resource::<TimelineHover>()
             .add_systems(Update, update_timeline_readout_system);
 
-        let player = app
-            .world_mut()
-            .spawn((Faction::Player, Health::new(50)))
-            .id();
+        let player = app.world_mut().spawn((Faction::Player, Collidable)).id();
         let action = app
             .world_mut()
             .spawn((

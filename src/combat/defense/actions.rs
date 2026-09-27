@@ -7,8 +7,8 @@
 
 use bevy::prelude::*;
 
-use crate::combat::Faction;
 use crate::combat::attack::abilities::PARRY_ABILITY;
+use crate::combat::{Collidable, Faction};
 use crate::movement::abilities::ROLL_ABILITY;
 use crate::movement::{Cell, ROLL_TIMING, Velocity, ground_direction, step_from_axis};
 use crate::skills::{AbilityId, can_cast};
@@ -134,7 +134,7 @@ pub fn declare_roll_system(
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     config: Option<Res<crate::config::ActionConfig>>,
     mut rollers: RollerPlayer<'_, '_>,
-    units: Query<(&Transform, &Faction)>,
+    units: Query<(&Transform, &Faction), With<Collidable>>,
 ) {
     if requests.read().last().is_none() {
         return;

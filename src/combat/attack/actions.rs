@@ -13,9 +13,9 @@
 
 use bevy::prelude::*;
 
-use crate::combat::Faction;
 use crate::combat::defense::Stamina;
 use crate::combat::reaction::{Threatens, melee_arc_cells};
+use crate::combat::{Collidable, Faction};
 use crate::movement::Cell;
 use crate::skills::AbilityId;
 use crate::timeline::{
@@ -123,7 +123,7 @@ pub fn refund_melee_observer(
 
 /// 最近的敌对单位所在的格（没有敌人时返回 `None`）。
 fn nearest_enemy_cell(
-    units: &Query<(&Transform, &Faction)>,
+    units: &Query<(&Transform, &Faction), With<Collidable>>,
     origin: Vec3,
     faction: Faction,
 ) -> Option<Cell> {
@@ -248,7 +248,7 @@ pub fn shoot_action_executor_system(
         &ShootAction,
         &ActionOf,
     )>,
-    units: Query<(&Transform, &Faction)>,
+    units: Query<(&Transform, &Faction), With<Collidable>>,
     equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
     let now = time.elapsed_secs();
@@ -302,7 +302,7 @@ pub fn melee_action_executor_system(
         &MeleeAction,
         &ActionOf,
     )>,
-    units: Query<(&Transform, &Faction)>,
+    units: Query<(&Transform, &Faction), With<Collidable>>,
     equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
     let now = time.elapsed_secs();

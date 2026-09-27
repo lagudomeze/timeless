@@ -13,9 +13,9 @@
 use bevy::prelude::*;
 
 use super::abilities::FIREBALL_ABILITY;
-use crate::combat::Faction;
 use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
+use crate::combat::{Collidable, Faction};
 use crate::movement::{Cell, Velocity};
 use crate::skills::AbilityId;
 use crate::skills::can_cast;
@@ -187,7 +187,7 @@ pub fn declare_fireball_system(
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     config: Option<Res<crate::config::ActionConfig>>,
     mut players: FireballPlayer<'_, '_>,
-    units: Query<(&Transform, &Faction)>,
+    units: Query<(&Transform, &Faction), With<Collidable>>,
     // 武器改动作节奏（只给偏移，见 `equipment::weapon_timing`）
     equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
@@ -275,7 +275,7 @@ pub fn declare_melee_system(
     mut blocked: MessageWriter<crate::timeline::ActionBlocked>,
     config: Option<Res<crate::config::ActionConfig>>,
     mut players: AttackerPlayer<'_, '_>,
-    units: Query<(&Transform, &Faction)>,
+    units: Query<(&Transform, &Faction), With<Collidable>>,
     // 武器改动作节奏（只给偏移，见 `equipment::weapon_timing`）
     equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
@@ -358,7 +358,7 @@ pub fn fireball_action_executor_system(
         &FireballAction,
         &ActionOf,
     )>,
-    actors: Query<(&Transform, &Faction)>,
+    actors: Query<(&Transform, &Faction), With<Collidable>>,
     equipment: Query<&crate::equipment::EquipmentBonus>,
 ) {
     let now = time.elapsed_secs();

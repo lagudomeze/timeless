@@ -22,7 +22,7 @@ use bevy::prelude::*;
 use crate::combat::attack::{FIREBALL_TIMING, MELEE_TIMING, declare_fireball_at, declare_melee_at};
 use crate::combat::defense::{Stamina, declare_roll, roll_step};
 use crate::combat::reaction::Threatens;
-use crate::combat::{AttackRange, Faction, Health};
+use crate::combat::{AttackRange, Collidable, Faction, Health};
 use crate::movement::abilities::ROLL_ABILITY;
 use crate::movement::{
     CELL_SIZE, Cell, MOVE_TIMING, ROLL_TIMING, move_action_scene, step_from_axis,
@@ -148,7 +148,7 @@ pub fn enemy_declare_system(
         ),
         With<EnemyBrain>,
     >,
-    bodies: Query<(&Transform, &Cell, &Faction)>,
+    bodies: Query<(&Transform, &Cell, &Faction), With<Collidable>>,
 ) {
     let now = time.elapsed_secs();
 

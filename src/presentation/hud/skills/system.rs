@@ -8,6 +8,7 @@ use crate::combat::Faction;
 use crate::combat::attack::MenuSelection;
 use crate::combat::defense::Stamina;
 use crate::combat::reaction::ReactionSlot;
+use crate::timeline::InputDriven;
 
 use super::super::HudCache;
 use super::model::{
@@ -21,7 +22,7 @@ pub fn update_skill_bar_system(
     selection: Res<MenuSelection>,
     // 反制建议住在被威胁的玩家身上（`ReactionSlot`）：HUD 只读它、不认识 `CounterCost`。
     // 表现层仍按 `Faction` 找人（它看的是"哪个阵营的单位"，不是"谁在输入"）。
-    players: Query<(&Faction, &Stamina, Option<&ReactionSlot>)>,
+    players: Query<(&Faction, &Stamina, Option<&ReactionSlot>), With<InputDriven>>,
     mut cache: ResMut<HudCache>,
     mut slots: Query<(
         &SkillSlot,
@@ -92,6 +93,7 @@ pub fn update_skill_bar_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::Collidable;
     use crate::combat::attack::{SKILLS, SkillKind};
     use crate::combat::reaction::CounterSuggestion;
     use crate::presentation::hud::skills::model::{SLOT_BG, SLOT_BG_LOCKED, SLOT_BORDER};
@@ -129,7 +131,7 @@ mod tests {
         let mut app = skill_app();
         let player = app
             .world_mut()
-            .spawn((Faction::Player, Stamina::new(5)))
+            .spawn((Faction::Player, Stamina::new(5), Collidable, InputDriven))
             .id();
         let melee = spawn_slot(&mut app, 1); // 免费技能
         let fireball = spawn_slot(&mut app, 2); // 2 精力
@@ -227,7 +229,7 @@ mod tests {
             .expect("技能栏里应当有翻滚");
         let player = app
             .world_mut()
-            .spawn((Faction::Player, Stamina::new(5)))
+            .spawn((Faction::Player, Stamina::new(5), Collidable, InputDriven))
             .id();
         let roll = spawn_slot(&mut app, roll_index);
         let fireball = spawn_slot(&mut app, 2);
@@ -268,7 +270,7 @@ mod tests {
         let mut app = skill_app();
         let player = app
             .world_mut()
-            .spawn((Faction::Player, Stamina::new(5)))
+            .spawn((Faction::Player, Stamina::new(5), Collidable, InputDriven))
             .id();
         let slot = spawn_slot(&mut app, 2);
 
