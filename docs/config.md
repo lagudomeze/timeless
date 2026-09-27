@@ -69,7 +69,7 @@ ActionConfig（资源，来自 .ron 或默认值）
 
 | 缺口 | 说明 |
 | :--- | :--- |
-| **`ActionRegistry`** | HUD 仍读 `SKILLS` 数组而非技能目录（见 `TODO.md` 的 M24c 审计结论） |
+| **`ActionRegistry`** | HUD 仍读 `SKILLS` 数组而非技能目录（见 [`CHANGELOG.md`](../CHANGELOG.md) 的 M24c 审计结论） |
 | **地形 / 相机等数值** | 本次只做了**动作**相关；`TerrainConfig` 等已有自己的资源，外置与否另说 |
 | **菜单的 `cost` 显示** | `SKILLS` 数组仍是常量表（角标 / tooltip 读它），改配置后**玩法生效但角标不跟着变**——属 `ActionRegistry` 那一条 |
 

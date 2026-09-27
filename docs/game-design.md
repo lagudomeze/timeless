@@ -66,4 +66,5 @@
 - 模块结构与分层：[domain.md](domain.md)
 - 战斗机制与命中管线：[combat.md](combat.md)
 - 技能静态定义与释放条件：[skills.md](skills.md)
-- 当前进度与 backlog：[../TODO.md](../TODO.md)
+- 当前进度与 backlog：[../TODO.md](../TODO.md)（活待办）· [backlog/](backlog/)（领域条目）·
+  [../CHANGELOG.md](../CHANGELOG.md)（历史证据）
