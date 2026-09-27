@@ -54,3 +54,37 @@
       （`interaction/visual.rs`）。教训：**大段删改不要用 shell 拼接**——
       要么用编辑工具，要么先写临时文件再整体替换，并且**动完立刻 `cargo check`**。
       这次是靠 `git checkout --` 恢复 HEAD 再重做才没丢东西。
+
+## 还没做（本文件里剩下的）
+
+- [ ] **[P2][bug] `Faction` ≠「单位」：攻击实体也带阵营，松查询会把它们当成单位**
+      **怎么发现的**：实机第 5 节发现"三个单位全在忙，候场区却亮着一个 `E`"，
+      追下去是时间轴的 `actors: Query<(Entity, &Faction, Option<&DecisionSlot>)>`
+      把**在飞的箭**当成了"没有决策槽的单位"（= 已就绪）→ 占一条车道 + 站候场区。
+      **时间轴那处已修**（加 `With<Health>`，见 `timeline/system.rs` 的注释与
+      `attack_entities_are_not_units` 测试）。**但根因是全局性的**：
+      `combat::attack::scene` 的三个场景工厂（箭矢 / 横扫 / 火球）都给**攻击实体**
+      烘了 `Faction`（供命中过滤"不打自己人"），于是**任何**"按 `Faction` 枚举单位"
+      的查询都会把它们算进去。
+      **已审计到的松查询**（`grep 'Query<.*Faction'`，2026-09-27）：
+      | 位置 | 用途 | 把攻击实体算进去的后果 |
+      | :--- | :--- | :--- |
+      | `presentation/camera.rs:101` | 镜头跟随"玩家" | 玩家射出的箭若也在查询里，镜头可能追着箭走（**待确认**：要看它怎么挑目标） |
+      | `interaction/pointer.rs:74` | 左键**单位**→ 打它 | 点到在飞的箭上会当成"点了某个单位" |
+      | `interaction/pointer.rs:149` / `visual.rs:140` | 悬停格的占位者 | 箭所在格被算成"有人占着"（染色 / 可走性读数可能受影响） |
+      | `combat/attack/actions.rs:126,251,305`、`fireball.rs:190,278,361` | 找"最近的敌人" | 敌人的瞄准可能选中**玩家的箭**（瞄到一个正在飞走的点） |
+      | `combat/defense/actions.rs:137` | 翻滚 / 招架的判定范围 | 同格判定可能被箭影响 |
+      | `ai/systems.rs:151` | 敌人找目标 | 同上 |
+      | `presentation/hud/timeline/system.rs:294` | 悬停读数的单位表 | 与已修的那处同源 |
+      **对照**（已经做对的）：`combat/attack/explosion.rs:46` 用 `With<Health>`、
+      `presentation/hud/panels/system.rs` 的 `UnitQuery` 要求 `Health` + `Cell`、
+      `ai/systems.rs:75` 带 `&Health`。
+      **改法（一次做完，别零敲碎打）**：给"这是个单位"一个**显式标记**——
+      要么沿用 `With<Health>`（现成先例最多，改动最小），要么新增一个
+      `Unit` 标记组件由 `spawn/unit.rs` 统一挂上（语义最清楚、且将来"能被单位查询"
+      变成显式选择）。**倾向于后者**：`Health` 是战斗概念，借它表达"是单位"
+      是隐式耦合；而 `Faction` 这个坑正是"借一个碰巧存在的组件表达另一个概念"造成的。
+      **触发条件**：**下一次碰相机跟随 / 点击拾取 / 敌人瞄准时**顺手做完——
+      单独为它开一轮不划算，但每拖一轮就多一处"屏幕或 AI 在说谎"。
+      **验收**：每个改过的查询配一条"攻击实体不算单位"的测试（时间轴那条是范例）；
+      外加实机：**射一支箭，看候场区/车道/镜头/悬停占位有没有多出东西**。

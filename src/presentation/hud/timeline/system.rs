@@ -7,8 +7,8 @@
 use bevy::prelude::*;
 
 use crate::clock::PauseReasons;
-use crate::combat::Faction;
 use crate::combat::reaction::{TargetCell, Threatens};
+use crate::combat::{Faction, Health};
 use crate::movement::Cell;
 use crate::skills::CombatTags;
 use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, ScheduledAction};
@@ -114,7 +114,14 @@ pub fn update_timeline_system(
     // （见 `docs/backlog/hud.md` 的 #50）。
     manual: Res<crate::clock::ManualPause>,
     now: Res<Time<Virtual>>,
-    actors: Query<(Entity, &Faction, Option<&DecisionSlot>)>,
+    // ⚠️ **`With<Health>` 不是装饰**：`Faction` ≠「单位」。攻击实体（箭矢 / 横扫 /
+    // 火球，见 `combat::attack::scene`）**也带 `Faction`**（供命中过滤"不打自己人"），
+    // 于是松查询会把一支**在飞的箭**当成一个单位：它占一条车道，又因为没有
+    // `DecisionSlot` 被算作"已就绪"，**站进候场区**（2026-09-27 实机抓到：
+    // 三个单位全在忙，候场区却亮着一个 `E`）。
+    // 判据用 `Health`：单位都有它，攻击实体都没有——`combat::attack::explosion`
+    // 找"可被炸到的身体"用的也是同一条（`With<Health>`）。
+    actors: Query<(Entity, &Faction, Option<&DecisionSlot>), With<Health>>,
     actions: Query<(Entity, &ScheduledAction, &ActionTiming, &ActionOf)>,
     mut cache: ResMut<HudCache>,
     mut layout: ResMut<TimelineLayout>,
@@ -439,7 +446,7 @@ mod tests {
     fn the_state_line_shows_the_manual_pause() {
         let mut app = timeline_app();
         // 场上没有别人要停表：唯一的冻结来源就是玩家自己按的那一下
-        app.world_mut().spawn(Faction::Player);
+        app.world_mut().spawn((Faction::Player, Health::new(50)));
         let state = app
             .world_mut()
             .spawn((TimelineStateLabel, Text::new("")))
@@ -468,8 +475,14 @@ mod tests {
     fn each_actor_draws_in_its_own_lane() {
         let mut app = timeline_app();
 
-        let player = app.world_mut().spawn(Faction::Player).id();
-        let enemy = app.world_mut().spawn(Faction::Enemy).id();
+        let player = app
+            .world_mut()
+            .spawn((Faction::Player, Health::new(50)))
+            .id();
+        let enemy = app
+            .world_mut()
+            .spawn((Faction::Enemy, Health::new(50)))
+            .id();
         let blocks: Vec<Entity> = (0..LANE_POOL)
             .flat_map(|lane| (0..BLOCK_POOL_PER_LANE).map(move |slot| (lane, slot)))
             .map(|(lane, slot)| {
@@ -545,7 +558,11 @@ mod tests {
 
         let player = app
             .world_mut()
-            .spawn((Faction::Player, DecisionSlot::Idle { intent: None }))
+            .spawn((
+                Faction::Player,
+                Health::new(50),
+                DecisionSlot::Idle { intent: None },
+            ))
             .id();
         let chip = app
             .world_mut()
@@ -591,13 +608,83 @@ mod tests {
         assert_eq!(display(&app, block), Display::Flex, "排期画在自己的车道里");
     }
 
+    /// **攻击实体不是单位**：带 `Faction` 但没有 `Health` 的东西（在飞的箭矢 / 横扫 /
+    /// 火球——见 `combat::attack::scene`）**不许占车道，也不许站候场区**。
+    ///
+    /// 2026-09-27 实机抓到的正是这个：三个单位全在忙，候场区却亮着一个 `E`——
+    /// 那是在飞的箭。松查询（`Query<&Faction>`）把它当成了一个"没有决策槽的单位"，
+    /// 而"没有决策槽"按定义算**已就绪**，于是它站上了候场区。
+    ///
+    /// 判据用 `Health`：单位都有它，攻击实体都没有
+    /// （`combat::attack::explosion` 找"可被炸到的身体"用的也是这一条）。
+    #[test]
+    fn attack_entities_are_not_units() {
+        let mut app = timeline_app();
+
+        // 一个真正的单位：有阵营、有身体、空闲
+        let player = app
+            .world_mut()
+            .spawn((
+                Faction::Player,
+                Health::new(50),
+                DecisionSlot::Idle { intent: None },
+            ))
+            .id();
+        // 一支"在飞的箭"：有阵营（供命中过滤），**没有** Health、没有决策槽。
+        // 它的实体号比玩家新，所以松查询下它会排到车道 1。
+        let arrow = app.world_mut().spawn(Faction::Enemy).id();
+
+        // 玩家 → 车道 0 的候场 chip；车道 1 的 chip 若被箭占上就会亮
+        let player_chip = app
+            .world_mut()
+            .spawn((
+                TimelineReadyChip { index: 0 },
+                Node {
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .id();
+        let second_chip = app
+            .world_mut()
+            .spawn((
+                TimelineReadyChip { index: 1 },
+                Node {
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .id();
+
+        app.update();
+        let display = |app: &App, entity: Entity| app.world().get::<Node>(entity).unwrap().display;
+
+        assert_eq!(
+            display(&app, player_chip),
+            Display::Flex,
+            "真正的单位该候场"
+        );
+        assert_eq!(
+            display(&app, second_chip),
+            Display::None,
+            "箭矢不是单位：它不该占车道、更不该因为'没有决策槽'而被当成已就绪"
+        );
+        assert!(app.world().get_entity(arrow).is_ok());
+        assert!(app.world().get_entity(player).is_ok());
+    }
+
     /// 世界冻结（等玩家输入）时时间轴应当整帧静止；队列一变就必须重画。
     #[test]
     fn frozen_timeline_is_left_alone_until_the_queue_changes() {
         let mut app = timeline_app();
         // 玩家等输入 → 虚拟时间冻结：这是 HUD 最常处的状态
         app.world_mut().resource_mut::<Time<Virtual>>().pause();
-        let player = app.world_mut().spawn(Faction::Player).id();
+        let player = app
+            .world_mut()
+            .spawn((Faction::Player, Health::new(50)))
+            .id();
         let state = app
             .world_mut()
             .spawn((TimelineStateLabel, Text::new("")))
@@ -643,7 +730,10 @@ mod tests {
     fn hidden_blocks_reset_their_geometry() {
         let mut app = timeline_app();
 
-        let player = app.world_mut().spawn(Faction::Player).id();
+        let player = app
+            .world_mut()
+            .spawn((Faction::Player, Health::new(50)))
+            .id();
         let block = app
             .world_mut()
             .spawn((
@@ -694,7 +784,10 @@ mod tests {
             .init_resource::<TimelineHover>()
             .add_systems(Update, update_timeline_readout_system);
 
-        let enemy = app.world_mut().spawn(Faction::Enemy).id();
+        let enemy = app
+            .world_mut()
+            .spawn((Faction::Enemy, Health::new(50)))
+            .id();
         // 一条正在前摇的火球：锁着 (3,1)，对抗标签是普通攻击
         let action = app
             .world_mut()
@@ -792,7 +885,10 @@ mod tests {
             .init_resource::<TimelineHover>()
             .add_systems(Update, update_timeline_readout_system);
 
-        let player = app.world_mut().spawn(Faction::Player).id();
+        let player = app
+            .world_mut()
+            .spawn((Faction::Player, Health::new(50)))
+            .id();
         let action = app
             .world_mut()
             .spawn((
