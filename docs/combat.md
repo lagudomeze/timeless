@@ -166,5 +166,6 @@ HUD 只读 `ReactionSlot`，不认识 `CounterCost` 的语义——它只画
 时间线只宣布"后摇结束了"（`DecisionReady`）。
 
 ⚠️ **`Focus` 现在住在 `timeline/focus.rs`，要搬来这里**——它是反制资源，
-不是时间线的概念（搬迁这件事记在 [`backlog/clock.md`](backlog/clock.md) 的「冻结时视觉纪律」
-同批考虑；`Focus` 的 HUD 读数缺失见 [`backlog/hud.md`](backlog/hud.md)）。
+不是时间线的概念（搬迁是**独立一条**，不再挂在「冻结时视觉纪律」下：那张表已于
+2026-09-27 定稿，见 [`timeline.md`](timeline.md) 第五节；
+`Focus` 的 HUD 读数缺失见 [`backlog/hud.md`](backlog/hud.md)）。
