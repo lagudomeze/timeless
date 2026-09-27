@@ -1568,3 +1568,71 @@ C 技能槽点击选中（1 项，含为什么上次会被误判的说明）。
 却从索引进不去（这本身就是一处漂移：**文档存在但不可发现**）。
 已在第二张表加一行「**实机核查清单**」，指向 checklist 与 mouse 两篇，
 并写明"改了 UI / 交互后照着跑一遍"与"后者只有真人能做"。
+
+---
+
+## 2026-09-27 你报的那个「按 E 翻滚没反应」：**复现、定位、修好了**
+
+### 你的观察
+
+> 遇上可打断，但是按 e 翻滚，好像没有反应。
+
+### 复现（BRP，同一个窗口、只翻转精力）
+
+先把场面做成与你当时一致：窗口 `kind: "Incoming"`（可打断），建议列表
+`[Roll(cost: Free, affordable: true), Parry(Resource 1, affordable: true)]`，
+`PauseLabels = ["threat"]`、玩家 `Idle`。然后**只改一件东西**：
+
+| 精力 | 按 `E` 的结果 |
+| :--- | :--- |
+| **5/5** | 窗口**关了**：`ReactionSlot` 消失、`PauseLabels` → `["awaiting"]` |
+| **0/5** | **毫无反应**：`ReactionSlot` 还在、`resolved: false`、`PauseLabels` 仍有 `"threat"` |
+
+**同一个窗口、同一条建议**，只有精力不同——这就把原因钉死在"精力不够"上。
+
+### 根因：**两套代价模型不一致，HUD 说了按键不认的话**
+
+| 位置 | 判据 | 结论 |
+| :--- | :--- | :--- |
+| `combat::reaction::counter_suggestions`（画 HUD 用） | **只看 `CounterCost`**：`Free => true` | 翻滚**永远**"可用" |
+| `combat::attack::menu::use_selected_skill_system`（按键落地） | `def.affordable(pools)`：**技能自己的精力消耗** | 精力 0 → 写 `NotEnoughEnergy` 后 **`return`，根本走不到表态** |
+
+两边问的根本不是同一件事：
+`CounterCost` 说的是"**反制本身**的额外代价"（花 Focus / 拿原决策换），
+**技能自己的消耗照旧要付**——所以按键路径是对的，**HUD 在说谎**。
+后果就是你看到的那样：**界面亮着"翻滚可用"，按下去毫无反应**。
+
+### 修法：让两处判据同源
+
+`counter_suggestions` 现在两个都算：
+
+```rust
+let counter_affordable = match cost { Free => true, Resource(n) => focus >= n, CancelDecision => true };
+let affordable = counter_affordable && can_cast(def, pools).is_ok();
+```
+
+`detect_threat_system` 的玩家查询随之带上 `&Stamina` / `Option<&Ammo>`（抽成
+`PlayerThreatQuery` 别名，否则 clippy 报类型过复杂）。
+
+**验收**：新增 `a_free_counter_is_still_gated_by_the_skills_own_cost`——
+**实测它会咬**：把判据退回旧的只看 `CounterCost`，它转红并报
+"精力 0 时按键一定会被拒，HUD 不能还画成可选——**那正是玩家报的那个静默**"。
+
+### ⚠️ 还留着一处同类的小谎（已记，未改）
+
+`presentation::hud::hint` 的威胁文案是**无条件**的：
+
+```rust
+format!("{side} {payload} 锁定你{eta} · 可打断（E 翻滚躲 / 右键忍）")   // hint.rs:140
+```
+
+也就是说：修完之后**槽位会正确地画成不可选，但提示条还在劝你按 E**。
+同一类"界面承诺了做不到的事"，只是这次留在了文字里。
+**没顺手改**是因为它要动提示文案生成（得让那段文字知道建议列表的 `affordable`），
+属于另一个改动；本轮先把"按下去毫无反应"这个**更硬**的问题收掉。
+
+### 真人鼠标那一遍的结果（你跑完的）
+
+第 3 节三条 + 第 5 节悬停态**全部通过**（7 个面板点了世界不动、压面板时高亮与预演消失、
+`F1` 收起后能再点、悬停技能槽外观有变化）。
+**清单从 5 项未勾降到 1 项**——只剩第 7 节的"技能槽点击选中"（你这次没勾，见下）。
