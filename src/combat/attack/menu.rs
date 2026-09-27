@@ -23,7 +23,11 @@ use super::registry::{SKILLS, SkillKind};
 pub const MELEE_REACH: f32 = CELL_SIZE * 0.75;
 
 /// 当前选中的技能（资源）。
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// 派生 `Reflect` 是为了**诊断锚点能被 BRP 读到**（见 `docs/backlog/clock.md` 的 #62）：
+/// 预演读数只能间接反映"现在选的是哪一手"，远程核查时要能直接读它。
+#[derive(Resource, Reflect, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[reflect(Resource)]
 pub struct MenuSelection {
     index: usize,
 }

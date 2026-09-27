@@ -33,8 +33,9 @@ use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
 use crate::combat::Faction;
-use crate::combat::reaction::{TargetCell, Threatens};
+use crate::combat::reaction::{ReactionSlot, TargetCell, Threatens};
 use crate::movement::{CELL_SIZE, Cell};
+use crate::timeline::ActionOf;
 use crate::world::{TerrainConfig, ground_position};
 
 /// 最多同时画多少格威胁。
@@ -94,6 +95,120 @@ pub fn spawn_threat_tiles(mut commands: Commands) {
     }
 }
 
+/// **威胁来源圈**：在「正在威胁你的那个单位」脚边套一圈。
+///
+/// 与威胁格（[`ThreatTile`]）是同一个问题的两半——**「它打哪」** 由格子回答，
+/// **「谁在打我」** 由这一圈回答。两者都只在反应窗口开着时画。
+///
+/// 池化（[`THREAT_SOURCE_POOL`] 个）：一次只处理一个威胁，但池位留宽一点，
+/// 免得将来"同帧多个来源"时又要改结构。
+#[derive(Component, Reflect, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
+pub struct ThreatSourceRing {
+    /// 池内编号
+    pub index: usize,
+}
+
+/// 威胁来源圈的池子大小。
+///
+/// 反应系统一次只挂一个 `ReactionSlot`（多威胁取**最先落地**的那个），
+/// 所以 1 个就够用；留 2 个是为了将来"多条威胁同时可视化"时不必改结构。
+pub const THREAT_SOURCE_POOL: usize = 2;
+
+/// 威胁来源圈的环半径（世界单位）。
+///
+/// **必须大于阵营环的**（`FACTION_RING_OUTER`）：它套在阵营环外面当警示圈，
+/// 两者叠在同一个单位脚下时不该互相盖住。有测试钉住这条不等式。
+pub const THREAT_RING_RADIUS: f32 = 1.5;
+
+/// 威胁来源圈的离地高度（世界单位）：比威胁格薄片略高，比阵营环略高。
+pub const THREAT_RING_LIFT: f32 = 0.035;
+
+/// 威胁来源圈的颜色：琥珀（与时间轴悬停指示圈、技能栏选中色同族）——
+/// 它是"警告"，不是阵营信息（阵营由脚下的蓝/红环回答）。
+pub const THREAT_RING_TINT: Color = Color::srgba(0.95, 0.72, 0.25, 0.55);
+
+/// 开局生成整池威胁来源圈（之后只搬位置 / 改显隐）。
+pub fn spawn_threat_source_rings(mut commands: Commands) {
+    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    for index in 0..THREAT_SOURCE_POOL {
+        commands.spawn_scene(bsn! {
+            Name("ThreatSourceRing")
+            ThreatSourceRing { index: {index} }
+            Mesh3d(asset_value(Annulus::new(
+                THREAT_RING_RADIUS - THREAT_RING_WIDTH,
+                THREAT_RING_RADIUS,
+            )))
+            MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
+                base_color: {THREAT_RING_TINT},
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                double_sided: true,
+                ..default()
+            }))
+            // 平铺在地面上（和单位阴影、威胁格同一套做法）
+            Transform { rotation: {flat} }
+            Visibility::Hidden
+            // 只是一层指示，投出影子反而像实体
+            NotShadowCaster
+        });
+    }
+}
+
+/// 威胁来源圈的环宽（世界单位）。
+pub const THREAT_RING_WIDTH: f32 = 0.16;
+
+/// 「正在威胁玩家的那个单位是谁」——**纯函数**，与反应系统的开窗判据同源。
+///
+/// 只看**开着的**窗口（`ReactionSlot` 存在且没表态）：窗口一关，圈就该消失，
+/// 这与威胁格的判据一模一样（[`update_threat_grid_system`] 用同一份数据）。
+///
+/// 返回 `None` 的情形都该藏起来：没有窗口 / 已表态 / 来源不是行动实体
+/// （飞行中的投射物没有"脚"，它的落点由威胁格回答）。
+pub fn threat_source_of(
+    slot: Option<&ReactionSlot>,
+    threats: &Query<(&Threatens, Option<&ActionOf>)>,
+) -> Option<Entity> {
+    let slot = slot.filter(|slot| !slot.resolved)?;
+    let (_, action_of) = threats.get(slot.threat).ok()?;
+    Some(action_of?.actor())
+}
+
+/// 每帧把来源圈套到「正在威胁你的那个单位」脚下（没有就整池藏起来）。
+///
+/// **读的是那个单位此刻的 `Transform`**，不是它的格心：它在前摇里也可能被推着动
+/// （翻滚、被击退），圈该跟着人走而不是钉在格子上。
+pub fn update_threat_source_ring_system(
+    terrain: Res<TerrainConfig>,
+    slots: Query<&ReactionSlot>,
+    threats: Query<(&Threatens, Option<&ActionOf>)>,
+    // 两个查询都碰 `Transform`：用标记组件两两互斥（否则 Bevy 报 B0001）。
+    // 单位带 `Faction`、池位带 `ThreatSourceRing`，两者不可能同时成立。
+    positions: Query<&Transform, (With<Faction>, Without<ThreatSourceRing>)>,
+    mut rings: Query<(&ThreatSourceRing, &mut Transform, &mut Visibility), Without<Faction>>,
+) {
+    // 一次只有一个窗口：取第一个（反应系统保证全局最多一个）
+    let slot = slots.iter().next();
+    let source = threat_source_of(slot, &threats)
+        .and_then(|actor| positions.get(actor).ok())
+        .map(|transform| transform.translation);
+
+    for (ring, mut transform, mut visibility) in &mut rings {
+        // 只有第 0 个池位画（池位留宽是为了将来扩展，不是现在就画多份）
+        let Some(position) = source.filter(|_| ring.index == 0) else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        let ground = ground_position(&terrain, position.x, position.z);
+        transform.translation = Vec3::new(position.x, ground.y + THREAT_RING_LIFT, position.z);
+        *visibility = Visibility::Visible;
+    }
+}
+
+///
+/// 排序不是为了好看，是为了**每帧把同一批格分给同一批池位**——
+/// 不排序的话 `Query` 的遍历顺序不保证稳定，薄片会在帧之间互相跳（看起来像闪）。
+/// 去重则是因为两枚火球可以威胁到同一格，那格只该画一层。
 /// **威胁格只有一处排序规则**：去重后按格坐标升序。
 ///
 /// 排序不是为了好看，是为了**每帧把同一批格分给同一批池位**——
@@ -152,7 +267,170 @@ pub fn update_threat_grid_system(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::reaction::ThreatKind;
     use crate::timeline::{ActionOf, ActionTiming, ScheduledAction};
+
+    /// **来源圈与威胁格是同一个窗口的两半**：窗口开着 → 圈出行动者；关了就没了。
+    #[test]
+    fn the_source_ring_reads_the_same_window_as_the_threat_cells() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let enemy = app.world_mut().spawn(Faction::Enemy).id();
+        let action = app
+            .world_mut()
+            .spawn((
+                ActionOf(enemy),
+                Threatens {
+                    cells: vec![Cell::new(1, 1)],
+                },
+            ))
+            .id();
+        let make_slot = |resolved| ReactionSlot {
+            threat: action,
+            kind: ThreatKind::Incoming,
+            suggestions: Vec::new(),
+            resolved,
+        };
+
+        // 窗口开着且没表态 → 圈到**行动者**（不是行动实体）
+        {
+            let mut query = app.world_mut().query::<(&Threatens, Option<&ActionOf>)>();
+            let threats = query.query(app.world());
+            assert_eq!(
+                threat_source_of(Some(&make_slot(false)), &threats),
+                Some(enemy),
+                "圈的是行动者（有脚的那个），不是行动实体"
+            );
+            assert_eq!(
+                threat_source_of(Some(&make_slot(true)), &threats),
+                None,
+                "表过态就不该再圈——与威胁格「关窗即隐藏」同一条规矩"
+            );
+            assert_eq!(threat_source_of(None, &threats), None, "没有窗口就没有圈");
+        }
+    }
+
+    /// 池子规模、默认隐藏、标记：少写一行不会编译报错，只表现为"永远显示"。
+    #[test]
+    fn the_source_pool_is_built_hidden_and_marked() {
+        use bevy::scene::ScenePlugin;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins((AssetPlugin::default(), ScenePlugin))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>();
+        app.add_systems(Startup, spawn_threat_source_rings);
+        app.update();
+
+        let mut query = app.world_mut().query::<(&ThreatSourceRing, &Visibility)>();
+        let rings: Vec<(usize, Visibility)> = query
+            .iter(app.world())
+            .map(|(ring, visibility)| (ring.index, *visibility))
+            .collect();
+        assert_eq!(rings.len(), THREAT_SOURCE_POOL, "池子大小应当正好一池");
+        assert!(
+            rings
+                .iter()
+                .all(|(_, visibility)| *visibility == Visibility::Hidden),
+            "开局整池都该藏着"
+        );
+    }
+
+    /// **圈必须套在阵营环外面**：两者叠在同一个单位脚下，内环被盖住就没意义了。
+    ///
+    /// ⚠️ 比较的是常量，用 `black_box` 把值藏起来——否则 clippy 会说"断言的值恒定"
+    /// （它是对的：常量本身不是测试，**改了常量这里会红**才是）。
+    #[test]
+    fn the_threat_ring_sits_outside_the_faction_ring() {
+        let threat = std::hint::black_box(THREAT_RING_RADIUS);
+        let faction = std::hint::black_box(crate::presentation::unit_sprite::FACTION_RING_OUTER);
+        assert!(
+            threat > faction,
+            "威胁圈半径 {threat} 没有大过阵营环 {faction}——两层会糊在一起"
+        );
+    }
+
+    /// 池位跟着**单位此刻的位置**走（不是它的格心）：前摇里被推着动时圈要跟着人。
+    #[test]
+    fn the_ring_follows_the_unit_not_its_cell() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TerrainConfig::default())
+            .add_systems(Update, update_threat_source_ring_system);
+
+        let enemy = app
+            .world_mut()
+            .spawn((Faction::Enemy, Transform::from_xyz(5.0, 0.0, 7.0)))
+            .id();
+        let action = app
+            .world_mut()
+            .spawn((
+                ActionOf(enemy),
+                Threatens {
+                    cells: vec![Cell::new(0, 0)],
+                },
+                ActionTiming::default(),
+                ScheduledAction::default(),
+            ))
+            .id();
+        // 窗口挂在"玩家"身上（这里只需要有个带 `ReactionSlot` 的实体）
+        let player = app
+            .world_mut()
+            .spawn(ReactionSlot {
+                threat: action,
+                kind: ThreatKind::Incoming,
+                suggestions: Vec::new(),
+                resolved: false,
+            })
+            .id();
+        let ring = app
+            .world_mut()
+            .spawn((
+                ThreatSourceRing { index: 0 },
+                Transform::default(),
+                Visibility::Hidden,
+            ))
+            .id();
+        // 池位 1 也该保持隐藏（一次只画一个来源）
+        let spare = app
+            .world_mut()
+            .spawn((
+                ThreatSourceRing { index: 1 },
+                Transform::default(),
+                Visibility::Hidden,
+            ))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(ring).unwrap(),
+            &Visibility::Visible,
+            "窗口开着 → 圈显示出来"
+        );
+        let translation = app.world().get::<Transform>(ring).unwrap().translation;
+        assert!(
+            (translation.x - 5.0).abs() < 1e-6 && (translation.z - 7.0).abs() < 1e-6,
+            "圈的 XZ 应当跟着单位，实际 {translation:?}"
+        );
+        assert_eq!(
+            app.world().get::<Visibility>(spare).unwrap(),
+            &Visibility::Hidden,
+            "一次只画一个来源"
+        );
+
+        // 表态之后：整池藏起来
+        app.world_mut()
+            .get_mut::<ReactionSlot>(player)
+            .unwrap()
+            .resolved = true;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(ring).unwrap(),
+            &Visibility::Hidden,
+            "表过态就不该再圈"
+        );
+    }
 
     #[test]
     fn the_cells_are_deduped_and_sorted_for_a_stable_pool() {

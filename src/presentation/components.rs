@@ -11,7 +11,11 @@
 use bevy::prelude::*;
 
 /// 主相机标记（伪 3D 斜视角，仅一个）。
-#[derive(Component, Default, Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// 派生 `Reflect` 是为了**诊断锚点能被 BRP 读到**（见 `docs/backlog/clock.md` 的 #62）：
+/// 按相机截图（`brp_extras_screenshot` 的 `camera` 参数）要先能查到它的实体。
+#[derive(Component, Reflect, Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
 pub struct MainCamera;
 
 /// 相机机位：看住 `focus`，相机位置固定为 `focus + offset`。

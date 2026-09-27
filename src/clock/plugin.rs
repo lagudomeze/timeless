@@ -2,7 +2,10 @@
 
 use bevy::prelude::*;
 
-use super::{ClockSet, ManualPause, PauseReasons, PauseRequest, process_pause_requests};
+use super::{
+    ClockSet, ManualPause, PauseReasons, PauseRequest, RememberedPauseReasons,
+    process_pause_requests,
+};
 
 /// 世界冻结设施（通用，不认识任何领域）。
 #[derive(Debug, Default)]
@@ -13,8 +16,14 @@ impl Plugin for ClockPlugin {
         app.init_resource::<PauseReasons>()
             // 玩家的手动暂停：一个布尔（原因集合只装「别人为什么在停表」）
             .init_resource::<ManualPause>()
+            // 诊断镜像：`process_pause_requests` 每帧顺手写它（见本文件末的说明）
+            .init_resource::<RememberedPauseReasons>()
             // 暂停请求：写方是各领域（断言）与输入域（Toggle），消费方是 `process_pause_requests`
             .add_message::<PauseRequest>()
+            // 诊断锚点：BRP 读不到的东西等于不存在（见 docs/backlog/clock.md 的 #62）。
+            // `reflect_auto_register` 下派生即注册，这两行只是自文档。
+            .register_type::<ManualPause>()
+            .register_type::<RememberedPauseReasons>()
             .add_systems(Update, process_pause_requests.in_set(ClockSet));
     }
 }

@@ -156,7 +156,13 @@ impl CombatTags {
 ///
 /// **它是技能的静态属性**，所以写在定义里：反制建议列表就是"遍历所有
 /// `counter != None` 的技能"，没有硬编码的白名单（见 `docs/skills.md` 第四节）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// 派生 `Reflect` 是**被 [`CounterSuggestion`] 要求的**——反制建议要能通过 BRP 读出来
+/// （见 `docs/backlog/clock.md` 的 #62），而它嵌在这个建议里。
+/// 它仍然是"静态、可序列化"的那一半：没有 `Entity`、没有闭包。
+///
+/// [`CounterSuggestion`]: crate::combat::reaction::CounterSuggestion
+#[derive(Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CounterCost {
     /// 白送：反制插入，原决策保留
     Free,

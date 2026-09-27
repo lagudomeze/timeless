@@ -7,7 +7,11 @@ use bevy::prelude::*;
 use crate::combat::{DamageEvent, DeathEvent, Faction};
 
 /// 战斗日志（环形保留最近 N 条）。
-#[derive(Resource, Debug)]
+///
+/// 派生 `Reflect` 是为了**诊断锚点能被 BRP 读到**（见 `docs/backlog/clock.md` 的 #62）：
+/// 远程核查时"日志里到底写了哪几句"比截图更精确。
+#[derive(Resource, Reflect, Debug)]
+#[reflect(Resource)]
 pub struct BattleLog {
     entries: VecDeque<String>,
     max: usize,

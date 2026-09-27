@@ -69,7 +69,7 @@ pub enum PauseRequest {
     Toggle,
 }
 
-/// 暂停原因：有一名 `InputDriven` 的行动者**还没决定**（`!slot.ready()`），正等他。
+/// 暂停原因：有一名 `InputDriven` 的行动者**还没决定**（`!slot.decided()`），正等他。
 pub const AWAITING: &str = "awaiting";
 /// 暂停原因：combat 检测到有威胁瞄准玩家（见 `combat::reaction`）。
 pub const THREAT: &str = "threat";
@@ -83,7 +83,7 @@ pub const THREAT: &str = "threat";
 ///
 /// 集合内容同时是给玩家看的答案——「现在是谁在停世界」（HUD 显示
 /// [`labels`](Self::labels)），原因因此是常量而不是临时字符串。
-#[derive(Resource, Debug, Default, Clone)]
+#[derive(Resource, Debug, Default, Clone, Reflect)]
 pub struct PauseReasons(HashSet<&'static str>);
 
 /// 玩家的手动暂停：**一个布尔**，不是集合。
@@ -95,8 +95,39 @@ pub struct PauseReasons(HashSet<&'static str>);
 ///
 /// 它**不进 [`PauseReasons`]**：那个集合只回答「**别人**为什么在停表」
 /// （HUD 展示用），玩家的手动暂停不是"别人"。
-#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq, Reflect)]
+#[reflect(Resource)]
 pub struct ManualPause(pub bool);
+
+/// [`PauseReasons`] 的**只读镜像**：给 BRP 诊断用。
+///
+/// **为什么不是直接反射 [`PauseReasons`]**：它内含 `HashSet<&'static str>`，
+/// 反射要额外引入 `bevy_reflect` 的 `HashSet` 支持；而 issue 的规矩是
+/// **别为了"能远程看"而改数据结构**——镜像更便宜。核查看的也正是"这辈子出现过哪些
+/// 原因"，与"这一刻是哪个"相比是**超集**，信息只多不少。
+///
+/// 顺序**去重 + 排序**：`PauseReasons` 每帧重建、`HashSet` 迭代顺序不定，
+/// 不归一化的话远程读出来的东西每次都不同，没法写进验收。
+#[derive(Resource, Debug, Default, Clone, Reflect)]
+#[reflect(Resource)]
+pub struct RememberedPauseReasons(Vec<&'static str>);
+
+impl RememberedPauseReasons {
+    /// 这一帧的原因表里有哪些（去重 + 排序后的副本）。
+    pub fn as_slice(&self) -> &[&'static str] {
+        &self.0
+    }
+
+    /// 把本帧的原因并进来（已记住的不重复追加）。
+    fn remember(&mut self, labels: &[&'static str]) {
+        for label in labels {
+            if !self.0.contains(label) {
+                self.0.push(label);
+            }
+        }
+        self.0.sort_unstable();
+    }
+}
 
 impl PauseReasons {
     /// 现在冻着吗。
@@ -144,6 +175,7 @@ impl PauseReasons {
 pub fn process_pause_requests(
     mut requests: MessageReader<PauseRequest>,
     mut reasons: ResMut<PauseReasons>,
+    mut remembered: ResMut<RememberedPauseReasons>,
     mut manual: ResMut<ManualPause>,
     mut time: ResMut<Time<Virtual>>,
 ) {
@@ -180,6 +212,9 @@ pub fn process_pause_requests(
 
     // ③ 落到时钟：两个来源取或。**唯一**写 `Time<Virtual>` 的地方
     let paused = reasons.is_frozen() || manual.0;
+    // 顺手把本帧的原因记进只读镜像（BRP 诊断读它）：放在这里是因为这一刻
+    // `reasons` 已经是**最终**内容——`Toggle` 的清空也做完了。
+    remembered.remember(&reasons.labels());
     if paused != time.is_paused() {
         if paused {
             time.pause();
@@ -227,6 +262,7 @@ mod tests {
                 100,
             )))
             .init_resource::<PauseReasons>()
+            .init_resource::<RememberedPauseReasons>()
             .init_resource::<ManualPause>()
             .init_resource::<ManualLatch>()
             .add_message::<PauseRequest>()

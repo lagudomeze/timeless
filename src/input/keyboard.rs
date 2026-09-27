@@ -447,6 +447,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<PauseReasons>()
+            .init_resource::<crate::clock::RememberedPauseReasons>()
             .init_resource::<crate::clock::ManualPause>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<Captured>()

@@ -23,6 +23,8 @@ impl Plugin for AttackPlugin {
             app.add_plugins(crate::skills::SkillPlugin);
         }
         app.init_resource::<MenuSelection>()
+            // 诊断锚点：预演读数只能间接反映"现在选的是哪一手"（见 #62）
+            .register_type::<MenuSelection>()
             .add_systems(Startup, register_combat_abilities_system)
             .add_message::<ProjectileArrived>()
             // 输入类消息：由消费它们的领域注册（写：input；消费：本域）
