@@ -25,6 +25,7 @@ pub mod fireball;
 pub mod melee;
 pub mod menu;
 pub mod registry;
+pub mod scene;
 
 pub use abilities::{
     ABILITIES as COMBAT_ABILITIES, FIREBALL_ABILITY, MELEE_ABILITY, PARRY_ABILITY, SHOOT_ABILITY,
@@ -36,22 +37,24 @@ pub use actions::{
     refund_melee_observer, shoot_action_executor_system, shoot_action_scene,
 };
 pub use ammo::{AMMO_MAX, AMMO_RECOVER_INTERVAL, Ammo, AmmoRecoverTimer, recover_ammo_system};
-pub use arrow::{ARROW_COST, ARROW_DAMAGE, ARROW_FRAME, ARROW_POWER, ARROW_SPEED, arrow_scene};
+pub use arrow::{ARROW_COST, ARROW_DAMAGE, ARROW_FRAME, ARROW_POWER, ARROW_SPEED};
 pub use events::{FireCommand, MeleeCommand, ShootCommand};
 pub use explosion::{explosion_system, radial_damage_units};
 pub use fireball::{
     ARRIVAL_TOLERANCE, FIREBALL_AMMO_COST, FIREBALL_DAMAGE, FIREBALL_FRAME, FIREBALL_POWER,
     FIREBALL_RADIUS, FIREBALL_SPEED, FIREBALL_TIMING, Fireball, FireballAction, ProjectileArrived,
     declare_fireball_at, declare_fireball_system, declare_melee_system,
-    fireball_action_executor_system, fireball_action_scene, fireball_scene,
-    projectile_arrival_system, refund_fireball_observer,
+    fireball_action_executor_system, fireball_action_scene, projectile_arrival_system,
+    refund_fireball_observer,
 };
-pub use melee::{MELEE_DAMAGE, MELEE_FRAME, MELEE_POWER, melee_scene};
+pub use melee::{MELEE_DAMAGE, MELEE_FRAME, MELEE_POWER};
 pub use menu::{
     CycleSkill, MELEE_REACH, MenuSelection, SelectSkill, UseSelectedSkill, cycle_skill_system,
     select_skill_system, skill_line, use_selected_skill_system,
 };
 pub use registry::{SKILLS, SkillDef, SkillKind, affordable_indices, index_of, skill};
+// 攻击实体的场景工厂：**唯一会造网格 / 材质的一层**（逻辑域不再引用渲染类型）
+pub use scene::{arrow_scene, fireball_scene, melee_scene};
 
 pub mod plugin;
 pub use plugin::AttackPlugin;

@@ -14,7 +14,6 @@ use bevy::prelude::*;
 
 use super::abilities::FIREBALL_ABILITY;
 use crate::combat::Faction;
-use crate::combat::attributes::{AttackFrame, HitRadius, InterruptPower, PhysicalDamage};
 use crate::combat::lifecycle::Projectile;
 use crate::combat::reaction::{TargetCell, Threatens, trajectory_cells};
 use crate::movement::{Cell, Velocity};
@@ -26,6 +25,9 @@ use crate::timeline::{
 };
 
 use super::actions::MELEE_TIMING;
+// 火球实体的场景工厂在 `scene.rs`（本文件只留数值、声明与执行器；
+// 见 `docs/backlog/dev.md` 的"逻辑域里造网格 / 材质的收口"）
+use super::scene::fireball_scene;
 
 /// 从配置取火球节奏（缺省 = 常量）。
 fn fireball_timing(config: Option<&crate::config::ActionConfig>) -> ActionTiming {
@@ -154,62 +156,6 @@ pub fn refund_fireball_observer(
     };
     ammo.regen(cost);
     ammo.try_spend(cost);
-}
-
-/// 火球实体工厂：朝目标格飞行的投射物（到达后由到达系统广播）。
-///
-/// 挂 [`TargetCell`]：飞行中的它同样构成威胁（反应系统据此冻结世界，
-/// 玩家还有机会躲开或者抢先把它打掉）。
-///
-/// `damage` 是**这一发的最终数值**（基础 `FIREBALL_DAMAGE` + 施法者的武器加成）；
-/// [`Fireball::amount`] 会带着它一路走到爆炸结算——爆炸系统读的是那个组件，
-/// 不需要认识"装备"。
-pub fn fireball_scene(
-    origin: Vec3,
-    target_cell: Cell,
-    faction: Faction,
-    damage: i32,
-) -> impl Scene {
-    let target = target_cell.center();
-    // 落到目标格中心正上方一点，避免贴地穿模
-    let destination = Vec3::new(target.x, origin.y, target.y);
-    let direction = (destination - origin).normalize_or_zero();
-    let speed = if origin.distance(destination) > f32::EPSILON {
-        FIREBALL_SPEED
-    } else {
-        0.0
-    };
-    let rotation = if direction == Vec3::ZERO {
-        Quat::IDENTITY
-    } else {
-        Quat::from_rotation_arc(Vec3::Z, direction)
-    };
-    bsn! {
-        template_value(faction)
-        template_value(Velocity(direction * speed))
-        Fireball {
-            speed: FIREBALL_SPEED,
-            amount: {damage},
-            radius: FIREBALL_RADIUS,
-        }
-        TargetCell(target_cell)
-        Projectile { max_hits: 0, current_hits: 0, finished: false }
-        template_value(PhysicalDamage(damage))
-        template_value(AttackFrame(FIREBALL_FRAME))
-        template_value(InterruptPower(FIREBALL_POWER))
-        HitRadius(0.35)
-        Transform {
-            translation: {origin},
-            rotation: {rotation},
-        }
-        Mesh3d(asset_value(Sphere::new(0.35)))
-        MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.45, 0.15),
-            emissive: LinearRgba::rgb(6.0, 1.2, 0.2),
-            unlit: true,
-            ..default()
-        }))
-    }
 }
 
 /// 声明火球：`FireCommand` → 朝目标格放一发（锁格），并扣精力。

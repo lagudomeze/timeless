@@ -23,9 +23,11 @@ use crate::timeline::{
     ScheduledAction, Target,
 };
 
-use super::arrow::{ARROW_SPEED, arrow_scene};
+use super::arrow::ARROW_SPEED;
 use super::events::ShootCommand;
-use super::melee::melee_scene;
+// 攻击实体的**场景工厂**在 `scene.rs`（那里是唯一会用 `asset_value(...)` 造网格 / 材质的
+// 地方，见 `docs/backlog/dev.md`）；本文件只留载荷、声明与执行器。
+use super::scene::{arrow_scene, melee_scene};
 
 /// 射击（箭矢）的节奏：出手慢、后摇长，但在手里的时候最怕被打断。
 pub const ARROW_TIMING: ActionTiming = ActionTiming::new(0.30, 0.50, 2);

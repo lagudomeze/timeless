@@ -14,11 +14,9 @@ use super::InteractionSet;
 use super::components::{AoePreview, ConePreview, HoverHighlight, HoverTint, HoveredCell};
 use super::events::PointerCommand;
 use super::pointer::{hover_cell_system, pointer_command_system, update_preview_readout_system};
+use super::scene::{spawn_hover_highlight, spawn_preview_indicators};
 use super::ui_capture::{PointerOverUi, track_pointer_over_ui_system};
-use super::visual::{
-    spawn_hover_highlight, spawn_preview_indicators, update_hover_highlight_system,
-    update_preview_indicators_system,
-};
+use super::visual::{update_hover_highlight_system, update_preview_indicators_system};
 
 /// 鼠标交互插件：悬停拾取 + 高亮 + 点击 → 消息 + 行动预演指示器。
 #[derive(Debug, Default)]
