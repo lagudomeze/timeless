@@ -11,7 +11,7 @@
 | `textures/ui/icon_*.png`（4 个：attack / melee / fireball / roll） | 本仓库程序生成（64×64 RGBA 技能图标：靶心 / 剑 / 火球 / 弧形箭头） | 无（自有素材） | 技能栏占位图标；换正式图标时替换同名文件即可 |
 | `textures/ui/icon_shoot.png` | Kenney.nl Tiny Dungeon（`Tiles/tile_0119.png`，弓） | CC0 1.0 | https://kenney.nl/assets/tiny-dungeon · 与单位精灵同一套素材（风格一致）· 原件 16×16，**最近邻放大到 64×64**（HUD 用 `ImageSampler::nearest`，放大后仍是硬边像素）· 单体射击（箭矢）技能的图标 |
 | `models/nature/*.glb`（21 个） | Kenney.nl Nature Kit（`Models/GLTF format/*.glb`） | CC0 1.0 | https://kenney.nl/assets/nature-kit |
-| `fonts/NotoSansSC-Regular.otf` | noto-cjk 仓库 `Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` | OFL-1.1 | https://github.com/googlefonts/noto-cjk · **已子集化：8.3 MB → 12 KB**（131 个字形，见下）· 单一 Regular 字重 |
+| `fonts/NotoSansSC-Regular.otf` | noto-cjk 仓库 `Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` | OFL-1.1 | https://github.com/googlefonts/noto-cjk · **已子集化：8.3 MB → 12 KB**（134 个字形，配方见下节与 `tools/subset_font.py`）· 单一 Regular 字重 |
 
 下载直链（zip 内 License.txt 亦随包提供）：
 
@@ -35,29 +35,37 @@ alpha 通道。这里统一转成 32 位 RGBA（color type 6）：
 ## 字体：已子集化到 12 KB（8.3 MB → 12 KB）
 
 **做法**：把「界面上真的会显示的字」抽出来，只保留这些字形的字体。
-字符集**从源码抽**（与 `tests/assets.rs` 的 `the_font_covers_every_character_the_ui_can_show`
-同一条真相源），所以"改文案导致缺字"会被那条测试当场抓住。
+字符集有两个真相源，**都由脚本从源码里读**（不手抄）：
+
+| 来源 | 怎么抽 |
+| :--- | :--- |
+| 英文 / 数字 / 标点 | `tests/assets.rs` 里 `ui_text` 那份数组（脚本直接解析它）**∪ 全部可打印 ASCII**（95 个） |
+| 中文正文 | `chinese_in_source()`：从四个中文产处抽字符串字面量里的汉字，**跳过 `#[cfg(test)]` 模块** |
+
+脚本在 [`tools/subset_font.py`](../tools/subset_font.py)：
 
 ```bash
-# 1) 装工具（一次性）
-pip3 install fonttools
-# 2) 生成字符集：CJK 从四个中文源**非测试代码**里抽 + `tests/assets.rs` 的 ui_text + 全部 ASCII
-#    （正则见 git 历史；关键是**跳过 `#[cfg(test)]` 模块**——断言消息里的中文不会渲染）
-# 3) 子集化（**从 8.3 MB 的原字体**，不要从已子集化的文件再切）
-python3 -m fontTools.subset /path/to/NotoSansSC-Regular.otf \
-  --text-file=/tmp/subset_chars.txt --no-hinting --desubroutinize \
-  --layout-features='' --drop-tables+=DSIG \
-  --output-file=assets/fonts/NotoSansSC-Regular.otf
-```
+# 1) 拉一份源字体（8.3 MB，**不要**提交进仓库）
+#    https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf
+# 2) 装工具（一次性）
+python -m pip install fonttools
+# 3) 子集化（从源字体切，不要从已子集化的文件再切）
+python tools/subset_font.py <源字体.otf> assets/fonts/NotoSansSC-Regular.otf
 ```
 
-**为什么可以这么小**：界面上真正显示的 CJK 只有**战斗日志正文**（HUD 文案是英文）——
-阵营标签 `玩家` / `敌人`、兜底 `单位`、以及"命中 / 受到 / 点伤害 / 阵亡 / 被击杀"这几个词，
-加上 HUD 用到的 ASCII。全部加起来 **131 个字形**：**全部可打印 ASCII**（HUD 是英文，任何字母都可能出现）+ 20 个汉字 + 少量符号。
+⚠️ **别手抄字表**：第一版脚本手抄了 `ui_text`，漏掉 `n` / `B` / `g` 等 25 个字形，
+而**资产测试照样绿**（它只对账中文那一段，ASCII 那一半没人查）——
+屏幕上 `awaiting` / `COMBAT` 直接变成豆腐块。现在脚本从 `tests/assets.rs`
+解析那份数组、并把整个可打印 ASCII 并进去，这类问题不会再发生。
+
+**为什么能这么小**：界面上真正显示的 CJK 只有**战斗日志正文 + 威胁读数 + 溢出计数**
+（HUD 文案是英文）——阵营标签 `玩家` / `敌人`、兜底 `单位`、
+"命中 / 造成 / 受到 / 点伤害 / 阵亡 / 被击杀 / 还有 N 个"这些词。
+当前 **134 个字形**：95 个可打印 ASCII + **23 个汉字** + 少量符号。
 
 **加中文文案之后怎么办**：`cargo test --test assets` 会红（它逐字查 `cmap`），
 按上面的脚本重新生成一次即可——**不要**把 8.3 MB 的原始字体提交回来。
 
-**保留了什么 / 丢了什么**：保留这 131 个字形与 `cmap`；丢掉 `hinting`（屏幕字号下无所谓）、
+**保留了什么 / 丢了什么**：保留这 134 个字形与 `cmap`；丢掉 `hinting`（屏幕字号下无所谓）、
 `DSIG`（签名，子集化后本就失效）、以及不用的 OpenType 布局特性（本界面不做复杂排版）。
 若将来需要**用户可输入**的文本（聊天 / 命名），就不能用子集字体，得换全量或按输入范围再扩。
