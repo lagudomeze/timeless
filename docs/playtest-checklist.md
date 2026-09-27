@@ -118,16 +118,62 @@ cargo run          # ⚠️ 不要与 cargo test 并行：两者抢 target 锁
 
 ## 5. HUD 读数
 
-- [ ] 面板：`HP` / `EN` / `ammo` / `arm` / **`FOCUS n / 3` + 三点** /
-      `act: <技能> (windup …)`；**`ready` / `busy` 的语义要和决策槽一致**
-      （玩家空闲 = `ready`，敌人前摇中 = `busy`）
-- [ ] 敌人面板：每行一名敌人、按"离玩家最近"排序、行数超限时有溢出计数
+- [x] **面板读数与决策槽一致**（2026-09-27 实测）：玩家 `Idle` ↔ 面板 `ready`；
+      玩家 `Executing{99}` ↔ 面板 `busy`；两个敌人 `Executing` ↔ 两行 `busy`。
+      `HP` / `EN` / `FOCUS n / 3` / `cell (x,z)` / `ammo n / 3` / `arm n` 都在同一行里读到。
+- [x] **敌人面板：每行一名敌人 + 按"离玩家最近"排序**（2026-09-27 实测）：
+      玩家 `cell (1,0)` 时行 0 = `cell (3,3) · dist 7.2`、行 1 = `cell (3,5) · dist 10.8`；
+      把玩家挪到 `cell (3,6)` 后**两行互换**——行 0 变 `cell (3,5) · dist 2.0`、
+      行 1 变 `cell (3,3) · dist 6.0`（距离值也对：1 格 = 2.0 世界单位）。
+      名字 `ENEMY 1` / `ENEMY 2` 按**名次**给，不跟实体走——换位后第 1 行就是最近的那个。
+      溢出计数那一行在敌人没超限时 `display: None`（实测 2 个敌人时为空）。
+- [x] **洞察力读数只在"真有前摇"时带 `break`**：敌人有前摇中行动时读数
+      `range 1 · break 1 · approach`，行动落地后变成 `range 1 · approach`。
 - [ ] 时间轴：每单位一条车道、色块从 `now` 起算、块内刻线 = 落地时刻、
       右侧候场区列出"已就绪还没声明"的人
+      —— ⚠️ **候场区有一条强线索待查**（见本节末"未定性的观察"）
 - [ ] 技能栏：选中 / 悬停 / 买不起（灰）/ **能当反制（高亮）** 四种状态可区分
-- [ ] 日志：中文正文、`[1.2s]` 时刻前缀、能折叠、句子读得通（**不能出现
-      「敌人玩家 …」这种两个标签贴在一起**）
+      —— ⚠️ **悬停态用 BRP 验不了**（与第 3 节同因：合成光标进不了 UI 焦点）；
+      选中态也只能靠真人（见第 7 节"技能槽点击"那条）
+- [x] **日志句式**（2026-09-27 实测）：`BattleLog` 读到
+      `[0.2s] 玩家 命中 敌人，造成 16 点伤害`——**时刻前缀 + 主谓宾**，
+      没有出现「敌人玩家 …」那种两个标签贴在一起的老 bug。
+      **未跑到的句式**：敌人打中玩家、单位死亡（这两条要真的挨打 / 打出击杀才出现；
+      本次敌人只走到"在飞"那一步就被冻结拦下了）。
 - [ ] 提示条：被拒的输入优先于预演读数；威胁窗口开着时**持续显示**（不淡出）
+      —— 威胁窗口"持续显示"这半条已由 BRP 间接确认
+      （窗口开着时 `ActionHintText` 有内容且不随冻结消失）；"被拒输入优先"那半条未跑。
+
+### 未定性的观察：候场区 chip 在有单位忙碌时仍亮着一个
+
+**现象**（2026-09-27，连续两次读数一致）：场上只有 **3** 个单位
+（玩家 + 2 敌人），**三个的 `DecisionSlot` 全是 `Executing`**（都在忙、没有人"已就绪"），
+而 4 个 `TimelineReadyChip` 里 **index 3 是 `display: Flex`（亮着）**、index 0/1/2 是 `None`。
+chip 上写的字母是 `E`。
+
+**代码路径**（`presentation/hud/timeline/system.rs:236-252`）：
+```rust
+let faction = model.ready.contains(&chip.index)          // chip.index 是**车道号**
+    .then(|| model.lane_faction.get(chip.index).copied().flatten())
+    .flatten();
+```
+而 `lane_faction` 来自 `lane_actor`，`model.ready`（`model.rs:271-280`）是
+`lane_actor[*lane].is_some_and(|actor| ready.contains(&actor)) && lanes[*lane].is_empty()`
+筛出来的车道号。**3 个单位时车道 3 不该有 actor**，因此它不该进 `ready`。
+
+**两种可能，下轮用一条测试就能分开**：
+1. **模型算错了**——`build_model` 在"全员忙碌"时仍给出非空 `ready`
+   （那么 `ready.contains(&3)` 为真）。**判定**：直接单测 `build_model`：
+   给一个全员 `Executing` 的 roster，断言 `model.ready.is_empty()`。
+   这是最省的一步，且不需要起游戏。
+2. **UI 写错了**——模型是对的（`ready` 为空），但 chip 的显隐没被重写
+   （`TimelineCache` 的比对漏了 `ready`？—— 但 `matches()` 里明明有
+   `cache.ready == self.ready`，所以这条可能性低）。
+3. 还有一种可能：`chip.index` 不是车道号而是"第几个就绪者"。
+   读 `scene.rs` 里 chip 的构造即可确认。
+
+**别急着下结论**：这条观测本身也可能是"某帧确实有单位空闲、之后没人再重写"，
+所以先做上面第 1 步那个单测。
 
 ## 6. 截图核对
 

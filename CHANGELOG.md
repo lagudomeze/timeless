@@ -880,3 +880,43 @@ Insight 那些读数**都是按 `PanelSlot` 分行的**，这是面板里唯一�
 区别是这次多了一层诱因：`W` 与点击都会改同一个资源，而我没做"只动一个变量"的对照。
 **可复用的规矩**：任何"某个输入生效了"的结论，先问一句**"还有谁会改这个状态？"**，
 再设计一个**只有它**能改的实验。
+
+---
+
+## 2026-09-27 实机复跑第 5 节（HUD 读数）：四条验过，另留一条待定性的线索
+
+### 验过的四条
+
+- **面板读数与决策槽一致**：玩家 `Idle` ↔ `ready`、`Executing{99}` ↔ `busy`；
+  两个敌人 `Executing` ↔ 两行 `busy`。`HP` / `EN` / `FOCUS 3 / 3` / `cell (x,z)` /
+  `ammo n / 3` / `arm n` 都在同一行读到。
+- **敌人面板按"离玩家最近"排序，且会随距离换行**：玩家在 `cell (1,0)` 时行 0 =
+  `cell (3,3) · dist 7.2`；把玩家挪到 `cell (3,6)` 后**两行互换**（行 0 变
+  `cell (3,5) · dist 2.0`）。名字 `ENEMY 1/2` 按**名次**给，换位后第 1 行就是最近的那个。
+  距离值也对（1 格 = 2.0 世界单位）。溢出计数行在没超限时 `display: None`。
+- **洞察力读数只在"真有前摇"时带 `break`**：`range 1 · break 1 · approach` →
+  行动落地后 `range 1 · approach`——与"`interrupt_resist` 只在前摇中有意义"一致。
+- **日志句式**：`[0.2s] 玩家 命中 敌人，造成 16 点伤害`——时刻前缀 + 主谓宾，
+  没有出现「敌人玩家 …」那种两个标签贴在一起的老 bug。
+  仍**未跑到**的句式：敌人打中玩家、单位死亡（本次敌人只走到"在飞"就被冻结拦下）。
+
+### 留一条待定性的线索（**没有当成 bug 记**）
+
+**现象**（两次读数一致）：场上只有 3 个单位、三个 `DecisionSlot` **全是 `Executing`**
+（没人"已就绪"），而 4 个 `TimelineReadyChip` 里 **index 3 亮着**（`display: Flex`）、
+0/1/2 是 `None`，chip 上写 `E`。
+
+**已查到的代码路径**：`timeline/system.rs:236-252` 用
+`model.ready.contains(&chip.index)`（`chip.index` 是**车道号**）决定显隐；
+`model.ready` 由 `model.rs:271-280` 从
+`lane_actor[lane].is_some_and(|actor| ready.contains(&actor)) && lanes[lane].is_empty()`
+筛出。**3 个单位时车道 3 不该有 actor**，所以它不该进 `ready`。
+
+**下轮第一步（最省、不用起游戏）**：给 `build_model` 写一条单测——roster 全员
+`Executing` 时断言 `model.ready.is_empty()`。
+- 它**失败** → 模型算错了（真 bug，且是"候场区说谎"这一类）；
+- 它**通过** → 再查 UI 写路径，或确认 `chip.index` 是否真的等于车道号
+  （读 `timeline/scene.rs` 里 chip 的构造即可）。
+
+**为什么不直接下结论**：这条观测也可能是"某帧确实有单位空闲、之后没人再重写"，
+而下结论前要能排除它——先做那个单测。
