@@ -160,9 +160,22 @@ cargo fmt --check                           # 格式校验
   纯逻辑用例；资产验收在 `tests/assets.rs`。
 - 测试名用描述性的 `snake_case`，例如 `pressing_walks_exactly_one_cell_and_stops_at_its_center`。
 - 用 `assert_eq!`；断言意图不直观时附简短说明。
-- **不要用 `#[ignore]` 隐藏失败**：要么修好，要么在 `TODO.md` 写明根因与下一步。
+- **不要用 `#[ignore]` 隐藏失败**：要么修好，要么在 `docs/backlog/` 写明根因与下一步。
 - 提交前必须通过：`cargo test` 全绿、
   `cargo clippy --all-targets -- -D warnings` 零警告、`cargo fmt --check` 通过。
+- **改 UI / 交互后还要跑一遍实机**：照 [`docs/playtest-checklist.md`](docs/playtest-checklist.md)
+  走一遍——本项目有多条"单测全绿但界面在说谎"的 bug（面板 `ready/busy` 读反、
+  时间轴停表时显示 RUNNING、日志两个阵营标签贴在一起）。
+- **用 MCP 注入输入时，每个键只按一次**：`bevy_brp_extras` 的按键**松手按时钟计**，
+  而这个世界大部分时间是冻结的 → 松手定时器不到点 → 那个键在 `ButtonInput` 里
+  **一直是按下状态**，**同一个键按第二次不会触发 `just_pressed`**。
+  判断"某个键没生效"之前先确认它不是"还按着"（按一下空格让世界跑一秒再试）。
+  （踩过：据此误判过"`F1` 关不掉帮助面板"。）
+- ⚠️ **`cargo run` 与 `cargo test` 会互相抢 target 锁**：别并行跑，
+  否则先启动的那个进程会被替换掉（表现为"游戏自己退出了"）。
+- **诊断要读的组件 / 资源必须派生 `Reflect`**：BRP 看不到的东西等于不存在
+  （`world.query` 对未注册的组件**静默返回空**，看着像"没生成"）。
+  `src/lib.rs` 的 `the_diagnostic_anchors_are_reflected` 守着这份清单。
 
 ## 提交与 Pull Request 规范
 
