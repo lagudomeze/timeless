@@ -9,6 +9,7 @@
 use bevy::prelude::*;
 
 use crate::combat::Faction;
+use crate::timeline::InputDriven;
 
 use super::components::{CameraRig, MainCamera};
 
@@ -94,19 +95,23 @@ pub fn camera_zoom_system(
 ///   追完，否则会僵在半路；
 /// - 第一帧**直接吸附**（[`CameraRig::follow_blend`]），避免开局从初始机位慢慢飘过去；
 /// - 玩家不存在（死亡 / 重置的中间帧）就保持原位。
+///
+/// ⚠️ **认 [`InputDriven`]，不认 `Faction::Player`**（2026-09-27 修）：
+/// `Faction` 只说明"属于哪一边"，**玩家射出的箭 / 火球同样带 `Faction::Player`**
+/// （供命中过滤，见 `combat::attack::scene`）。早先这里 `find(|faction| == Player)`，
+/// 一旦那些实体排在玩家前面被撞上，**镜头就会追着箭走**。
+/// 这条规矩本仓库早就写下了（见 `combat::attack::menu` 的注释：
+/// "「谁是玩家」认 `InputDriven` 标记，不再满世界 `find(|faction| … == Player)`"），
+/// 相机这一处当时漏了。
 pub fn camera_follow_system(
     time: Res<Time<Real>>,
     // 两个查询都碰 `Transform`，必须显式声明互斥（B0001）：
     // 单位不带 `CameraRig`，机位不带 `Faction`
-    players: Query<(&Transform, &Faction), Without<CameraRig>>,
+    players: Query<&Transform, (With<InputDriven>, Without<CameraRig>)>,
     mut rigs: Query<(&mut CameraRig, &mut Transform), Without<Faction>>,
     mut snapped: Local<bool>,
 ) {
-    let Some(player) = players
-        .iter()
-        .find(|(_, faction)| **faction == Faction::Player)
-        .map(|(transform, _)| transform.translation)
-    else {
+    let Some(player) = players.iter().next().map(|transform| transform.translation) else {
         return;
     };
     let dt = time.delta_secs();
@@ -156,8 +161,13 @@ mod tests {
         let rig = CameraRig::new(Vec3::ZERO);
         let transform = rig.transform();
         app.world_mut().spawn((rig, transform));
-        app.world_mut()
-            .spawn((Faction::Player, Transform::from_xyz(6.0, 0.0, 2.0)));
+        // 玩家要带 `InputDriven`——相机认的是它，不是 `Faction`（见
+        // `camera_follow_system` 的注释）
+        app.world_mut().spawn((
+            Faction::Player,
+            InputDriven,
+            Transform::from_xyz(6.0, 0.0, 2.0),
+        ));
         app
     }
 
@@ -174,6 +184,45 @@ mod tests {
             .iter(app.world())
             .next()
             .expect("应当有相机 Transform")
+    }
+
+    /// **镜头认 `InputDriven`，不认 `Faction::Player`**（2026-09-27 修）。
+    ///
+    /// 玩家射出的箭 / 火球**也带 `Faction::Player`**（供命中过滤，见
+    /// `combat::attack::scene`）。早先这里 `.find(|faction| == Player)`，
+    /// 那些实体排在玩家前面被撞上时，**镜头就追着箭走**。
+    ///
+    /// ⚠️ 这条测试**故意不依赖查询迭代顺序**（"先造箭还是先造玩家"决定不了谁会先被
+    /// `find` 撞上——实测先造箭也照样选中玩家）。它只放**一支箭、不放玩家**：
+    /// 旧写法会把镜头吸附到箭上（下面的断言立刻失败），新写法找不到玩家就**原地不动**。
+    #[test]
+    fn a_player_faction_projectile_is_not_the_player() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                100,
+            )))
+            .add_message::<PanCamera>()
+            .add_message::<ZoomCamera>()
+            .add_systems(
+                Update,
+                (camera_pan_system, camera_zoom_system, camera_follow_system).chain(),
+            );
+        let rig = CameraRig::new(Vec3::ZERO);
+        let transform = rig.transform();
+        app.world_mut().spawn((rig, transform));
+        // 场上**只有**一支玩家射出的箭：有 `Faction::Player`，没有 `InputDriven`
+        app.world_mut()
+            .spawn((Faction::Player, Transform::from_xyz(100.0, 0.0, 100.0)));
+
+        app.update();
+
+        let rig = rig_of(&mut app);
+        assert_eq!(
+            (rig.focus.x, rig.focus.z),
+            (0.0, 0.0),
+            "没有玩家就别动镜头；追着箭走会让画面飞到天边"
+        );
     }
 
     #[test]

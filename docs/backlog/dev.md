@@ -69,7 +69,7 @@
       **已审计到的松查询**（`grep 'Query<.*Faction'`，2026-09-27）：
       | 位置 | 用途 | 把攻击实体算进去的后果 |
       | :--- | :--- | :--- |
-      | `presentation/camera.rs:101` | 镜头跟随"玩家" | 玩家射出的箭若也在查询里，镜头可能追着箭走（**待确认**：要看它怎么挑目标） |
+      | `presentation/camera.rs` | 镜头跟随"玩家" | ~~待确认~~ **已修**（2026-09-27）：旧代码 `find(faction == Player)` 会选中玩家的箭 → **镜头飞走**。已改为认 `InputDriven`（仓库既有的规矩），并加会咬的测试 `a_player_faction_projectile_is_not_the_player` |
       | `interaction/pointer.rs:74` | 左键**单位**→ 打它 | 点到在飞的箭上会当成"点了某个单位" |
       | `interaction/pointer.rs:149` / `visual.rs:140` | 悬停格的占位者 | 箭所在格被算成"有人占着"（染色 / 可走性读数可能受影响） |
       | `combat/attack/actions.rs:126,251,305`、`fireball.rs:190,278,361` | 找"最近的敌人" | 敌人的瞄准可能选中**玩家的箭**（瞄到一个正在飞走的点） |
