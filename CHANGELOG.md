@@ -738,3 +738,36 @@
       状态行与 `PauseLabels` **逐字相同**（实测
       `["awaiting","manual"]` ↔ `FROZEN · awaiting + manual`），
       "屏幕上写的"与"远程读到的"可以直接对账。
+
+---
+
+## 2026-09-27 实机复跑第 1 节（键盘）：等待动作在面板上没有名字
+
+- [x] **`Space`（等待）的面板读数退化成 `act: action`**（已修）
+      **怎么发现的**：按空格后玩家槽确实变 `Executing`（等待生效、世界继续跑），
+      但面板那一行是 `act: action`——`payload_name()` 给
+      `move` / `jump` / `roll` / `parry` / `fireball` / `shoot` / `melee` 都取了名，
+      **唯独没有等待的分支**，于是落到兜底的 `"action"`。玩家按了空格，
+      屏幕等于什么都没说。
+      **改法**：`payload_name` 增加 `WaitAction` 分支 → `"wait"`；
+      `PayloadQueries` 加 `waits` 字段（`SystemParam` 派生，调用方无感）；
+      `action_text` 与 `update_action_labels_system` 各加一个查询参数。
+      **验收**：`the_wait_action_has_a_name_of_its_own`。
+      **教训**：兜底分支（`"action"`）会**静默吞掉**"新载荷忘了登记"这种事——
+      屏幕上不报错、只显得含糊。它的注释现在写明"兜底只该是临时状态，不该是常态"。
+
+### 同一次复跑确认无误的几条（顺带把可复现手法记下来）
+
+- **方向键走一格、停在格心**：`Cell (1,0) → (1,-1)`，`Transform (3.0,-1.0,-1.0)`
+  正是格心。屏幕→世界：`+x → −z`、`+y → −x`。
+  顺带确认**按住不重复**是设计（`last_axis`：一次按下 = 一次决策，松开才复位）。
+- **`X` + 方向 = 跨两格**：`(1,-1) → (-1,-1)`，正好 2 格。
+- **`Q` = 火球**：`ammo 3/3 → 1/3`——`config/actions.ron` 的 `fireball.cost = 2`，
+  所以**一次按键花 2 发是对的**（先怀疑过双触发，查配置排除了）；
+  日志 `[2.6s] 玩家 命中 敌人，造成 13 点伤害`（`power 12` + 装备加成）。
+- **`W` = 横扫**：面板 `act: melee (windup 0.2s)`。
+- **`T` = 穿脱装备**：面板 `arm 3 → 1`，读数跟着装备走。
+- **复跑手法（可复用）**：要稳定读到"这一手叫什么"，**先把世界冻住**
+  （`world.insert_resources app::clock::ManualPause = true`）再按键——
+  前摇不会流逝，面板的 `act:` 就一直停在那里。直接按会在一两百毫秒内结算完，
+  读到的只剩 `act: -`；等待只有 1 秒，不冻住必然错过。

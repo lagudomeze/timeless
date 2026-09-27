@@ -14,7 +14,7 @@ use crate::combat::Faction;
 use crate::combat::attack::{FireballAction, MeleeAction, ShootAction};
 use crate::combat::defense::ParryAction;
 use crate::movement::{JumpAction, MoveAction, RollAction};
-use crate::timeline::{ActionOf, ScheduledAction};
+use crate::timeline::{ActionOf, ScheduledAction, WaitAction};
 
 use super::HudCache;
 
@@ -52,6 +52,7 @@ pub fn update_action_labels_system(
     shoots: Query<&ShootAction>,
     fireballs: Query<&FireballAction>,
     melees: Query<&MeleeAction>,
+    waits: Query<&WaitAction>,
     mut cache: ResMut<HudCache>,
     mut labels: Query<(&ActionLabel, &mut Text)>,
 ) {
@@ -71,6 +72,7 @@ pub fn update_action_labels_system(
             &shoots,
             &fireballs,
             &melees,
+            &waits,
         );
     }
     if cache.actions.labels == snapshot {
@@ -97,6 +99,7 @@ fn action_text(
     shoots: &Query<&ShootAction>,
     fireballs: &Query<&FireballAction>,
     melees: &Query<&MeleeAction>,
+    waits: &Query<&WaitAction>,
 ) -> String {
     let Some(actor) = units
         .iter()
@@ -113,7 +116,7 @@ fn action_text(
         return "act: -".to_string();
     };
     let name = payload_name(
-        action, movements, jumps, rolls, parries, shoots, fireballs, melees,
+        action, movements, jumps, rolls, parries, shoots, fireballs, melees, waits,
     );
     if schedule.pending(now) {
         // 前摇剩余秒数：信息层的"帧窗口细节"——还剩多久这一手就落地
@@ -129,6 +132,11 @@ fn action_text(
 ///
 /// **公开**：时间轴的悬停读数要用同一套判据（`presentation::hud::timeline`），
 /// 否则同一个动作在面板上叫 `fireball`、在时间轴上叫别的名字。
+///
+/// ⚠️ **每个载荷都要有分支**：漏一个就落到兜底的 `"action"`，面板上会显示
+/// `act: action`——玩家按了空格却读不出"我在等"（2026-09-27 实机抓到，
+/// 见 [`docs/playtest-checklist.md`](../../../docs/playtest-checklist.md) 第 1 节）。
+/// 兜底只该是"以后新增的载荷还没取名"的临时状态，不该是常态。
 #[allow(clippy::too_many_arguments)]
 pub fn payload_name(
     action: Entity,
@@ -139,6 +147,7 @@ pub fn payload_name(
     shoots: &Query<&ShootAction>,
     fireballs: &Query<&FireballAction>,
     melees: &Query<&MeleeAction>,
+    waits: &Query<&WaitAction>,
 ) -> &'static str {
     if movements.get(action).is_ok() {
         "move"
@@ -154,16 +163,20 @@ pub fn payload_name(
         "shoot"
     } else if melees.get(action).is_ok() {
         "melee"
+    } else if waits.get(action).is_ok() {
+        // 等待也是一个"动作"：按空格占住决策槽、世界继续跑。
+        // 不给它名字就会显示成 `act: action`，等于没说。
+        "wait"
     } else {
         "action"
     }
 }
 
-/// 载荷查询组：`payload_name` 要的那七个查询绑在一起。
+/// 载荷查询组：`payload_name` 要的那八个查询绑在一起。
 ///
 /// 它们全是只读的标记查询，`SystemParam` 派生把它们收成一个参数——
 /// 否则 `payload_name` 的调用方（面板行 / 时间轴悬停读数）都要在签名里
-/// 照抄七行同样的 `Query`。
+/// 照抄八行同样的 `Query`。
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct PayloadQueries<'w, 's> {
     pub movements: Query<'w, 's, &'static MoveAction>,
@@ -173,6 +186,7 @@ pub struct PayloadQueries<'w, 's> {
     pub shoots: Query<'w, 's, &'static ShootAction>,
     pub fireballs: Query<'w, 's, &'static FireballAction>,
     pub melees: Query<'w, 's, &'static MeleeAction>,
+    pub waits: Query<'w, 's, &'static WaitAction>,
 }
 
 impl PayloadQueries<'_, '_> {
@@ -187,6 +201,7 @@ impl PayloadQueries<'_, '_> {
             &self.shoots,
             &self.fireballs,
             &self.melees,
+            &self.waits,
         )
     }
 }
@@ -195,6 +210,7 @@ impl PayloadQueries<'_, '_> {
 mod tests {
     use super::*;
     use crate::movement::{JUMP_TIMING, MOVE_TIMING};
+    use crate::timeline::WaitConfig;
 
     fn label_app() -> App {
         let mut app = App::new();
@@ -228,6 +244,34 @@ mod tests {
         app.update();
 
         assert_eq!(text_of(&app, label), "act: -");
+    }
+
+    /// **等待也有名字**（2026-09-27 实机抓到）。
+    ///
+    /// 按空格会占住决策槽、世界继续跑，面板上理应读出"我在等"。
+    /// 但 `payload_name` 早先没有等待的分支，于是它落到兜底的 `"action"`——
+    /// 实测玩家按了空格只看到 `act: action`，等于没说。
+    ///
+    /// 这条同时是**给以后看的**：新增载荷若忘了在这里登记，就会静默退化成
+    /// `"action"`，屏幕上看不出错、只显得含糊。
+    #[test]
+    fn the_wait_action_has_a_name_of_its_own() {
+        let mut app = label_app();
+        let player = spawn_unit(&mut app, Faction::Player);
+        let label = spawn_label(&mut app, Faction::Player);
+        app.world_mut().spawn((
+            ActionOf(player),
+            WaitAction,
+            ScheduledAction::declared_at(WaitConfig::default().timing(), 0.0),
+        ));
+
+        app.update();
+
+        let shown = text_of(&app, label);
+        assert!(
+            shown.starts_with("act: wait"),
+            "等待必须显示成 `wait`，不能退化成兜底的 `action`：{shown}"
+        );
     }
 
     /// 挂着行动时显示载荷名；**前摇中**带上剩余秒数——那正是还能撤、还能躲的窗口。
