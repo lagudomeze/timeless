@@ -8,7 +8,7 @@
 ## 验收命令（仓库根目录）
 
 ```bash
-cargo test                                  # 381 通过（378 单元 + 3 资产验收）/ 0 跳过
+cargo test                                  # 数量以实际输出为准（别在文档里抄死，会漂）
 cargo clippy --all-targets -- -D warnings   # 零警告
 cargo fmt --check
 cargo run                                   # 冒烟：体素地形 + 世界空间战斗
