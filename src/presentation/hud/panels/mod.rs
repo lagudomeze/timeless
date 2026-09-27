@@ -20,7 +20,9 @@ pub use model::{
     tactic_label,
 };
 pub use scene::{
-    ENEMY_ROW_GAP, ENEMY_ROW_MIN_HEIGHT, PANEL_HEIGHT, PANEL_WIDTH, PORTRAIT_SIZE, PanelBar,
-    PanelText, UnitPanel, enemy_column, enemy_row, slot_prefix, status_bar, unit_panel,
+    ENEMY_COLUMN_MAX_HEIGHT, ENEMY_OVERFLOW_HEIGHT, ENEMY_ROW_GAP, ENEMY_ROW_MIN_HEIGHT,
+    LOG_BOTTOM_CLEARANCE, PANEL_HEIGHT, PANEL_WIDTH, PORTRAIT_SIZE, PanelBar, PanelFocusPip,
+    PanelText, UnitPanel, enemy_column, enemy_overflow_row, enemy_row, slot_prefix, status_bar,
+    unit_panel,
 };
 pub use system::update_unit_panels_system;

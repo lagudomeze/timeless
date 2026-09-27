@@ -13,6 +13,11 @@ use super::{HudCache, PANEL_BG, hud_text_tinted};
 pub const LOG_PANEL_WIDTH: f32 = 380.0;
 /// 显示的行数。
 pub const LOG_LINES: usize = 8;
+/// 日志面板的高度上限（像素）：**布局兜底，不参与"显示几条"的判据**。
+///
+/// 正文长度由环形保留 + [`LOG_LINES`] 决定；这条只是防止正文框长到屏幕上沿
+/// （`overflow: clip_y` 会把多余的裁掉）。
+pub const LOG_PANEL_MAX_HEIGHT: f32 = 320.0;
 
 /// 日志面板根（挂着折叠状态）。
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,8 +68,15 @@ pub fn log_panel(font: &Handle<Font>) -> impl Bundle {
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(14.0),
-            bottom: Val::Px(126.0),
+            // ⚠️ 必须**高于敌人面板那一列的总高**：两块都靠右，日志在敌人行的正上方。
+            // 以前这里是写死的 126px，而敌人面板加了 Focus 行 / 溢出计数之后会长高——
+            // 实测过一次"`Enemy2Row` 压住 `COMBAT LOG` 标题"。
+            // 现在从 `panels` 的高度上限算出来（有测试钉住这条不等式）。
+            bottom: Val::Px(crate::presentation::hud::panels::LOG_BOTTOM_CLEARANCE),
             width: Val::Px(LOG_PANEL_WIDTH),
+            // 兜底：正文再长也不会长到屏幕上沿
+            max_height: Val::Px(LOG_PANEL_MAX_HEIGHT),
+            overflow: Overflow::clip_y(),
             flex_direction: FlexDirection::Column,
             border_radius: BorderRadius::all(Val::Px(8.0)),
             ..default()

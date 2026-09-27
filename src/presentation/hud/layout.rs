@@ -73,6 +73,10 @@ pub fn setup_hud(mut commands: Commands, assets: Res<AssetServer>, sprites: Res<
         .map(|index| commands.spawn(panels::enemy_row(&font, index)).id())
         .collect();
     commands.entity(enemy_column).add_children(&enemy_rows);
+    // 溢出计数（`还有 N 个`）**排在行的后面**：列的生成顺序就是视觉顺序，
+    // 所以它是那一列最上面的一行（没有溢出时自己藏起来）。
+    let overflow = commands.spawn(panels::enemy_overflow_row(&font)).id();
+    commands.entity(enemy_column).add_child(overflow);
     commands.entity(root).add_child(enemy_column);
 
     // 时间轴要建一个色块池（循环 spawn），所以不走上面的工厂数组
@@ -165,6 +169,10 @@ mod tests {
             "PlayerHpFill",
             "PlayerHpText",
             "PlayerEnFill",
+            // 反制资源读数（#52）：文字 + 三个圆点，玩家与敌人都画
+            "PlayerFocusLine",
+            "PlayerFocusText",
+            "PlayerFocus0",
             "PlayerAction",
             // 右下：敌人**行池**（每行一个 `UnitPanel` 手法，见 `MAX_ENEMY_ROWS`）
             "Enemy1Row",
@@ -174,7 +182,10 @@ mod tests {
             "Enemy1InsightLine",
             "Enemy1HpFill",
             "Enemy1EnFill",
+            "Enemy1Focus0",
             "Enemy1Action",
+            // 溢出计数（`还有 N 个`）：排在行池之后，视觉上在最上面
+            "EnemyOverflow",
             // 正下方：技能栏容器 + 4 个槽位（图标 / 热键 / 角标）+ tooltip
             "SkillBar",
             "SkillBarPanel",
