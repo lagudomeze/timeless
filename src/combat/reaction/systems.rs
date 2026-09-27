@@ -20,6 +20,8 @@ use bevy::prelude::*;
 
 use crate::clock::{PauseRequest, THREAT};
 use crate::combat::Faction;
+use crate::combat::attack::ammo::Ammo;
+use crate::combat::defense::Stamina;
 use crate::movement::Cell;
 use crate::timeline::Focus;
 use crate::timeline::{ActionOf, InputDriven, ScheduledAction};
@@ -28,6 +30,24 @@ use super::components::{
     CounterSuggestion, ReactionSlot, TargetCell, ThreatKind, Threatened, Threatens,
 };
 
+/// `detect_threat_system` 的玩家查询。
+///
+/// 精力与弹药也在里面：窗口的**建议列表**要按"技能自己付不付得起"算
+/// （见 [`counter_suggestions`]），而按键路径会用同一条判据决定拒不拒。
+/// 抽成别名是因为带上它们之后，元组长到 clippy 会抱怨 "very complex type"。
+type PlayerThreatQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Cell,
+        &'static Focus,
+        &'static Stamina,
+        Option<&'static Ammo>,
+        Option<&'static mut ReactionSlot>,
+    ),
+    With<InputDriven>,
+>;
 /// 每帧检测：**有没有敌对威胁瞄着玩家**，有就开一个反应窗口并按住世界。
 ///
 /// 判据（两条取或）：
@@ -54,14 +74,14 @@ pub fn detect_threat_system(
     mut commands: Commands,
     threats: Query<(Entity, &ScheduledAction, &Threatens, &ActionOf)>,
     projectiles: Query<(Entity, &TargetCell, &Faction)>,
-    mut players: Query<(Entity, &Cell, &Focus, Option<&mut ReactionSlot>), With<InputDriven>>,
+    mut players: PlayerThreatQuery<'_, '_>,
     actors: Query<&Faction>,
     catalogue: Res<crate::skills::SkillRegistry>,
     time: Res<Time<Virtual>>,
     mut pause: MessageWriter<PauseRequest>,
 ) {
     let now = time.elapsed_secs();
-    for (player, cell, focus, slot) in &mut players {
+    for (player, cell, focus, stamina, ammo, slot) in &mut players {
         // 被我方阵营"光顾"的格不算威胁（自己人打自己人另有规则）
         let hostile_to = |faction: &Faction| *faction != Faction::Player;
         let threatens_me = |cells: &[Cell]| cells.contains(cell);
@@ -111,7 +131,14 @@ pub fn detect_threat_system(
                 } else {
                     ThreatKind::InFlight
                 };
-                let suggestions = counter_suggestions(&catalogue, focus.current);
+                let suggestions = counter_suggestions(
+                    &catalogue,
+                    focus.current,
+                    crate::skills::Pools::new(
+                        stamina.current,
+                        ammo.map(|a| a.current).unwrap_or(0),
+                    ),
+                );
                 debug!("⚔ 敌对威胁逼近玩家：冻结世界等反应（{kind:?}）");
                 commands.entity(player).insert(ReactionSlot {
                     threat,
@@ -130,20 +157,32 @@ pub fn detect_threat_system(
 /// 没有任何硬编码的白名单——"翻滚能躲火球"是翻滚自己的 `counter` 字段说的。
 /// 付不起的那条**仍然列出来**（`affordable: false`），HUD 画成不可选：
 /// 玩家看得见"我本来能用招架，但精力不够"，这比看不见更有信息量。
+///
+/// ⚠️ **`affordable` 必须与"按下这个键会不会被接受"同源**（2026-09-27 修）：
+/// 反制的 [`CounterCost`](crate::skills::CounterCost) 只说**反制本身**的额外代价
+/// （花 Focus / 拿原决策换），**技能自己的消耗照旧要付**——按键路径
+/// （`combat::attack::menu` 的 `use_selected_skill_system`）在技能消耗不够时会把这一按
+/// 直接拒掉（写 `NotEnoughEnergy`），**根本走不到表态**。
+/// 早先这里只看 `CounterCost`，于是 `Free` 的反制**永远**被画成可选：
+/// 精力为 0 时 HUD 亮着"翻滚可用"，按下去却毫无反应——**玩家会以为游戏坏了**。
+/// 现在两个判据都算，HUD 说什么、按键就真的接受什么。
 pub fn counter_suggestions(
     catalogue: &crate::skills::SkillRegistry,
     focus: u32,
+    pools: crate::skills::Pools,
 ) -> Vec<CounterSuggestion> {
     catalogue
         .all()
         .iter()
         .filter_map(|def| {
             let cost = def.counter?;
-            let affordable = match cost {
+            let counter_affordable = match cost {
                 crate::skills::CounterCost::Free => true,
                 crate::skills::CounterCost::Resource(needed) => focus >= needed,
                 crate::skills::CounterCost::CancelDecision => true,
             };
+            // 技能自己的消耗也要付得起——否则按键会被拒（见上面的 ⚠️）
+            let affordable = counter_affordable && crate::skills::can_cast(def, pools).is_ok();
             Some(CounterSuggestion {
                 ability: def.id,
                 cost,
@@ -295,9 +334,17 @@ mod tests {
     }
 
     fn spawn_player(app: &mut App, cell: Cell) -> Entity {
-        // `Focus` 现在是**挂在单位身上的组件**（每单位一份），不再是全局资源
+        // `Focus` 现在是**挂在单位身上的组件**（每单位一份），不再是全局资源。
+        // `Stamina` 也是必需的：建议列表要按"技能自己付不付得起"算
+        // （见 `counter_suggestions`），所以玩家身上必须有精力池。
         app.world_mut()
-            .spawn((InputDriven, cell, Faction::Player, Focus::default()))
+            .spawn((
+                InputDriven,
+                cell,
+                Faction::Player,
+                Focus::default(),
+                Stamina::default(),
+            ))
             .id()
     }
 
@@ -356,7 +403,7 @@ mod tests {
     fn suggestions_come_from_the_catalogue_not_a_hardcoded_list() {
         let registry = catalogue();
 
-        let rich = counter_suggestions(&registry, 5);
+        let rich = counter_suggestions(&registry, 5, crate::skills::Pools::new(5, 0));
         let abilities: Vec<AbilityId> = rich.iter().map(|s| s.ability).collect();
         assert!(abilities.contains(&AbilityId::Roll), "翻滚能当反制");
         assert!(abilities.contains(&AbilityId::Parry), "招架能当反制");
@@ -367,7 +414,7 @@ mod tests {
         assert!(rich.iter().all(|s| s.affordable), "Focus 充足时都付得起");
 
         // 付不起的那条**仍然列出来**，只是 affordable = false
-        let poor = counter_suggestions(&registry, 0);
+        let poor = counter_suggestions(&registry, 0, crate::skills::Pools::new(5, 0));
         let parry = poor
             .iter()
             .find(|s| s.ability == AbilityId::Parry)
@@ -380,6 +427,45 @@ mod tests {
         assert!(roll.affordable);
     }
 
+    /// **HUD 说什么，按键就真的接受什么**（2026-09-27 修的那个静默 bug）。
+    ///
+    /// 反制自己的代价是"白送"，**但技能本身的消耗照旧要付**——按键路径
+    /// （`combat::attack::menu` 的 `use_selected_skill_system`）在技能消耗不够时
+    /// 会把这一按**直接拒掉、根本走不到表态**。
+    /// 早先 `affordable` 只看 `CounterCost`，于是 `Free` 的反制**永远**画成可选：
+    /// 精力为 0 时 HUD 亮着"翻滚可用"，按下去却毫无反应——
+    /// **实机复现过一次**（同一个窗口，精力 5/5 关得掉、0/5 纹丝不动）。
+    #[test]
+    fn a_free_counter_is_still_gated_by_the_skills_own_cost() {
+        let mut registry = SkillRegistry::default();
+        registry.register(AbilityDef {
+            id: AbilityId::Roll,
+            category: AbilityCategory::Movement,
+            timing: TEST_TIMING,
+            targeting: crate::skills::TargetSelector::SelfOnly,
+            cost: crate::skills::ResourceCost::Energy(1), // 技能自己的消耗
+            requirements: &[],
+            combat: CombatTags::COMMITTED,
+            counter: Some(crate::skills::CounterCost::Free), // 反制本身白送
+            power: 0,
+        });
+
+        let rich = counter_suggestions(&registry, 5, crate::skills::Pools::new(1, 0));
+        assert!(
+            rich.iter().all(|s| s.affordable),
+            "精力够 → 与按键会被接受一致"
+        );
+
+        let poor = counter_suggestions(&registry, 5, crate::skills::Pools::new(0, 0));
+        let roll = poor
+            .iter()
+            .find(|s| s.ability == AbilityId::Roll)
+            .expect("付不起也要列出来（玩家该看得见这个选项）");
+        assert!(
+            !roll.affordable,
+            "精力 0 时按键一定会被拒，HUD 不能还画成可选——那正是玩家报的那个静默"
+        );
+    }
     /// **表态就解冻**：`resolved` 之后不再断言（理由消失 = 世界动）。
     #[test]
     fn answering_the_window_releases_the_freeze() {
