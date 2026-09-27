@@ -12,7 +12,12 @@ use crate::movement::Cell;
 ///
 /// 用「格」而不是「实体」：威胁问的是"我站的地方安不安全"，
 /// 而决策层本来就是按格算的（见 docs/timeline.md 第二节）。
-#[derive(Component, Debug, Default, Clone, PartialEq, Eq)]
+///
+/// 派生 `Reflect` 是为了**诊断锚点能被 BRP 读到**（见 `docs/backlog/clock.md` 的 #62）：
+/// 没派生 = 远程协议里等于不存在，`world.query` 会**静默返回空**，
+/// 看着像"没生成"（这个坑在命中特效那里踩过一次）。
+#[derive(Component, Reflect, Debug, Default, Clone, PartialEq, Eq)]
+#[reflect(Component)]
 pub struct Threatens {
     pub cells: Vec<Cell>,
 }
@@ -21,7 +26,8 @@ pub struct Threatens {
 ///
 /// 投射物不是行动实体（它的"意愿"早就确定了），因此单独用这个组件声明威胁：
 /// 一枚正在飞向玩家脚下格的火球，和一条还在前摇的火球行动一样危险。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[reflect(Component)]
 pub struct TargetCell(pub Cell);
 
 /// **这条威胁已经惊动过玩家了**——边沿触发的一次性记账。
@@ -40,8 +46,22 @@ pub struct TargetCell(pub Cell);
 /// 挂标记的时机**必须晚于** `detect_threat_system` 的读取（同帧写入会漏检），
 /// 因此它由 `[`mark_threatened_system`](super::mark_threatened_system)` 在检测
 /// **之后**按本帧的检测结果打上；来源被销毁时标记随实体一起消失。
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[reflect(Component)]
 pub struct Threatened;
+
+/// 这一次威胁**处在哪一段**——决定玩家"现在还能做什么"（见 `docs/backlog/combat.md` 的 #53）。
+///
+/// 同一次攻击会问玩家两次（前摇中一次、出手后一次），这**是对的**：
+/// 前摇中还能打断 / 反制，出手后只能躲或忍。UI 的错在于**两次长得一模一样**，
+/// 于是玩家读不出"这次该按什么"。
+#[derive(Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatKind {
+    /// 还在前摇：可以打断 / 反制
+    Incoming,
+    /// 已经出手（投射物在飞）：只能躲或忍
+    InFlight,
+}
 
 /// 一次威胁开的**反应窗口**——挂在**被威胁的玩家**身上。
 ///
@@ -57,10 +77,13 @@ pub struct Threatened;
 ///
 /// **退出只有两条**（设计如此）：表态，或者威胁消失。玩家什么都不做时世界
 /// 一直冻着——战术暂停里"我在想"必须能无限期地想下去。
-#[derive(Component, Debug, Clone, PartialEq)]
+#[derive(Component, Reflect, Debug, Clone, PartialEq)]
+#[reflect(Component)]
 pub struct ReactionSlot {
     /// 是哪条行动 / 哪颗投射物
     pub threat: Entity,
+    /// 这一段还能怎么应对（读数分档用，见 [`ThreatKind`]）
+    pub kind: ThreatKind,
     /// 能拿哪几手反制（见 [`CounterSuggestion`]）
     pub suggestions: Vec<CounterSuggestion>,
     /// 玩家表态了没有
@@ -68,7 +91,7 @@ pub struct ReactionSlot {
 }
 
 /// 一条反制建议 = **一个技能 + 它作为反制要付的代价**。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CounterSuggestion {
     pub ability: crate::skills::AbilityId,
     /// 技能的静态属性（见 `docs/skills.md` 第四节）

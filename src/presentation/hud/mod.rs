@@ -52,7 +52,10 @@ pub mod timeline;
 
 pub use actions::update_action_labels_system;
 pub use help::{ToggleHelp, toggle_help_system};
-pub use hint::{ActionHint, ActionHintText, HintTimer, PreviewReadout, update_action_hint_system};
+pub use hint::{
+    ActionHint, ActionHintText, HintKind, HintState, HintTimer, PreviewReadout, apply_hint_system,
+    gather_hint_system, threat_hint,
+};
 pub use layout::{HudRoot, fit_ui_scale_system, setup_hud};
 pub use log_panel::{toggle_log_system, update_log_panel_system};
 pub use panels::update_unit_panels_system;

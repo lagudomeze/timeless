@@ -24,7 +24,9 @@ use crate::movement::Cell;
 use crate::timeline::Focus;
 use crate::timeline::{ActionOf, InputDriven, ScheduledAction};
 
-use super::components::{CounterSuggestion, ReactionSlot, TargetCell, Threatened, Threatens};
+use super::components::{
+    CounterSuggestion, ReactionSlot, TargetCell, ThreatKind, Threatened, Threatens,
+};
 
 /// 每帧检测：**有没有敌对威胁瞄着玩家**，有就开一个反应窗口并按住世界。
 ///
@@ -102,10 +104,18 @@ pub fn detect_threat_system(
                 else {
                     continue;
                 };
+                // 前摇中的是**行动实体**（带 `Threatens`），已经出手的是**投射物**
+                // （带 `TargetCell`）——判据现成，写入时就定下来，读数层不必再猜。
+                let kind = if threats.contains(threat) {
+                    ThreatKind::Incoming
+                } else {
+                    ThreatKind::InFlight
+                };
                 let suggestions = counter_suggestions(&catalogue, focus.current);
-                debug!("⚔ 敌对威胁逼近玩家：冻结世界等反应");
+                debug!("⚔ 敌对威胁逼近玩家：冻结世界等反应（{kind:?}）");
                 commands.entity(player).insert(ReactionSlot {
                     threat,
+                    kind,
                     suggestions,
                     resolved: false,
                 });

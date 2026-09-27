@@ -240,6 +240,7 @@ mod tests {
         // 开窗：威胁压过来，翻滚被列为可用反制
         app.world_mut().entity_mut(player).insert(ReactionSlot {
             threat: player,
+            kind: crate::combat::reaction::ThreatKind::Incoming,
             suggestions: vec![CounterSuggestion {
                 ability: AbilityId::Roll,
                 cost: CounterCost::Free,

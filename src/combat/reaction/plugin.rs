@@ -5,7 +5,8 @@ use bevy::prelude::*;
 use super::ReactionSet;
 
 use super::{
-    ReactionAnswer, detect_threat_system, mark_threatened_system, resolve_reaction_system,
+    CounterSuggestion, ReactionAnswer, ReactionSlot, TargetCell, ThreatKind, Threatened, Threatens,
+    detect_threat_system, mark_threatened_system, resolve_reaction_system,
 };
 
 /// 威胁检测 → 反应窗口 → 玩家表态。
@@ -16,6 +17,14 @@ impl Plugin for ReactionPlugin {
         app
             // 玩家表态：写方是 input（技能键 / 右键），消费方是本域
             .add_message::<ReactionAnswer>()
+            // 诊断锚点：BRP 读不到的东西等于不存在（见 docs/backlog/clock.md 的 #62）。
+            // 威胁冻结时最想问的两件事就是「窗口开着没」与「威胁打在哪些格」。
+            .register_type::<Threatens>()
+            .register_type::<TargetCell>()
+            .register_type::<Threatened>()
+            .register_type::<ReactionSlot>()
+            .register_type::<CounterSuggestion>()
+            .register_type::<ThreatKind>()
             .add_systems(
                 Update,
                 (
