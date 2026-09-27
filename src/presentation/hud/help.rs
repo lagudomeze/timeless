@@ -26,6 +26,14 @@ pub struct HelpPanel;
 /// 有一条测试（`the_help_lists_every_key_the_input_domain_reads`）拿它和 `src/input/`
 /// 里出现的按键对账，漏了就红。
 pub const HELP_LINES: &[&str] = &[
+    // 「这游戏在玩什么」放在最前面：按键表能教会操作，教不会**为什么**
+    // （见 docs/backlog/hud.md 的 #54）。
+    "CORE LOOP",
+    "  the world freezes only for you: it waits until you decide",
+    "  a bar in the timeline = somebody is busy; the line in it = when it lands",
+    "  THREAT: press a skill to counter it, or right-click to take the hit",
+    "  FOCUS: hold Shift + a skill key to skip that action's windup (costs 1)",
+    "  a windup countdown is still cancellable until it reaches 0",
     "KEYBOARD",
     "  arrows          move one cell (screen-relative)",
     "  X + arrows      dash two cells (costs energy)",
@@ -46,7 +54,7 @@ pub const HELP_LINES: &[&str] = &[
     "MOUSE",
     "  middle drag     pan the camera",
     "  left click      move to that cell (or use the selected skill on a unit)",
-    "  right click     cancel the pending action (stop)",
+    "  right click     cancel the pending action (stop) / give up on a threat",
     "  wheel           zoom in / out",
     "HOW TO READ THE HUD",
     "  top bar         one lane per unit; the bar starts at \"now\"",
@@ -67,10 +75,15 @@ pub fn help_panel(font: &Handle<Font>) -> impl Bundle {
         RelativeCursorPosition::default(),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Percent(12.0),
+            // 从 6% 起（原 12%）：CORE LOOP 那一段让面板长高了约 90px，
+            // 720p 上从 12% 起会顶到屏幕底边——上移一点，两边都留得住。
+            top: Val::Percent(6.0),
             left: Val::Percent(50.0),
             margin: UiRect::new(Val::Px(-HELP_WIDTH / 2.0), Val::Auto, Val::Auto, Val::Auto),
             width: Val::Px(HELP_WIDTH),
+            // 兜底：万一以后文案再涨，宁可裁掉最后一行也不要溢出屏幕
+            max_height: Val::Percent(86.0),
+            overflow: Overflow::clip_y(),
             padding: UiRect::all(Val::Px(14.0)),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(2.0),
@@ -266,5 +279,51 @@ mod tests {
             .find(|line| line.trim_start().starts_with("P "))
             .expect("面板里必须有 P 那一行");
         assert!(p.contains("pause"), "手动暂停已经挪到 P：{p:?}");
+    }
+
+    /// **面板要教「核心循环」，不只是按键**（#54）。
+    ///
+    /// 按键表能教会操作，教不会**为什么**：世界什么时候冻、被威胁时该干什么、
+    /// Focus 值钱在哪、倒计时为什么是决策依据。
+    /// 这几件事在别处都有实现，但玩家如果只能在被打之后才意识到，就太晚了。
+    ///
+    /// 删掉 `CORE LOOP` 那几行后这条会红——**这就是它的用途**。
+    #[test]
+    fn the_help_teaches_the_core_loop() {
+        let text = HELP_LINES.join("\n");
+
+        assert!(
+            text.contains("CORE LOOP"),
+            "面板要有一栏专门讲「在玩什么」：{text}"
+        );
+        for required in [
+            // 世界为谁而停
+            "freezes only for you",
+            // 时间轴怎么读
+            "timeline",
+            // 被威胁时的两条出路
+            "THREAT",
+            "counter",
+            // Focus 是什么、怎么花
+            "FOCUS",
+            "Shift",
+            // 倒计时 = 还能不能撤
+            "cancellable",
+        ] {
+            assert!(
+                text.contains(required),
+                "核心循环那一段少了 `{required}`：玩家按完所有键仍然不知道乐趣在哪"
+            );
+        }
+
+        // 右键是"撤销"**也是**"放弃反制"——窗口里该按什么，只有这条能告诉玩家
+        let right = HELP_LINES
+            .iter()
+            .find(|line| line.contains("right click"))
+            .expect("面板里必须有右键那一行");
+        assert!(
+            right.contains("give up"),
+            "右键在威胁窗口里是「放弃反制」，面板必须写出来：{right:?}"
+        );
     }
 }
