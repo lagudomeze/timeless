@@ -29,7 +29,12 @@ use bevy::prelude::*;
 use super::focus::Focus;
 
 /// 一条行动的调度状态。
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+///
+/// 派生 `Reflect` + `#[reflect(Component)]` 是为了**运行时能查它**：排查"这一手
+/// 什么时候落地"时，BRP 读不到就等于不存在（`world.query` 会**静默返回空**，
+/// 看着像"没有行动实体"）。这个坑在本仓库已踩过多次（见 `AGENTS.md` 测试规范）。
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq)]
+#[reflect(Component)]
 pub struct ScheduledAction {
     /// 执行时刻（虚拟秒）
     pub execute_at: f32,

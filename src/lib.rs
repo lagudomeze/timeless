@@ -2124,6 +2124,11 @@ mod tests {
             "app::combat::reaction::components::Threatens",
             "app::combat::reaction::components::TargetCell",
             "app::combat::reaction::components::Threatened",
+            // 行动归属与落地时刻：排查"哪条行动是谁的、什么时候落地"的唯一入口。
+            // 2026-09-27 一天之内因为这两个没注册、`world.query` 静默返回 0，
+            // 两次误判成"没有行动实体"。
+            "app::timeline::ownership::ActionOf",
+            "app::timeline::schedule::ScheduledAction",
         ] {
             assert!(
                 has_component(type_path),

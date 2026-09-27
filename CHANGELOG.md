@@ -771,3 +771,45 @@
   （`world.insert_resources app::clock::ManualPause = true`）再按键——
   前摇不会流逝，面板的 `act:` 就一直停在那里。直接按会在一两百毫秒内结算完，
   读到的只剩 `act: -`；等待只有 1 秒，不冻住必然错过。
+
+---
+
+## 2026-09-27 实机复跑第 2 节（鼠标），并修掉一处诊断反射缺口
+
+### 验完的四条
+
+- **左键点空地走位**：`HoveredCell = (4,2)` → 玩家 `Cell (1,0) → (4,2)`，
+  `Transform (9.0,-1.0,5.0)` 正是格心（跨 3 格的多格移动也走到了）。
+  顺带确认**合成光标能驱动世界拾取**——与文末"驱动不了 `Interaction`"那条坑不矛盾：
+  拾取读窗口光标位置，`Interaction` 是 Bevy 每帧重算的另一条路。
+- **右键 = 放弃反制**（威胁窗口里）：`ReactionSlot.resolved: false → true`，
+  `PauseLabels` 从 `["manual","threat"]` 变 `["manual"]`——威胁那条原因正确消失。
+- **中键拖拽平移**：相机 `(15,14,13) → (27.83,14.0,12.83)`，高度 `y` **精确保持 14.0**。
+- **滚轮缩放**：相机 `(27.83,14.0,12.83) → (38.63,26.6,23.63)`，沿视线后退，
+  而 `Projection.fov` **不变**（缩放靠移动相机，不改视场角）。
+
+### 抓到一个新 bug：敌人面板的 `act:` 行「按阵营」而不是「按行」
+
+**证据**：场上只有 **2** 个敌人，而第三个（空）行的 `ActionLabel` 也在显示
+`act: fireball (windup 0.3s)`；四个 `ActionLabel` 实体（1 玩家 + 3 敌人）里
+三个敌人标签文本**逐字相同**。
+**根因**：`panels/scene.rs` 挂的是 `ActionLabel { faction }`（只带阵营、不带行号），
+`update_action_labels_system` 又按 `slot(faction)` 写单格快照——而 HP / EN / Focus /
+Insight 那些读数**都是按 `PanelSlot` 分行的**，这是面板里唯一一处行列不对应。
+**为什么现在才暴露**：两个敌人常做同样的事（同一套 AI、同样的距离），那时看不出来。
+**已记档**（[`docs/backlog/hud.md`](docs/backlog/hud.md) 的 P2 bug 条），
+含改法：把动作文案并进面板模型、与其它读数同源，`ActionLabel` 与
+`update_action_labels_system` 整体删掉；**别**在系统里按距离重排一遍敌人
+（那会把"离玩家最近的排序"复制成两份）。
+
+### 修掉一处诊断反射缺口（今天第三次踩同一个坑）
+
+**`ActionOf` 与 `ScheduledAction` 都没有派生 `Reflect`**，于是 BRP 的
+`world.query app::timeline::ownership::ActionOf` **静默返回 0**——排查时看着像
+"没有行动实体"（实际敌人正挂着火球前摇）。`ActionOf` 是"哪条行动是谁的"的**唯一**入口，
+`ScheduledAction` 是"这一手什么时候落地"的唯一入口，二者都该可远程读。
+**改法**：两个类型都补 `Reflect` + `#[reflect(Component)]`，
+并加进 `the_diagnostic_anchors_are_reflected` 的锚点清单（丢了派生会立刻转红）。
+**教训**：这个坑 2026-09-27 一天之内踩了三次（`Visibility` 的类型路径、
+`ActionOf` 的类型路径、`ActionOf` 没注册）——**排查"某类实体不存在"之前，
+先确认那个类型在反射表里**。

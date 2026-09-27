@@ -23,7 +23,13 @@ use bevy::prelude::*;
 /// 派生 `FromTemplate` 是为了能在 BSN 场景里写 `ActionOf({actor})`
 /// （`ChildOf` 走的是同一条路：靠 `#[entities]` 认出实体字段）；
 /// 字段是 `pub` 才能被元组构造，但**读归属请走 [`ActionOf::actor`]**。
-#[derive(Component, FromTemplate, Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// 派生 `Reflect` + `#[reflect(Component)]` 是为了**运行时能查它**：
+/// 排查"哪条行动是谁的"时它是唯一的入口，而 BRP 对未注册的组件
+/// **静默返回空**（`world.query` 得到 0 条，看着像"没有行动实体"）。
+/// 这个坑 2026-09-27 一天之内踩了两次，所以它必须留在反射表里。
+#[derive(Component, Reflect, FromTemplate, Debug, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
 #[relationship(relationship_target = Actions)]
 pub struct ActionOf(#[entities] pub Entity);
 
