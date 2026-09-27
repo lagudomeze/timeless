@@ -22,18 +22,29 @@
       ② 资源补 `Reflect` + `#[reflect(Resource)]`：`ManualPause` / `MenuSelection` /
       `BattleLog` / `UnitSprites`；`CounterSuggestion` 与它嵌的 `CounterCost` 一起派生；
       ③ **`PauseReasons` 不派生**（内含 `HashSet<&'static str>`，反射要额外支持）——
-      按"**别为了能看而改数据结构**"的规矩，改为新增只读镜像
-      **`RememberedPauseReasons(Vec<&'static str>)`**，由 `process_pause_requests`
-      每帧顺手记（去重 + 排序，远程读数才可复现）；
+      按"**别为了能看而改数据结构**"的规矩，改为新增只读**快照**
+      **`PauseLabels(Vec<&'static str>)`**，由 `process_pause_requests`
+      每帧**整体重建**（去重 + 排序，远程读数才可复现）；
       ④ 各 `plugin.rs` 里 `register_type`（自文档）；
       ⑤ `AGENTS.md` 的「测试规范」加一条：**诊断要读的组件 / 资源必须派生 `Reflect`**。
       **验收**：`the_diagnostic_anchors_are_reflected`（整机，遍历类型路径断言
       `ReflectComponent` / `ReflectResource` 都在；**删掉任意一个派生或那行属性都会转红**
       ——本次就是靠它发现漏了 `#[reflect(Component)]`）。
-      **实机**：`world.get_resources app::clock::RememberedPauseReasons` → `["awaiting"]`、
+      **实机**：`world.get_resources app::clock::PauseLabels` → `["awaiting"]`、
       `app::clock::ManualPause` → `false`（以前两个都是 unknown type）。
       **为什么排在很前面**：它是**放大器**——补完之后"世界为什么冻着"直接可读，
       后面每条 UI 问题的排查成本都降一个量级（那次核查有 4 条卡在这上面）。
+      ⚠️ **2026-09-27 实机复跑抓到它两个缺陷并修掉**（详见 [`CHANGELOG.md`](../../CHANGELOG.md)）：
+      ① 早先的实现**只追加、从不清空**，于是它成了"这辈子出现过哪些原因"的**并集**
+      ——对"此刻为什么冻着"给的是**错答案**（实测玩家在 `Executing`，镜像里却留着
+      早已消失的 `awaiting`，把排查方向带偏）；现在**每帧整体重建**。
+      ② 它只喂 `reasons.labels()`，而手动暂停**按设计不在** `PauseReasons` 里
+      ——所以玩家自己按的那一下在诊断里**完全看不见**；现在把
+      `clock::MANUAL_LABEL` 一并并进去（该常量也成了"manual"这个名字的唯一真相源，
+      `presentation` 改为引用它）。
+      **改名理由**：旧名 `RememberedPauseReasons` 既暗示"记住历史"、其访问器文档
+      又写着"这一帧的原因表里有哪些"，名字与行为互相矛盾——现在叫 `PauseLabels`，
+      装的就是"**状态行会显示的那一串**"，所以屏幕与远程读数不可能各说各话。
 
 - [x] **#50 手动暂停的状态行漏读 `ManualPause`**（已修，**条目正文在 [`hud.md`](hud.md)**）
       放在这里只因为**根在 clock 的语义分工**：`PauseReasons` 回答"**别人**为什么停表"

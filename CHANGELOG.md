@@ -687,3 +687,48 @@
       三行独立、状态行单行、`还有 1 个` 正常显示、日志在列上方不重叠。
       **教训**：`ENEMY_ROW_MIN_HEIGHT` 那类"下限"常量，**如果比实测内容小，
       它不是无害的下限，而是被当成硬上限导致压叠**——量一次真数据比猜一个数便宜。
+
+---
+
+## 2026-09-27 实机复跑第 4 节（冻结的三种原因），顺带修掉诊断快照的两个缺陷
+
+- [x] **`manual` 状态行第一次有画面证据**（#50 的真正收尾）
+      四种情形全部走通：`FROZEN · awaiting` / `FROZEN · threat` /
+      **`FROZEN · manual`** / **`FROZEN · awaiting + manual`**（字母序拼接正确）。
+      **手法**（可复现，也都写进了 [`playtest-checklist.md`](playtest-checklist.md) 第 4 节）：
+      要看到 `manual` **单独**出现，必须让"世界本该在跑"——玩家空闲时按 `P` 是看不到的，
+      因为清空原因后 `awaiting` 下一帧立刻断言回来（设计如此），`ManualPause` 从未置位。
+      做法：把玩家 `DecisionSlot` 改成 `{"Executing":{"until":99}}`（忙碌 → 不再断言
+      `awaiting`），再把窗口 `ReactionSlot.resolved` 置 `true` 让在飞的投射物落地，
+      世界恢复 `RUNNING`，此时按 `P` → `FROZEN · manual`。
+      ⚠️ 途中踩到：删掉敌人**不会**关威胁窗口——`ReactionSlot` 用**它自己的**
+      `threat` 实体引用，在飞的投射物仍瞄着玩家。
+
+- [x] **诊断快照 `PauseLabels`（原 `RememberedPauseReasons`）有两个缺陷，已修**
+      **症状**：实机排查时读它得到 `["awaiting", "threat"]`，而当时玩家明明在
+      `Executing`（`awaiting` 根本没有断言）、状态行也只写 `threat`——**它在说谎**。
+      **缺陷① 它是历史并集，不是当帧快照**：`remember()` 只追加、从不清空，
+      于是它记的是"这辈子出现过哪些原因"。对"**此刻**为什么冻着"这个问题，
+      并集给的是**错答案**——我据此把排查方向整个带偏（去追一个不存在的 `awaiting`）。
+      更糟的是它的访问器文档写着"**这一帧**的原因表里有哪些"，**行为与自己的契约相反**。
+      原来的理由写在类型文档里（"与'这一刻是哪个'相比是超集，信息只多不少"）——
+      **这个理由不成立**：超集只对"出现过没有"是超集，对"现在是哪个"是**错误值**。
+      诊断值必须能被当成"现状"读；要问"某个窗口开过没有"，去读窗口的 `resolved`
+      或当场采样。
+      **缺陷② 它永远不含 `manual`**：只喂 `reasons.labels()`，而手动暂停按设计
+      **不在** `PauseReasons` 里——于是玩家自己按的那一下在诊断里**完全看不见**，
+      连"超集"都算不上。
+      **改法**：① `remember()` → `rebuild(&reasons, manual)`，**每帧整体重建**
+      （清空 → 填 → 去重 → 排序）；② 把 `manual` 并进去，且 `MANUAL_LABEL` 常量
+      **下沉到 `clock`**（手动暂停是时钟状态，不是显示层文案）——
+      `presentation::hud::timeline::model` 改为 `pub use crate::clock::MANUAL_LABEL`，
+      于是"状态行显示的那一串"与"远程读到的那一串"**同源**，不可能各写一份而漂移；
+      ③ 改名 `RememberedPauseReasons` → **`PauseLabels`**（旧名既暗示记住历史、
+      访问器文档又说"这一帧"，名字与行为互相矛盾）。
+      **验收**：新增 3 条测试钉住新语义——
+      `the_snapshot_is_this_frame_not_everything_ever_seen`（上一帧的原因必须消失、
+      没人断言时清空）、`the_snapshot_carries_the_manual_pause`、
+      `the_snapshot_joins_reasons_and_manual_in_alphabetical_order`。
+      **教训**：一个只会追加的诊断值，看起来"信息只多不少"，实际是**把现状问题
+      答成历史问题**。这类"名字/文档说 A、实现做 B"的偏差，只有拿它当真去排查时
+      才会暴露——和豆腐块一样，属于**测试全绿而读数在说谎**。

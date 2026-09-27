@@ -70,10 +70,10 @@
       **改法**：① `clock` 加只用于显示的判断（读 `ManualPause`，**不进集合**——
       `is_frozen()` 保持不动，时钟判据本来是对的）；② HUD 拼状态行时把 `manual`
       补进原因列表；③ `PauseReasons` **不派生 `Reflect`**（内含 `HashSet`），
-      改为新增只读镜像 `RememberedPauseReasons` 供 BRP 查（见 [`clock.md`](clock.md) 的 #62）。
+      改为新增只读镜像 `PauseLabels` 供 BRP 查（见 [`clock.md`](clock.md) 的 #62）。
       **验收**：`the_state_line_reads_the_freeze_reasons`（含 `manual + threat` 组合）
       ——注意旧版那条用例**直接喂 labels**，验不到这个 bug；新用例从资源走了一遍。
-      **实机**：BRP 读到 `ManualPause = false` / `RememberedPauseReasons = ["awaiting"]`，
+      **实机**：BRP 读到 `ManualPause = false` / `PauseLabels = ["awaiting"]`，
       状态行 `TIMELINE · FROZEN · awaiting`。
 
 ## 还没做（本文件里剩下的）

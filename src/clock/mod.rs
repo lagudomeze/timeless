@@ -99,33 +99,55 @@ pub struct PauseReasons(HashSet<&'static str>);
 #[reflect(Resource)]
 pub struct ManualPause(pub bool);
 
-/// [`PauseReasons`] 的**只读镜像**：给 BRP 诊断用。
+/// 手动暂停在读数里的标签（HUD 的状态行与 BRP 的镜像**共用**这一个真相源）。
+///
+/// 放在 `clock` 而不是 `presentation`：手动暂停是**时钟的状态**，不是显示层的文案；
+/// 让时钟自己说出这个名字，两处才不会各写一份 `"manual"` 而漂移。
+pub const MANUAL_LABEL: &str = "manual";
+
+/// **本帧冻结原因的只读快照**（含手动暂停），给 BRP 诊断用。
+///
+/// **它回答的问题是"世界此刻为什么冻着"**，所以它**每帧整体重建**，
+/// 不是历史累积。这一点踩过坑：早先的实现只往里追加、从不清空，
+/// 于是它变成"这辈子出现过哪些原因"的并集——对"此刻为什么冻着"，
+/// 并集给的是**错答案**：实测玩家明明在 `Executing`（没有 `awaiting`），
+/// 镜像里却还留着早已消失的 `awaiting`，害得排查方向整个跑偏。
+/// 诊断值必须能被当成"现状"读；要问"某个窗口开过没有"，
+/// 去读 [`crate::combat::reaction`] 的窗口（`resolved`）或当场采样。
 ///
 /// **为什么不是直接反射 [`PauseReasons`]**：它内含 `HashSet<&'static str>`，
-/// 反射要额外引入 `bevy_reflect` 的 `HashSet` 支持；而 issue 的规矩是
-/// **别为了"能远程看"而改数据结构**——镜像更便宜。核查看的也正是"这辈子出现过哪些
-/// 原因"，与"这一刻是哪个"相比是**超集**，信息只多不少。
+/// 反射要额外引入 `bevy_reflect` 的 `HashSet` 支持；而规矩是
+/// **别为了"能远程看"而改数据结构**——镜像更便宜。
+///
+/// **它装的是"状态行会显示的那一串"**：`PauseReasons` 的内容**加上**
+/// 手动暂停的 [`MANUAL_LABEL`]。加上后者是必需的——手动暂停按设计**不在**
+/// `PauseReasons` 里（那个集合回答"**别人**为什么停表"），只镜像集合的话，
+/// 玩家自己按的那一下在诊断里**完全看不见**。
 ///
 /// 顺序**去重 + 排序**：`PauseReasons` 每帧重建、`HashSet` 迭代顺序不定，
 /// 不归一化的话远程读出来的东西每次都不同，没法写进验收。
 #[derive(Resource, Debug, Default, Clone, Reflect)]
 #[reflect(Resource)]
-pub struct RememberedPauseReasons(Vec<&'static str>);
+pub struct PauseLabels(Vec<&'static str>);
 
-impl RememberedPauseReasons {
-    /// 这一帧的原因表里有哪些（去重 + 排序后的副本）。
+impl PauseLabels {
+    /// 本帧的冻结原因（去重 + 排序），**与状态行显示的那一串同源**。
     pub fn as_slice(&self) -> &[&'static str] {
         &self.0
     }
 
-    /// 把本帧的原因并进来（已记住的不重复追加）。
-    fn remember(&mut self, labels: &[&'static str]) {
-        for label in labels {
-            if !self.0.contains(label) {
-                self.0.push(label);
-            }
+    /// 用本帧的最终状态**整体重建**（先清空——见类型文档里那个"并集"的坑）。
+    ///
+    /// `manual` 为真时把 [`MANUAL_LABEL`] 并进去，与
+    /// `presentation` 里 `freeze_labels` 的算法一致（两处都由 [`MANUAL_LABEL`] 定名）。
+    fn rebuild(&mut self, reasons: &[&'static str], manual: bool) {
+        self.0.clear();
+        self.0.extend_from_slice(reasons);
+        if manual {
+            self.0.push(MANUAL_LABEL);
         }
         self.0.sort_unstable();
+        self.0.dedup();
     }
 }
 
@@ -175,7 +197,7 @@ impl PauseReasons {
 pub fn process_pause_requests(
     mut requests: MessageReader<PauseRequest>,
     mut reasons: ResMut<PauseReasons>,
-    mut remembered: ResMut<RememberedPauseReasons>,
+    mut labels: ResMut<PauseLabels>,
     mut manual: ResMut<ManualPause>,
     mut time: ResMut<Time<Virtual>>,
 ) {
@@ -212,9 +234,10 @@ pub fn process_pause_requests(
 
     // ③ 落到时钟：两个来源取或。**唯一**写 `Time<Virtual>` 的地方
     let paused = reasons.is_frozen() || manual.0;
-    // 顺手把本帧的原因记进只读镜像（BRP 诊断读它）：放在这里是因为这一刻
-    // `reasons` 已经是**最终**内容——`Toggle` 的清空也做完了。
-    remembered.remember(&reasons.labels());
+    // 顺手把本帧的原因记进只读快照（BRP 诊断读它）：放在这里是因为这一刻
+    // `reasons` 已经是**最终**内容——`Toggle` 的清空也做完了；
+    // 且要**含手动暂停**，否则玩家自己按的那一下在诊断里看不见。
+    labels.rebuild(&reasons.labels(), manual.0);
     if paused != time.is_paused() {
         if paused {
             time.pause();
@@ -262,7 +285,7 @@ mod tests {
                 100,
             )))
             .init_resource::<PauseReasons>()
-            .init_resource::<RememberedPauseReasons>()
+            .init_resource::<PauseLabels>()
             .init_resource::<ManualPause>()
             .init_resource::<ManualLatch>()
             .add_message::<PauseRequest>()
@@ -281,6 +304,83 @@ mod tests {
     /// 冒充"某个领域每帧断言"：还想要就一直说。
     fn assert_awaiting(mut pause: MessageWriter<PauseRequest>) {
         pause.write(PauseRequest::Pause(AWAITING));
+    }
+
+    /// **快照是"此刻"而不是"历史"**：上一帧的原因必须在下一帧消失。
+    ///
+    /// 这条守着一个真实踩过的坑（2026-09-27 实机）：早先的实现只追加、从不清空，
+    /// 于是它成了历史上出现过的原因的**并集**。玩家明明在 `Executing`（没有
+    /// `awaiting`），镜像里却还留着早已消失的 `awaiting`，把排查方向带偏。
+    /// 诊断值必须能被当成"现状"读。
+    #[test]
+    fn the_snapshot_is_this_frame_not_everything_ever_seen() {
+        let mut app = clock_app();
+
+        // 第一帧：有领域在断言 awaiting
+        app.world_mut().write_message(PauseRequest::Pause(AWAITING));
+        app.update();
+        assert_eq!(
+            app.world().resource::<PauseLabels>().as_slice(),
+            &[AWAITING],
+            "这一帧的原因应当进快照"
+        );
+
+        // 第二帧：改由 threat 断言（awaiting 这一帧没人再提）
+        app.world_mut().write_message(PauseRequest::Pause(THREAT));
+        app.update();
+        assert_eq!(
+            app.world().resource::<PauseLabels>().as_slice(),
+            &[THREAT],
+            "上一帧的 awaiting 必须消失——快照不是历史并集"
+        );
+
+        // 第三帧：没人断言 → 快照清空（世界在走）
+        app.update();
+        assert!(
+            app.world().resource::<PauseLabels>().as_slice().is_empty(),
+            "没人断言时快照应当为空，而不是留着上一次的原因"
+        );
+    }
+
+    /// **手动暂停必须在快照里**：它按设计不在 `PauseReasons` 里，
+    /// 只镜像集合的话，玩家自己按的那一下在诊断里完全看不见。
+    #[test]
+    fn the_snapshot_carries_the_manual_pause() {
+        let mut app = clock_app();
+        app.update();
+        assert!(
+            app.world().resource::<PauseLabels>().as_slice().is_empty(),
+            "没人断言、也没人手动暂停 → 快照为空"
+        );
+
+        app.world_mut().write_message(PauseRequest::Toggle);
+        app.update();
+
+        assert!(
+            app.world().resource::<ManualPause>().0,
+            "世界在跑时按一下 = 打开手动暂停"
+        );
+        assert_eq!(
+            app.world().resource::<PauseLabels>().as_slice(),
+            &[MANUAL_LABEL],
+            "手动暂停必须出现在快照里（它不在 `PauseReasons` 中）"
+        );
+    }
+
+    /// 两种叠加时按**字母序**拼出来，且与状态行用的是同一个标签常量。
+    #[test]
+    fn the_snapshot_joins_reasons_and_manual_in_alphabetical_order() {
+        let mut app = clock_app();
+        app.add_systems(Update, assert_awaiting);
+
+        app.world_mut().write_message(PauseRequest::Toggle);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<PauseLabels>().as_slice(),
+            &[AWAITING, MANUAL_LABEL],
+            "`awaiting` 在 `manual` 之前（字母序）"
+        );
     }
 
     #[test]

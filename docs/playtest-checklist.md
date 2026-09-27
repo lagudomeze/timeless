@@ -50,10 +50,22 @@ cargo run          # ⚠️ 不要与 cargo test 并行：两者抢 target 锁
 
 ## 4. 冻结（三种原因都要能显示出来）
 
-- [ ] `awaiting`：玩家空闲 → 顶栏 `TIMELINE · FROZEN · awaiting`
-- [ ] `threat`：敌人前摇 / 投射物在飞 → `FROZEN · threat`，战场上有威胁格
-- [ ] `manual`：忙碌时按 `P` → 状态行**必须**变 `FROZEN`（#50 就是这里说反话）
-- [ ] 三种叠加时按字母序拼出来（`awaiting + manual`）
+**2026-09-27 四种情形全部实机走通**（状态行原文照录）：
+
+- [x] `awaiting`：玩家空闲 → 顶栏 `TIMELINE · FROZEN · awaiting`
+- [x] `threat`：敌人前摇 / 投射物在飞 → `TIMELINE · FROZEN · threat`，战场上有威胁格
+- [x] `manual`：**世界本该在跑**时按 `P` → `TIMELINE · FROZEN · manual`
+      （#50 就是这里说反话；这是它修好之后第一次有画面证据）
+- [x] 叠加时按字母序拼出来 → `TIMELINE · FROZEN · awaiting + manual`
+
+⚠️ **要看到 `manual` 单独出现，必须先让"世界本该在跑"**：玩家空闲时按 `P`
+**看不到** `manual`——因为清空原因后 `awaiting` 下一帧立刻断言回来（设计如此：
+"放开世界"不等于"跳过决策"），`ManualPause` 根本没被置位。
+本次的可复现手法：把玩家 `DecisionSlot` 改成 `{"Executing":{"until":99}}`（忙碌 →
+不再断言 `awaiting`），再把威胁窗口 `ReactionSlot.resolved` 置 `true`
+（让在飞的投射物落地、世界恢复运行），然后按 `P`。
+⚠️ 顺带踩到：`ReactionSlot` 用的是**它自己的** `threat` 实体引用，
+删掉敌人**不会**关窗（投射物仍在飞）——要关窗就置 `resolved`，或者真的表态。
 
 ## 5. HUD 读数
 
@@ -104,7 +116,7 @@ cargo run          # ⚠️ 不要与 cargo test 并行：两者抢 target 锁
 - [x] **威胁窗口 + 威胁来源圈**（2026-09-27 已实机确认）：
       把玩家挪到敌人**相邻格**（`Transform` + `Cell` 一起改，只改 Transform 会被
       位移系统拉回去）→ 清两个敌人的 `DecisionSlot`（`{"Idle":{"intent":null}}`）
-      逼它们重新决策 → 等到 `RememberedPauseReasons` 里出现 `threat`。
+      逼它们重新决策 → 等到 `PauseLabels` 里出现 `threat`。
       **BRP 证据**：`ThreatSourceRing` 池里 ring 0 的 `Transform` = `(7.0, -0.965, 7.0)`
       ——**正是那个敌人的位置**（ring 1 留在原点 = 未使用）；顶栏
       `TIMELINE · FROZEN · awaiting + threat`；截图里敌人 1 身上同时有

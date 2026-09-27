@@ -2134,7 +2134,7 @@ mod tests {
         // 资源：世界为什么冻着（手动暂停那一半）、日志原文、素材句柄、主相机
         for type_path in [
             "app::clock::ManualPause",
-            "app::clock::RememberedPauseReasons",
+            "app::clock::PauseLabels",
             "app::combat::attack::menu::MenuSelection",
             "app::presentation::log::BattleLog",
             "app::presentation::unit_sprite::UnitSprites",
@@ -2152,7 +2152,7 @@ mod tests {
         );
 
         // ⚠️ `PauseReasons` **故意**不在这里：它内含 `HashSet`，反射要额外支持；
-        // 诊断读的是它的只读镜像 `RememberedPauseReasons`（别为了能看而改数据结构）。
+        // 诊断读的是它的只读快照 `PauseLabels`（别为了能看而改数据结构）。
         // 因此上面那一串里有镜像、没有它——这不是漏注册。
     }
 

@@ -126,7 +126,7 @@ pub(crate) mod test_support {
             )))
             .init_resource::<crate::clock::PauseReasons>()
             // 诊断镜像：`process_pause_requests` 每帧写它，缺了会直接 panic
-            .init_resource::<crate::clock::RememberedPauseReasons>()
+            .init_resource::<crate::clock::PauseLabels>()
             .init_resource::<crate::clock::ManualPause>()
             .init_resource::<ManualLatch>()
             .init_resource::<PendingFocus>()

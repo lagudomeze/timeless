@@ -174,13 +174,17 @@ pub fn resolve_mark_percent(windup: f32, total: f32) -> f32 {
     (windup / total * 100.0).clamp(0.0, 100.0)
 }
 
-/// 手动暂停的**展示名**。
+/// 手动暂停的**展示名**——**真相源在时钟域**（[`crate::clock::MANUAL_LABEL`]），
+/// 这里只是转出去给本模块的调用方用。
 ///
 /// ⚠️ 它**不属于** [`PauseReasons`](crate::clock::PauseReasons)：那个集合回答的是
 /// 「**别人**为什么在停表」，而"玩家自己按了暂停"是另一回事（一个不装原因的布尔）。
 /// 所以状态行要把两者**合起来看**——只看集合就会在玩家按 `P` 之后继续显示 `RUNNING`，
 /// 界面等于在说谎（见 `docs/backlog/hud.md` 的 #50）。
-pub const MANUAL_LABEL: &str = "manual";
+///
+/// BRP 的只读快照 [`PauseLabels`](crate::clock::PauseLabels) 用**同一个**常量，
+/// 所以"状态行显示的那一串"与"远程读到的那一串"不可能各写一份而漂移。
+pub use crate::clock::MANUAL_LABEL;
 
 /// 冻结状态 → 状态行要列出的原因；`None` = 世界在走。
 ///
