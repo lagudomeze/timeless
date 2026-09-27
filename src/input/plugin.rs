@@ -11,6 +11,7 @@ use super::keyboard::{
 };
 use super::pointer::{
     camera_pan_input_system, camera_zoom_input_system, pointer_click_input_system,
+    skill_slot_click_input_system,
 };
 
 /// 玩家输入插件：只注册「按键 → 消息」的翻译系统。
@@ -54,6 +55,8 @@ impl Plugin for InputPlugin {
                 camera_zoom_input_system,
                 // 左/右键 → `PointerCommand`（由 interaction 解释成走/打/撤销）
                 pointer_click_input_system,
+                // 点技能槽 = 选中它（**不释放技能**；见 `docs/backlog/hud.md` 的 #55）
+                skill_slot_click_input_system,
             )
                 .in_set(InputSet),
         );
