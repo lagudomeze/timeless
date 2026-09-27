@@ -112,3 +112,12 @@
       **触发条件**：读数多到一行放不下（比如加入"会什么技能"整列）时再做；
       届时的改法是照抄 `log_panel` 的折叠机制（`Button` + `Collapsed(bool)` +
       `Changed<Interaction>`），**不要新造机制**。
+
+- [ ] **`HudCache` 缺 `Reflect`，HUD 快照无法远程诊断**（2026-09-27 记，P3）
+      `HudCache` 装着 `TimelineCache` / `UnitPanelCache` / `SkillBarCache` / `LogCache`，
+      是"这一帧 HUD 认为世界是什么样"的**唯一快照**，但它没派生 `Reflect`，
+      所以 BRP 读不到——想数值核对时间轴的 `lanes` / `ready` 只能退回读 `Node`（啰嗦）
+      或截图（不精确）。**代价**：一串子结构都得跟着派生（`TimelineSlot` / `ActionRow` / …），
+      还要加进 `the_diagnostic_anchors_are_reflected`。**收益**：HUD 从"只能看"
+      变成"可查询"，这一类"屏幕在说谎"的 bug 会好查很多。
+      **先不急**：本轮用"截图 × 决策槽交叉核对"已经够用，等下次再被卡住时再补。
