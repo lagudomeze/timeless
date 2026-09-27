@@ -1,15 +1,19 @@
-//! 单位外观：面向相机的 2D 精灵 + 贴地的黑色阴影。
+//! 单位外观：面向相机的 2D 精灵 + 贴地的黑色阴影 + **阵营环**。
 //!
 //! 伪 3D 方案（见 [docs/assets.md](../../docs/assets.md)）：树木 / 石头继续用
-//! 3D 模型，玩家 / 敌人换成 2D 纸片。两个约定决定了这里的写法：
+//! 3D 模型，玩家 / 敌人换成 2D 纸片。三个约定决定了这里的写法：
 //!
 //! - **纸片绕 Y 轴对准相机**：单位自己不转身（移动只改位置），精灵每帧只调偏航角、
 //!   俯仰保持竖直。立起来的纸片配贴地阴影才有「站在地上」的实感；
 //! - **高度用贴地阴影表示**：阴影永远画在单位**正下方的地表**上（高度取自
 //!   [`crate::world`] 的地表函数），单位离地越高，阴影越小、离脚越远——
 //!   脚底与阴影之间的距离就是可以直接读出来的高度差。
+//! - **阵营环**：脚边一圈薄薄的贴地圆环（蓝 = 玩家、红 = 敌人）。两张 16×16 的
+//!   像素图拉到 1.8 世界单位、配上斜视角之后，实机里两个单位都读成"暗色小块 + 亮脸"，
+//!   **一眼分不清谁是谁**——而"哪个是我"是每帧都要用的信息
+//!   （见 `docs/backlog/presentation.md` 的 #56）。
 //!
-//! 精灵与阴影都是单位实体的**子节点**（零件在本域，组装在 [`crate::spawn`]）。
+//! 精灵 / 阴影 / 阵营环都是单位实体的**子节点**（零件在本域，组装在 [`crate::spawn`]）。
 //! 因此单位的 `Transform` 是「脚底 + 无旋转 + 无缩放」的参考系：子节点的局部坐标
 //! 才等于世界偏移。父节点被销毁时子节点会一起销毁（`Children` 是 linked spawn）。
 //!
@@ -22,6 +26,7 @@ use crate::combat::Faction;
 use crate::world::{TerrainConfig, surface_height_at};
 
 use super::components::MainCamera;
+use super::hud::faction_color_alpha;
 
 /// 玩家精灵（Kenney Tiny Dungeon，CC0）。
 pub const PLAYER_SPRITE: &str = "textures/units/player.png";
@@ -34,6 +39,20 @@ pub const SHADOW_SPRITE: &str = "textures/units/shadow.png";
 pub const SPRITE_SIZE: f32 = 1.8;
 /// 贴地阴影的直径（世界单位）。
 pub const SHADOW_DIAMETER: f32 = 1.9;
+/// 阵营环的内半径（世界单位）。
+///
+/// **必须大于阴影半径**（`SHADOW_DIAMETER / 2`）：环压在阴影上会两边都看不清。
+/// 有测试钉住这条不等式。
+pub const FACTION_RING_INNER: f32 = 1.05;
+/// 阵营环的外半径（世界单位）。
+///
+/// 比一格略小（`CELL_SIZE = 2.0`）：它表达的是"这个单位脚下的地盘"，
+/// 撑满一格会与相邻单位的环糊在一起。
+pub const FACTION_RING_OUTER: f32 = 1.25;
+/// 阵营环的离地高度（世界单位）：**比阴影略高**，两层贴地薄片才不会互相 z-fighting。
+pub const FACTION_RING_OFFSET: f32 = 0.03;
+/// 阵营环的不透明度：它是"我是谁"的提示，不该比单位本身还抢眼。
+pub const FACTION_RING_ALPHA: f32 = 0.35;
 /// 阴影缩到最小的参考高度：离地 [`SHADOW_LIFT`] 时只剩 [`SHADOW_MIN_SCALE`]。
 pub const SHADOW_LIFT: f32 = 2.0;
 /// 离地 [`SHADOW_LIFT`] 时阴影的缩放。
@@ -42,15 +61,43 @@ pub const SHADOW_MIN_SCALE: f32 = 0.55;
 pub const SHADOW_OFFSET: f32 = 0.02;
 
 /// 精灵纸片标记（[`billboard_system`] 每帧对齐相机）。
-#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
+///
+/// 派生 `Reflect`：它是最常用的 BRP 锚点之一（"这个单位的纸片在哪"），
+/// 没注册的组件在远程协议里等于不存在（见 `docs/backlog/clock.md` 的 #62）。
+#[derive(Component, Reflect, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
 pub struct UnitSprite;
 
 /// 贴地阴影标记（[`shadow_system`] 每帧贴地 + 随高度收缩）。
-#[derive(Component, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Reflect, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
 pub struct UnitShadow;
 
+/// **阵营环**标记：脚边一圈薄薄的贴地圆环，蓝 = 玩家、红 = 敌人。
+///
+/// 它是**静态**的（没有系统每帧刷它）：环跟着单位的 `Transform` 走就够了，
+/// 所以它是单位实体的子节点、一劳永逸。（与 [`UnitShadow`] 不同——阴影要贴地、
+/// 要随离地高度收缩，所以那个有系统。）
+///
+/// 颜色按 [`Faction`] 在**组装时**定好（见 [`crate::spawn::unit_scene`]：
+/// 几何与颜色这两个旋钮在本文件，组装在那一处），运行时不再改。
+#[derive(Component, Reflect, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
+pub struct FactionRing;
+
+/// 一个阵营的阵营环底色（组装时用它现场造材质）。
+///
+/// 抽成函数是为了让"玩家蓝、敌人红"与 HUD 的 [`faction_color`](super::hud::faction_color)
+/// **同一份真相**：改了 HUD 的阵营色，世界里的环跟着变。
+pub fn faction_ring_color(faction: Faction) -> Color {
+    faction_color_alpha(faction, FACTION_RING_ALPHA)
+}
+
 /// 单位外观贴图（Startup 预载，组装期取用）。
-#[derive(Resource, Debug, Clone)]
+///
+/// 派生 `Reflect` 是为了**诊断锚点能被 BRP 读到**（见 `docs/backlog/clock.md` 的 #62）。
+#[derive(Resource, Reflect, Debug, Clone)]
+#[reflect(Resource)]
 pub struct UnitSprites {
     player: Handle<Image>,
     enemy: Handle<Image>,
@@ -347,6 +394,87 @@ mod tests {
                 shadow_transform.translation
             );
             assert_eq!(shadow_transform.scale, Vec3::splat(1.0), "贴地时阴影满尺寸");
+
+            // **阵营环**：必须以**自己阵营的颜色**挂在这一单位的子节点上（#56）
+            let ring = children
+                .iter()
+                .copied()
+                .find(|child| app.world().get::<FactionRing>(*child).is_some())
+                .expect("单位应当有一个贴地阵营环");
+            let ring_material = app
+                .world()
+                .get::<MeshMaterial3d<StandardMaterial>>(ring)
+                .expect("阵营环应当有材质");
+            let ring_material = app
+                .world()
+                .resource::<Assets<StandardMaterial>>()
+                .get(&ring_material.0)
+                .expect("阵营环材质应当已注册");
+            assert_eq!(
+                ring_material.base_color,
+                faction_ring_color(faction),
+                "{faction:?} 的环要用自己阵营的颜色"
+            );
+            let ring_transform = *app.world().get::<Transform>(ring).unwrap();
+            assert_eq!(
+                ring_transform.translation,
+                Vec3::Y * FACTION_RING_OFFSET,
+                "环贴在地面上、比阴影略高一点"
+            );
         }
+    }
+
+    /// **两个阵营的环颜色必须不同**——它是"哪个是我"的唯一世界内线索（#56）。
+    ///
+    /// 同色的话这一整条功能等于没做，而屏幕上看起来"有个环"很容易蒙过截图验收。
+    #[test]
+    fn the_two_factions_get_different_ring_colours() {
+        let player = faction_ring_color(Faction::Player).to_srgba();
+        let enemy = faction_ring_color(Faction::Enemy).to_srgba();
+        assert_ne!(player, enemy, "玩家与敌人的环不能同色");
+        // 与 HUD 的阵营色同源：蓝属于玩家、红属于敌人
+        assert!(
+            player.blue > player.red,
+            "玩家的环应当偏蓝（HUD 也是这么画的）：{player:?}"
+        );
+        assert!(
+            enemy.red > enemy.blue,
+            "敌人的环应当偏红（HUD 也是这么画的）：{enemy:?}"
+        );
+        assert_eq!(
+            player.alpha, FACTION_RING_ALPHA,
+            "两个环的不透明度都该是同一个旋钮"
+        );
+        assert_eq!(enemy.alpha, FACTION_RING_ALPHA);
+    }
+
+    /// **环必须让开阴影、也不能撑满整格**（几何旋钮之间的关系）。
+    ///
+    /// ⚠️ 这几条比较的是**常量**，`clippy` 会（正确地）说"这个断言的值是恒定的"。
+    /// 所以这里用 [`std::hint::black_box`] 把值"藏"起来：我们要的不是"编译器能不能
+    /// 算出来"，而是**改了常量之后这里会红**——这才是旋钮之间那条约定的作用。
+    /// （真正运行时的事实由 `assembled_units_carry_a_faction_sprite_and_a_ground_shadow`
+    /// 从组装出来的实体上读。）
+    #[test]
+    fn the_ring_clears_the_shadow_and_stays_inside_a_cell() {
+        let inner = std::hint::black_box(FACTION_RING_INNER);
+        let outer = std::hint::black_box(FACTION_RING_OUTER);
+        let lift = std::hint::black_box(FACTION_RING_OFFSET);
+        let shadow_radius = std::hint::black_box(SHADOW_DIAMETER * 0.5);
+        let cell = std::hint::black_box(crate::movement::CELL_SIZE);
+
+        assert!(
+            inner >= shadow_radius,
+            "环的内半径 {inner} 小于阴影半径 {shadow_radius}——环会压在阴影上"
+        );
+        assert!(outer > inner, "外半径必须大于内半径");
+        assert!(
+            outer < cell,
+            "环不该撑满整格（{outer} ≥ 格宽 {cell}）——相邻单位的环会糊在一起"
+        );
+        assert!(
+            lift > SHADOW_OFFSET,
+            "环比阴影略高才不会两层贴地薄片互相 z-fighting"
+        );
     }
 }

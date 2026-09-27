@@ -2,6 +2,8 @@
 
 use bevy::prelude::*;
 
+use bevy::light::NotShadowCaster;
+
 use crate::combat::defense::BlockChance;
 use crate::combat::health::Health;
 use crate::combat::{
@@ -9,7 +11,8 @@ use crate::combat::{
 };
 use crate::movement::{Cell, Velocity};
 use crate::presentation::unit_sprite::{
-    SHADOW_DIAMETER, SHADOW_OFFSET, SPRITE_SIZE, UnitShadow, UnitSprite, UnitSprites,
+    FACTION_RING_INNER, FACTION_RING_OFFSET, FACTION_RING_OUTER, FactionRing, SHADOW_DIAMETER,
+    SHADOW_OFFSET, SPRITE_SIZE, UnitShadow, UnitSprite, UnitSprites, faction_ring_color,
 };
 use crate::timeline::{DecisionSlot, Focus, FocusRecoverTimer};
 
@@ -115,6 +118,28 @@ pub fn unit_scene(faction: Faction, position: Vec3, sprites: &UnitSprites) -> im
                     translation: {Vec3::Y * SHADOW_OFFSET},
                     rotation: {Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)},
                 }
+            ),
+            // **贴地阵营环**（`docs/backlog/presentation.md` 的 #56）：两张像素图在
+            // 实机里几乎一样，"哪个是我"只能靠世界里的这一圈来回答。
+            // 几何与颜色两个旋钮都在 `unit_sprite`（那里有"环必须让开阴影"的测试），
+            // 这里只负责把它挂成子节点——与纸片、阴影同一个参考系（脚底 + 无旋转）。
+            (
+                Name::new("FactionRing")
+                FactionRing
+                Mesh3d(asset_value(Annulus::new(FACTION_RING_INNER, FACTION_RING_OUTER)))
+                MeshMaterial3d<StandardMaterial>(asset_value(StandardMaterial {
+                    base_color: {faction_ring_color(faction)},
+                    unlit: true,
+                    alpha_mode: AlphaMode::Blend,
+                    double_sided: true,
+                    ..default()
+                }))
+                Transform {
+                    translation: {Vec3::Y * FACTION_RING_OFFSET},
+                    rotation: {Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)},
+                }
+                // 它只是一圈指示，投出影子反而像实体
+                NotShadowCaster
             ),
         ]
     }
