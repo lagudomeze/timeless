@@ -1484,3 +1484,31 @@ C 技能槽点击选中（1 项，含为什么上次会被误判的说明）。
 **为什么值得加**：本轮我已经吃过一次教训——"探点全落空"被我读成"悬停坏了"，
 其实是探点没落在地形上。**眼睛说变了、BRP 说 `cursor_over: false`，两者一致才算数；
 不一致本身就是最有价值的发现。**
+
+---
+
+## 2026-09-27 Godot 七项拍板：把"能先做的部分"做掉，并如实报告一处做不了的
+
+### 做不了的那一步（如实报告，不猜）
+
+拍板 #7 的建议是"**先评估 `godot-bevy`**"，而文档把评估的**最后一问**写得很具体：
+*读它的 Timing / Threading 章，看"场景树镜像"与 split driver 能不能按要求退场*
+（两条硬条件：① 场景树镜像能退场；② 驱动能改成"一次 `_process` = 一次 `app.update()`"）。
+
+**本轮试了三条路，都走不通**：
+1. `web_search` —— 本机**没配 key**（`DEEPSEEK_API_KEY`）；
+2. `web_fetch` 直取 `bytemeadow/godot-bevy` 的 README —— **fetch failed**（无网络）；
+3. 找本地副本 —— `~/.cargo/registry/{src,cache}`、`~/.cargo/git` **都没有 godot 相关**，
+   仓库里也没有 vendored 副本。
+
+**所以这一步在本环境做不了**，我不编结论。**能确定的是**（这些仓库文档都已查证）：
+`godot-bevy` 0.12.x ↔ Bevy 0.19 ↔ godot-rust 0.5 ↔ Godot 4.6 与本项目逐项对齐，
+但它**默认开着 `experimental-threads`**（gdext 官方自述"high risk of unsoundness"），
+且理念是 *Godot for Content, Bevy for Logic*——**与本方案（Bevy 是唯一权威、Godot 只是被动视图）
+正好相反**，用就得把镜像那一半关掉。
+
+### 顺带发现：文档自身有小不一致
+
+[`docs/godot-client/README.md`](../godot-client/README.md) 第 150 行的标题写
+"需要你拍板的**六件事**"，而下面的表**有 7 行**（#7 是后加的）。
+**只报告、不修改**——那个目录的改动归你。
