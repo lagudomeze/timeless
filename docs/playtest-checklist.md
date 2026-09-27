@@ -119,6 +119,9 @@ cargo run          # ⚠️ 不要与 cargo test 并行：两者抢 target 锁
 
 ## 3. UI 穿透（#46 的守门）——⚠️ **BRP 验不了，必须真人用真鼠标**
 
+> 📋 **待你跑的 5 项已整理成一页照做清单：[`playtest-mouse.md`](playtest-mouse.md)**
+> （纯看画面，不需要 BRP；跑完把"看到的"贴回来即可）
+
 **2026-09-27 查明**：BRP 的合成光标**驱动不了 Bevy 的 UI 焦点**，所以这一节整节
 **用 BRP 无法验证**（不是"还没验"，是"这条路验不了"）。直接证据：
 
@@ -215,7 +218,7 @@ cargo run          # ⚠️ 不要与 cargo test 并行：两者抢 target 锁
       ——这样"等玩家输入"的原因不再断言、**世界会自己一直跑**，敌人自然逼近并开窗；
       窗口一开世界又自动冻住等表态，正好从容读取。
 - [ ] **技能栏 · 悬停态**：**BRP 验不了**（与第 3、7 节同因：合成光标进不了
-      UI 焦点），**必须真人**。
+      UI 焦点），**必须真人** —— 做法见 [`playtest-mouse.md`](playtest-mouse.md) B 节。
 - [x] **日志句式**（2026-09-27 实测）：`BattleLog` 读到
       `[0.2s] 玩家 命中 敌人，造成 16 点伤害`——**时刻前缀 + 主谓宾**，
       没有出现「敌人玩家 …」那种两个标签贴在一起的老 bug。
@@ -323,6 +326,7 @@ let faction = model.ready.contains(&chip.index)          // chip.index 是**车�
       **采样手法**（可复用）：`world.query app::presentation::effects::DamageNumber`
       两次、中间 `Start-Sleep -Seconds 3`，对比 `age` 是否逐位相同。
 - [ ] **技能槽点击选中** —— ⚠️ **此前记为"已确认"是误判，已撤回**（2026-09-27）
+      📋 照做步骤见 [`playtest-mouse.md`](playtest-mouse.md) C 节。
       **当时看到的**：点第 2 格后 `MenuSelection.index = 1`，截图里第 2 格高亮，
       于是记成"点击选中已实机确认"。
       **为什么那是误判**：那一次之前我按过 `W`（横扫）——**`W` 自己就会把
