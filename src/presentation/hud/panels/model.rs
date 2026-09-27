@@ -313,17 +313,23 @@ impl UnitPanels {
     }
 
     /// 状态行文本（只有敌人行会带上到玩家的距离）。
+    ///
+    /// ⚠️ **敌人的状态行不带弹药与护甲**：敌人那两项恒为 `ammo 3/3` / `arm 0`，
+    /// 读它得不到任何信息，却把行撑到**换行**——2026-09-27 实机：敌人行因此 225px
+    /// （玩家面板只有 156px），三行敌人时整列装不下而互相压叠。
+    /// 判据用 `slot`（面板知道这是哪一格），不靠"值是多少"猜。
     pub fn state_line(&self, slot: PanelSlot) -> String {
         let Some(row) = self.of(slot) else {
             return String::new();
         };
-        let distance = (slot.faction() == Faction::Enemy)
+        let is_enemy = slot.faction() == Faction::Enemy;
+        let distance = is_enemy
             .then(|| {
                 self.player_position()
                     .map(|player| row.position.distance(player))
             })
             .flatten();
-        row.state_line(&self.name(slot), distance)
+        row.state_line_with(&self.name(slot), distance, !is_enemy)
     }
 }
 
@@ -333,6 +339,19 @@ impl UnitRow {
     /// `name` 由调用方给（面板知道这是"玩家"还是"第几个敌人"）；
     /// 本方法只负责把**这一行自己的数**排成一行字。
     pub fn state_line(&self, name: &str, to_player: Option<f32>) -> String {
+        self.state_line_with(name, to_player, true)
+    }
+
+    /// 见 [`Self::state_line`]；`show_resources` = 要不要写弹药与护甲。
+    ///
+    /// **为什么是一个开关而不是删掉**：玩家面板要它（装备一穿一脱 `arm` 立刻变），
+    /// 敌人面板不要它（恒为 3/3 与 0，白占宽度还会换行）。
+    pub fn state_line_with(
+        &self,
+        name: &str,
+        to_player: Option<f32>,
+        show_resources: bool,
+    ) -> String {
         // 跳跃是「谁都别想插队」的状态，值得单独标出来
         let defense = if self.airborne {
             format!("{} · air", self.defense_label())
@@ -345,11 +364,13 @@ impl UnitRow {
         );
         // 有效护甲（基础 + 装备加成）：装备一穿一脱，这个数立刻跟着变
         // 弹药（远程线）：**与精力并列的一条资源**，读作 `ammo 2/3`
-        if let Some(ammo) = self.ammo {
-            line.push_str(&format!(" · ammo {}/{}", ammo.current, ammo.max));
-        }
-        if let Some(armor) = self.armor {
-            line.push_str(&format!(" · arm {armor}"));
+        if show_resources {
+            if let Some(ammo) = self.ammo {
+                line.push_str(&format!(" · ammo {}/{}", ammo.current, ammo.max));
+            }
+            if let Some(armor) = self.armor {
+                line.push_str(&format!(" · arm {armor}"));
+            }
         }
         if let Some(distance) = to_player {
             line.push_str(&format!(" · dist {distance:.1}"));
@@ -568,6 +589,36 @@ mod tests {
         let enemy_line = panels.state_line(PanelSlot::Enemy(0));
         assert!(!player_line.contains("dist"), "{player_line}");
         assert!(enemy_line.contains("dist 6.0"), "{enemy_line}");
+    }
+
+    /// **敌人的状态行不带弹药与护甲**（2026-09-27 实机回归）。
+    ///
+    /// 敌人那两项恒为 `ammo 3/3` / `arm 0`，读它得不到信息，却把行撑到**换行**：
+    /// 一行从 20px 变 47px，整个敌人行因此 225px（玩家面板只有 156px），
+    /// 三个敌人时列高 722px 超过上限 → **多行互相压叠**。
+    ///
+    /// 这条同时钉住"玩家行要保留它们"：装备一穿一脱 `arm` 立刻变，那是玩家要看的。
+    #[test]
+    fn the_enemy_state_line_leaves_out_the_resources_it_cannot_use() {
+        let panels = UnitPanels::from_rows(&[
+            row(Faction::Player, Cell::new(0, 0), Vec3::ZERO),
+            row(Faction::Enemy, Cell::new(3, 0), Vec3::new(6.0, 0.0, 0.0)),
+        ]);
+
+        let enemy_line = panels.state_line(PanelSlot::Enemy(0));
+        assert!(
+            !enemy_line.contains("ammo") && !enemy_line.contains("arm"),
+            "敌人行的弹药与护甲恒为 3/3 与 0，写出来只会让这一行换行：{enemy_line}"
+        );
+        // 敌人真正有信息量的那几项照旧
+        assert!(enemy_line.contains("cell (3,0)"), "{enemy_line}");
+        assert!(enemy_line.contains("dist 6.0"), "{enemy_line}");
+
+        let player_line = panels.state_line(PanelSlot::Player);
+        assert!(
+            player_line.contains("ammo") && player_line.contains("arm"),
+            "玩家行必须保留弹药与护甲（装备一穿一脱 arm 就该变）：{player_line}"
+        );
     }
 
     /// 某一格不在场时读数退回空值，而不是上一帧的残留。

@@ -302,7 +302,6 @@ pub fn enemy_overflow_row(font: &Handle<Font>) -> impl Bundle {
         Name::new("EnemyOverflow"),
         Node {
             width: Val::Px(PANEL_WIDTH),
-            padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
             display: Display::None,
             ..default()
         },
@@ -346,9 +345,13 @@ pub const ENEMY_ROW_GAP: f32 = 6.0;
 ///
 /// 内容量：状态行 / Focus 行 / 洞察力读数 / HP 条 / EN 条 / 行动行。
 /// 自动高度量不准文字（`ComputedNode` 里文本节点报 0），所以给一个下限兜住。
-pub const ENEMY_ROW_MIN_HEIGHT: f32 = 96.0;
-/// 溢出计数行的高度（像素）：一行 11px 文字 + 上下 3px 内边距。
-pub const ENEMY_OVERFLOW_HEIGHT: f32 = 24.0;
+///
+/// ⚠️ **这个数必须 ≥ 实测行高**：给少了不是"挤一点"，而是**整列把它当成硬上限，
+/// 多行互相压叠**——2026-09-27 实机：3 行敌人时 `ENEMY 2`/`ENEMY 3` 的文字叠在一起。
+/// 实测一行 146~147px（带头像的玩家面板 156px），这里取 150 留一点余量。
+pub const ENEMY_ROW_MIN_HEIGHT: f32 = 150.0;
+/// 溢出计数行的高度（像素）：一行 11px 文字（行本身不再加内边距）。
+pub const ENEMY_OVERFLOW_HEIGHT: f32 = 23.0;
 /// 敌人列的高度上限（像素）：满池 + 溢出行 + 行间距。
 ///
 /// **一处真相**：它必须 ≥ 下列各项之和（有测试钉住），否则满池时最后一行会被裁掉。
