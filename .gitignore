@@ -11,6 +11,9 @@
 # 日志与临时文件
 *.log
 
+# Python 工具缓存（tools/subset_font.py 跑一次就会留一份）
+__pycache__/
+
 rust/target
 
 # 本地调度 / 会话状态（不属于仓库）
