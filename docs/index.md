@@ -34,6 +34,7 @@
 | 数值配置 | [config.md](config.md) | 调前摇 / 后摇 / 消耗 / 威力——**改 `config/actions.ron` 不必重编译** |
 | Bevy 0.19 速查 | [bevy-019.md](bevy-019.md) | 写任何 Bevy 代码之前 |
 | **逻辑/表现分家**（Bevy 无头跑逻辑 + Godot 做表现与交互） | [godot-client/](godot-client/README.md) 🚧 | 想改 UI / 交互的技术路线时——先读入口那篇的结论、方案对比与「先确认痛在哪」 |
+| **实机核查清单** | [playtest-checklist.md](playtest-checklist.md) · [playtest-mouse.md](playtest-mouse.md) | 改了 UI / 交互后照着跑一遍（本项目有多条"单测全绿但界面在说谎"的 bug）；后者是**只有真人真鼠标**能做的 5 项 |
 | 进度与 backlog | [../TODO.md](../TODO.md) · [backlog/](backlog/) · [../CHANGELOG.md](../CHANGELOG.md) | 想知道「现在做什么」（TODO 总览 + 领域条目）与「以前做了什么、凭什么说做完了」（CHANGELOG） |
 | 仓库指南 | [../AGENTS.md](../AGENTS.md) | 命令、编码风格、提交规范 |
 
