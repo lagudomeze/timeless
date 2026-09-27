@@ -174,6 +174,27 @@ pub fn resolve_mark_percent(windup: f32, total: f32) -> f32 {
     (windup / total * 100.0).clamp(0.0, 100.0)
 }
 
+/// 手动暂停的**展示名**。
+///
+/// ⚠️ 它**不属于** [`PauseReasons`](crate::clock::PauseReasons)：那个集合回答的是
+/// 「**别人**为什么在停表」，而"玩家自己按了暂停"是另一回事（一个不装原因的布尔）。
+/// 所以状态行要把两者**合起来看**——只看集合就会在玩家按 `P` 之后继续显示 `RUNNING`，
+/// 界面等于在说谎（见 `docs/backlog/hud.md` 的 #50）。
+pub const MANUAL_LABEL: &str = "manual";
+
+/// 冻结状态 → 状态行要列出的原因；`None` = 世界在走。
+///
+/// **一处判据**：`PauseReasons` 里的原因（调用方已排序）+ 手动暂停。
+/// 时钟的判据是 `reasons 非空 || manual`（`clock::process_pause_requests`），
+/// 这里必须与它**同形**，否则状态行会与真实时钟分叉。
+pub fn freeze_labels(reasons: &[&'static str], manual: bool) -> Option<Vec<&'static str>> {
+    let mut labels = reasons.to_vec();
+    if manual {
+        labels.push(MANUAL_LABEL);
+    }
+    (!labels.is_empty()).then_some(labels)
+}
+
 /// 把这一帧的世界算成一份快照。**纯函数**：不碰 `World`，只读切片。
 ///
 /// - `frozen`：本帧冻结的原因（`None` = 时间在走），只影响状态行文案；
@@ -407,5 +428,49 @@ mod tests {
         let labels: [&str; 2] = ["manual", "threat"];
         let frozen = build_model(Some(&labels), &roster, &[], &[], 0.0);
         assert_eq!(frozen.state, "TIMELINE · FROZEN · manual + threat");
+    }
+
+    /// **手动暂停必须进状态行**（#50）：它不在 `PauseReasons` 里，只看集合就会漏。
+    ///
+    /// ⚠️ 上面那条用例**直接喂 labels**，所以它验不到这个 bug——
+    /// 那正是它当初活下来的原因。这条从**判据**（原因表 + 手动布尔）出发。
+    #[test]
+    fn the_manual_pause_reaches_the_freeze_labels() {
+        assert_eq!(
+            freeze_labels(&[], false),
+            None,
+            "没有原因、也没按暂停 → 世界在走，状态行不该说 FROZEN"
+        );
+        assert_eq!(
+            freeze_labels(&[], true),
+            Some(vec!["manual"]),
+            "玩家按了 P：集合里什么都没有，但世界确实冻着"
+        );
+        assert_eq!(
+            freeze_labels(&["awaiting"], true),
+            Some(vec!["awaiting", "manual"]),
+            "等决策 + 手动暂停：两个原因都要列出来"
+        );
+        assert_eq!(
+            freeze_labels(&["threat"], false),
+            Some(vec!["threat"]),
+            "只看集合的那一半照旧"
+        );
+
+        // 与时钟的判据同形：`reasons 非空 || manual`
+        let frozen_state =
+            |reasons: &[&'static str], manual: bool| freeze_labels(reasons, manual).is_some();
+        for (reasons, manual) in [
+            (&[][..], false),
+            (&[][..], true),
+            (&["awaiting"][..], false),
+            (&["threat"][..], true),
+        ] {
+            assert_eq!(
+                frozen_state(reasons, manual),
+                !reasons.is_empty() || manual,
+                "状态行的判据必须与 `process_pause_requests` 的时钟判据一致"
+            );
+        }
     }
 }

@@ -15,7 +15,7 @@ use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, ScheduledAction};
 
 use super::super::actions::PayloadQueries;
 use super::super::{HudCache, faction_color_alpha};
-use super::model::{ActionRow, TimelineSlot, build_model, faction_letter};
+use super::model::{ActionRow, TimelineSlot, build_model, faction_letter, freeze_labels};
 use super::readout::{
     ActionReadout, HoveredAction, TimelineFocusRing, TimelineHover, TimelineReadout,
     TimelineReadoutText, readout_line,
@@ -109,6 +109,10 @@ type ReadyLabelQuery<'w, 's> = Query<
 #[allow(clippy::too_many_arguments)]
 pub fn update_timeline_system(
     reasons: Res<PauseReasons>,
+    // 手动暂停**不在** `PauseReasons` 里（那个集合只回答"**别人**为什么停表"），
+    // 所以状态行还要单独读它——不读就会在玩家按 `P` 之后继续显示 `RUNNING`
+    // （见 `docs/backlog/hud.md` 的 #50）。
+    manual: Res<crate::clock::ManualPause>,
     now: Res<Time<Virtual>>,
     actors: Query<(Entity, &Faction, Option<&DecisionSlot>)>,
     actions: Query<(Entity, &ScheduledAction, &ActionTiming, &ActionOf)>,
@@ -150,7 +154,8 @@ pub fn update_timeline_system(
         .map(|(entity, _, _)| entity)
         .collect();
 
-    let frozen = reasons.is_frozen().then(|| reasons.labels());
+    // 冻结原因 = 集合里的 + 玩家自己按的那个（后者不在集合里，见 `freeze_labels`）
+    let frozen = freeze_labels(&reasons.labels(), manual.0);
     let model = build_model(frozen.as_deref(), &roster, &rows, &ready, now_seconds);
 
     // 悬停读数要按 `lane`/`slot` 反查行动实体：布局是快照的另一种视图
@@ -423,6 +428,39 @@ mod tests {
             .init_resource::<TimelineLayout>()
             .add_systems(Update, update_timeline_system);
         app
+    }
+
+    /// **手动暂停要显示成 `FROZEN`**（#50）：从**资源**走一遍，而不是直接喂 labels。
+    ///
+    /// 这是那个 bug 的守门测试：状态行曾经只读 `PauseReasons`，而玩家的手动暂停
+    /// **不在**那个集合里（`Toggle` 不带原因，设计如此）——于是玩家按了 `P`、
+    /// 世界明明冻着，顶栏还写着 `RUNNING`。
+    #[test]
+    fn the_state_line_shows_the_manual_pause() {
+        let mut app = timeline_app();
+        // 场上没有别人要停表：唯一的冻结来源就是玩家自己按的那一下
+        app.world_mut().spawn(Faction::Player);
+        let state = app
+            .world_mut()
+            .spawn((TimelineStateLabel, Text::new("")))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Text>(state).unwrap().0,
+            "TIMELINE · RUNNING",
+            "没按暂停、也没人断言原因 → 世界在走"
+        );
+
+        app.world_mut()
+            .resource_mut::<crate::clock::ManualPause>()
+            .0 = true;
+        app.update();
+        assert_eq!(
+            app.world().get::<Text>(state).unwrap().0,
+            "TIMELINE · FROZEN · manual",
+            "玩家按了 P：状态行必须说 FROZEN（曾经这里还说 RUNNING）"
+        );
     }
 
     /// 整机：两个单位各有一条车道，各自的色块只出现在自己的行里。

@@ -18,8 +18,9 @@ mod scene;
 mod system;
 
 pub use model::{
-    BLOCK_POOL_PER_LANE, LANE_GAP, LANE_HEIGHT, LANE_POOL, MIN_BLOCK_WIDTH, STAGING_WIDTH,
-    TICK_POOL, TICK_SECONDS, TimelineCache, TimelineModel, WINDOW_SECONDS, build_model,
+    BLOCK_POOL_PER_LANE, LANE_GAP, LANE_HEIGHT, LANE_POOL, MANUAL_LABEL, MIN_BLOCK_WIDTH,
+    STAGING_WIDTH, TICK_POOL, TICK_SECONDS, TimelineCache, TimelineModel, WINDOW_SECONDS,
+    build_model, freeze_labels,
 };
 pub use readout::{
     ActionReadout, HoveredAction, TimelineFocusRing, TimelineHover, TimelineReadout,
