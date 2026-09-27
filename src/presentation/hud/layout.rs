@@ -39,6 +39,9 @@ pub struct HudRoot;
 /// `Bundle`，把六个工厂全改成场景是另一件独立的事（见 `docs/` 的 BSN 待办）。
 pub fn setup_hud(mut commands: Commands, assets: Res<AssetServer>, sprites: Res<UnitSprites>) {
     let font: Handle<Font> = assets.load(HUD_FONT);
+    // 伤害数字用**同一份**字体（世界空间文字也要有字形覆盖），放进资源供
+    // `effects` 在按事件现场造文字时取用——那里只有 `AssetServer`，不该再 load 一次
+    commands.insert_resource(crate::presentation::effects::EffectFont(font.clone()));
     let root = commands
         .spawn_scene(bsn! {
             Name("HudRoot")

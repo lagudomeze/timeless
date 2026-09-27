@@ -1,4 +1,4 @@
-//! 命中特效：一次命中的地方冒一小簇**短命粒子**（会自己消失）。
+//! 命中特效：一次命中的地方冒一小簇**短命粒子**（会自己消失）+ 一个**伤害数字**。
 //!
 //! ## 分层
 //!
@@ -7,16 +7,24 @@
 //!
 //! ## 为什么不引粒子系统
 //!
-//! 这一版只有**一种**特效：命中处冒几个小方块、`EFFECT_SECONDS` 后消失。
+//! 这一版只有**一种**特效：命中处冒几个小方块、[`EFFECT_SECONDS`] 后消失；
+//! 伤害数字同理，`Text2d` + 一个系统让它上浮淡出。
 //! 为此引 `bevy_hanabi` 之类的粒子库，会为一个用不上的特性付一整个依赖树的代价
 //! （项目的规矩见 `docs/skills.md` 第七节：够用就不加机制）。
-//! 这里用最朴素的做法：`spawn` 几个带 [`EffectParticle`] 的小方块，
-//! 一个系统让它们**同时上浮 + 缩小**，到点自己 `despawn`。
+//! 这里用最朴素的做法：`spawn` 几个带 [`EffectParticle`] 的小方块 + 一个带
+//! [`DamageNumber`] 的 `Text2d`，一个系统让它们**上浮 + 缩小 / 淡出**，
+//! 到点自己 `despawn`。
 //!
 //! **触发条件**（满足任一条就该换成真正的粒子系统）：
 //! ① 需要几十个以上粒子 / 复杂的发射形状；② 需要按材质做拖尾 / 光照；
 //! ③ 需要多套特效资产（`.ron` 描述发射器）。届时本模块整体替换，外部不受影响
 //! ——它对外只有"读 `DamageEvent`"这一个接口。
+//!
+//! ## 为什么两种反馈都要用**虚拟时间**
+//!
+//! 命中发生在结算那一瞬；世界这时可能正冻着等玩家表态。特效跟着虚拟时钟走，
+//! 于是它定格在"刚打中"的样子，玩家解冻后接着看完。若用真实时间，
+//! 等玩家思考的时候数字会自己飘走——恰恰在最需要它的时候消失。
 
 use bevy::prelude::*;
 
@@ -24,12 +32,28 @@ use crate::combat::{DamageEvent, Faction};
 
 /// 特效存活时长（**虚拟秒**——它与世界一起冻结，理由见 `spawn_hit_effects_system`）。
 pub const EFFECT_SECONDS: f32 = 0.35;
+/// 伤害数字的存活时长（虚拟秒）：比粒子长一点，数字要**读得完**。
+pub const NUMBER_SECONDS: f32 = 0.8;
+/// 伤害数字在一生中上浮的高度（世界单位）。
+pub const NUMBER_RISE: f32 = 1.1;
+/// 伤害数字的出生高度（世界单位，相对被打中单位的脚底）：别糊在纸片脸上。
+pub const NUMBER_LIFT: f32 = 1.5;
+/// 伤害数字的字号。
+pub const NUMBER_FONT_SIZE: f32 = 28.0;
 /// 每次命中冒几个粒子。
 pub const PARTICLES_PER_HIT: usize = 5;
 /// 粒子的边长（世界单位）。
 pub const PARTICLE_SIZE: f32 = 0.14;
 /// 粒子在一生中上浮的高度（世界单位）。
 pub const PARTICLE_RISE: f32 = 0.7;
+
+/// 伤害数字要用的字体（HUD 的那份；`setup_hud` 载入）。
+///
+/// **为什么做成资源**：伤害数字是**世界空间**的文字，它的系统在 `Update` 里
+/// 按事件现场造实体——那时手里只有 `AssetServer`（异步、不该在这里 `.load()`）。
+/// 把句柄放资源里，载入时机就归 Startup（与 HUD 同一份字体，不必再载一次）。
+#[derive(Resource, Debug, Default, Clone)]
+pub struct EffectFont(pub Handle<Font>);
 
 /// 命中粒子（自己会消失，不需要任何东西来清理它）。
 ///
@@ -45,6 +69,19 @@ pub struct EffectParticle {
     pub origin: Vec3,
     /// 这一颗粒子的上浮 / 散开方向（每颗略有不同，看起来才不像一块板）
     pub drift: Vec3,
+}
+
+/// 一次命中飘出的**伤害数字**（`-12`）。
+///
+/// 与 [`EffectParticle`] 同一套纪律：自己记年龄、自己上浮、到点自己销毁。
+/// 它是**只读反馈**——不参与结算，也不被结算读取。
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+#[reflect(Component)]
+pub struct DamageNumber {
+    /// 已经活了多久（**虚拟秒**）
+    pub age: f32,
+    /// 出生位置（上浮的基准）
+    pub origin: Vec3,
 }
 
 /// 颜色：谁挨打了就用**对方的阵营色**（玩家蓝 / 敌人红）——一眼看出打中了谁。
@@ -70,6 +107,7 @@ pub fn spawn_hit_effects_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut damages: MessageReader<DamageEvent>,
     units: Query<(&Transform, &Faction)>,
+    font: Res<EffectFont>,
 ) {
     for damage in damages.read() {
         let Ok((transform, faction)) = units.get(damage.target) else {
@@ -97,6 +135,22 @@ pub fn spawn_hit_effects_system(
                 Transform::from_translation(origin),
             ));
         }
+
+        // 伤害数字：数字是**这一击的实际数值**（`amount` 已经算完护甲 / 格挡 / 招架），
+        // 所以它读的是结算结果，而不是任何一处的"预计伤害"。
+        let number_origin = transform.translation + Vec3::Y * NUMBER_LIFT;
+        commands.spawn((
+            DamageNumber {
+                age: 0.0,
+                origin: number_origin,
+            },
+            Text2d::new(format!("-{}", damage.amount)),
+            TextFont::from_font_size(NUMBER_FONT_SIZE).with_font(font.0.clone()),
+            TextColor(color),
+            // 锚在**中心**：数字绕着出生点上浮，不会因为长短不同而左右偏
+            bevy::sprite::Anchor::CENTER,
+            Transform::from_translation(number_origin),
+        ));
     }
 }
 
@@ -124,6 +178,30 @@ pub fn animate_hit_effects_system(
     }
 }
 
+/// 伤害数字动起来：上浮 + 淡出，到 [`NUMBER_SECONDS`] 自己销毁。
+///
+/// 与粒子同一个"自己收尾"的纪律，但**用淡出而不是缩小**：数字要读得完，
+/// 缩小会让最该看清的那一帧变得最小。同样走**虚拟时间**（理由见模块文档）。
+pub fn animate_damage_numbers_system(
+    mut commands: Commands,
+    time: Res<Time<Virtual>>,
+    mut numbers: Query<(Entity, &mut DamageNumber, &mut Transform, &mut TextColor)>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut number, mut transform, mut color) in &mut numbers {
+        number.age += dt;
+        if number.age >= NUMBER_SECONDS {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let progress = number.age / NUMBER_SECONDS;
+        transform.translation = number.origin + Vec3::Y * NUMBER_RISE * progress;
+        // 前 60% 保持满不透明（读得清），之后才淡出
+        let fade = ((1.0 - progress) / 0.4).clamp(0.0, 1.0);
+        color.0.set_alpha(fade);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,13 +216,21 @@ mod tests {
             .add_plugins(AssetPlugin::default())
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<Font>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 50,
             )))
+            // 伤害数字要用字体句柄；测试里给一个空句柄就够（字形不参与断言）
+            .insert_resource(EffectFont(Handle::default()))
             .add_message::<DamageEvent>()
             .add_systems(
                 Update,
-                (spawn_hit_effects_system, animate_hit_effects_system).chain(),
+                (
+                    spawn_hit_effects_system,
+                    animate_hit_effects_system,
+                    animate_damage_numbers_system,
+                )
+                    .chain(),
             );
         app
     }
@@ -285,5 +371,117 @@ mod tests {
             after_scale.x < before_scale.x,
             "粒子应当缩小：{before_scale:?} → {after_scale:?}"
         );
+    }
+
+    fn number_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query_filtered::<Entity, With<DamageNumber>>()
+            .iter(app.world())
+            .count()
+    }
+
+    /// **一次命中飘出一个伤害数字，数值就是这一击的结算值**（#60）。
+    ///
+    /// 读的是 `DamageEvent.amount`——它已经算完护甲 / 格挡 / 招架，
+    /// 所以屏幕上显示的是**真的掉了多少血**，而不是任何一处的"预计伤害"。
+    #[test]
+    fn a_hit_floats_the_damage_it_dealt() {
+        let mut app = effect_app();
+        let target = app
+            .world_mut()
+            .spawn((Faction::Enemy, Transform::from_xyz(3.0, 0.0, 3.0)))
+            .id();
+        app.world_mut().write_message(DamageEvent {
+            source: None,
+            attacker: None,
+            target,
+            amount: 12,
+            at: 0.0,
+        });
+        app.update();
+
+        assert_eq!(number_count(&mut app), 1, "一次命中应当飘一个数字");
+        let mut query = app.world_mut().query::<(&DamageNumber, &Text2d)>();
+        let text = query
+            .iter(app.world())
+            .next()
+            .map(|(_, text)| text.0.clone())
+            .expect("数字实体应当在");
+        assert_eq!(text, "-12", "数字要写这一击的**实际**数值");
+    }
+
+    /// 数字**上浮 + 淡出**，并到点自己消失（与粒子同一条"自己收尾"的纪律）。
+    ///
+    /// 用淡出而不是缩小：数字要读得完，缩小会让最该看清的那一帧最小。
+    #[test]
+    fn the_damage_number_rises_fades_and_cleans_itself_up() {
+        let mut app = effect_app();
+        let target = app
+            .world_mut()
+            .spawn((Faction::Player, Transform::from_xyz(0.0, 0.0, 0.0)))
+            .id();
+        app.world_mut().write_message(DamageEvent {
+            source: None,
+            attacker: None,
+            target,
+            amount: 7,
+            at: 0.0,
+        });
+        app.update();
+
+        let sample = |app: &mut App| -> (Vec3, f32) {
+            let mut query = app
+                .world_mut()
+                .query::<(&DamageNumber, &Transform, &TextColor)>();
+            query
+                .iter(app.world())
+                .next()
+                .map(|(_, transform, color)| (transform.translation, color.0.alpha()))
+                .expect("数字应当还在")
+        };
+        let (before_pos, before_alpha) = sample(&mut app);
+        assert_eq!(before_alpha, 1.0, "刚冒出来时应当完全不透明（看得清）");
+
+        // 跑到后半段（0.8s 里的 0.5s：10 帧）
+        for _ in 0..10 {
+            app.update();
+        }
+        let (after_pos, after_alpha) = sample(&mut app);
+        assert!(
+            after_pos.y > before_pos.y,
+            "数字应当上浮：{before_pos:?} → {after_pos:?}"
+        );
+        assert!(
+            after_alpha < before_alpha,
+            "数字应当淡出：{before_alpha} → {after_alpha}"
+        );
+
+        // 跑够 NUMBER_SECONDS 之后自己消失
+        for _ in 0..12 {
+            app.update();
+        }
+        assert_eq!(number_count(&mut app), 0, "数字必须自己销毁");
+    }
+
+    /// 目标同帧阵亡时**不许 panic**，也不该留下没有主人的数字。
+    #[test]
+    fn a_hit_on_a_gone_target_leaves_no_number() {
+        let mut app = effect_app();
+        let target = app
+            .world_mut()
+            .spawn((Faction::Enemy, Transform::default()))
+            .id();
+        app.world_mut().entity_mut(target).despawn();
+
+        app.world_mut().write_message(DamageEvent {
+            source: None,
+            attacker: None,
+            target,
+            amount: 5,
+            at: 0.0,
+        });
+        app.update();
+        assert_eq!(number_count(&mut app), 0, "目标没了就不该冒数字");
+        assert_eq!(particle_count(&mut app), 0, "也不该冒粒子");
     }
 }

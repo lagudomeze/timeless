@@ -8,7 +8,9 @@ use super::camera::{
     PanCamera, ZoomCamera, camera_follow_system, camera_pan_system, camera_zoom_system,
 };
 use super::components::MainCamera;
-use super::effects::{animate_hit_effects_system, spawn_hit_effects_system};
+use super::effects::{
+    animate_damage_numbers_system, animate_hit_effects_system, spawn_hit_effects_system,
+};
 use super::hud;
 use super::hud::hint::{
     HintState, HintTimer, PreviewReadout, apply_hint_system, gather_hint_system,
@@ -131,7 +133,14 @@ impl Plugin for PresentationPlugin {
                     shadow_system,
                     battle_log_system,
                     // 命中特效：读 `DamageEvent`，在被打中的单位身上冒一簇短命粒子
-                    (spawn_hit_effects_system, animate_hit_effects_system).chain(),
+                    // 与一个伤害数字（字体由 `setup_hud` 放进 `EffectFont`）。
+                    // 三个系统收成一条链：先建、再动，也避免 Update 的元组超过 Bevy 上限。
+                    (
+                        spawn_hit_effects_system,
+                        animate_hit_effects_system,
+                        animate_damage_numbers_system,
+                    )
+                        .chain(),
                     // 威胁格：把敌人这一手威胁到的格画在地面上（只读 `Threatens`）
                     update_threat_grid_system,
                     // 威胁来源圈：同一个窗口开着时，圈出**是谁**在威胁你
