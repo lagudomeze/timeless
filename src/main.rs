@@ -11,12 +11,17 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(LogPlugin {
             // wgpu 的软件渲染告警（llvmpipe）与本项目无关，压掉免得淹没有用日志。
-            // 曾经这里还静音过 `icu_segmenter` / `icu_provider`，因为文档说中文断行会
-            // 每帧刷 `No segmentation model for complex script`——**实测复现不出来**：
-            // 打印上屏文字、跑完整局战斗都没有那行。根因是 `parley` 0.9 走的是
-            // `LineSegmenter::new_for_non_complex_scripts`，`complex::select` 那条
-            // 报错分支**根本不会被走到**（见 TODO.md「CJK 断行」）。所以静音已撤掉。
-            filter: "wgpu=error,naga=warn".to_string(),
+            //
+            // `icu_provider` 的 `No segmentation model for complex script: Chinese/Japanese`
+            // 也压掉——**它确实会出现**（推翻了 2026-09 那次"实测复现不出来"的结论）：
+            // parley 0.9 走 `LineSegmenter::new_for_non_complex_scripts`，它的 `complex`
+            // 载荷是**空的**（`ComplexPayloadsBorrowed::new()`），而断行遇到 CJK 时会去问
+            // `ComplexScript::ChineseOrJapanese` 那一个分支 → 拿不到 `ja` 模型 →
+            // `DataError::custom(..)` **无条件打一行 error**，然后按字回退断行。
+            // 所以：**功能是对的（中文照常换行），只是每次断行刷一行日志**。
+            // 想在根上消掉它得给 `icu_segmenter` 开 `auto` 特性（拉一套模型数据）——
+            // 为一条日志付那个代价不值得（见 docs/backlog/clock.md 的记录）。
+            filter: "wgpu=error,naga=warn,icu_provider=error".to_string(),
             ..default()
         }))
         .add_plugins(bevy::remote::RemotePlugin::default())
