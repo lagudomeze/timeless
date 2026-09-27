@@ -188,14 +188,21 @@ pub use crate::clock::MANUAL_LABEL;
 
 /// 冻结状态 → 状态行要列出的原因；`None` = 世界在走。
 ///
-/// **一处判据**：`PauseReasons` 里的原因（调用方已排序）+ 手动暂停。
+/// **一处判据**：`PauseReasons` 里的原因 + 手动暂停。
 /// 时钟的判据是 `reasons 非空 || manual`（`clock::process_pause_requests`），
 /// 这里必须与它**同形**，否则状态行会与真实时钟分叉。
+///
+/// **全局按字母序**（不是"原因排好、`manual` 贴末尾"）：实测过 `threat + manual`
+/// 那种不合字母序的拼法，而验收写的是"按字母序拼出来"。排序之后这一串与
+/// BRP 的只读快照 [`PauseLabels`](crate::clock::PauseLabels) **逐字相同**
+/// （那个快照也排序），于是"屏幕上写的"与"远程读到的"可以直接对账。
 pub fn freeze_labels(reasons: &[&'static str], manual: bool) -> Option<Vec<&'static str>> {
     let mut labels = reasons.to_vec();
     if manual {
         labels.push(MANUAL_LABEL);
     }
+    labels.sort_unstable();
+    labels.dedup();
     (!labels.is_empty()).then_some(labels)
 }
 
@@ -459,6 +466,12 @@ mod tests {
             freeze_labels(&["threat"], false),
             Some(vec!["threat"]),
             "只看集合的那一半照旧"
+        );
+        assert_eq!(
+            freeze_labels(&["threat"], true),
+            Some(vec!["manual", "threat"]),
+            "**全局**按字母序（`m` 在 `t` 前）——不是把 manual 贴在末尾：\
+             实测过 `threat + manual` 这种不合验收写法的拼法"
         );
 
         // 与时钟的判据同形：`reasons 非空 || manual`
