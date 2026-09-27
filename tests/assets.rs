@@ -103,6 +103,12 @@ fn unit_sprites_exist_square_and_keep_transparency() {
 /// 字表没跟上，豆腐块就没被拦住）。这里改成从**真相源**里抽：
 /// 战斗日志与提示条是中文正文的产处，它们的字符串字面量就是要覆盖的字。
 ///
+/// ⚠️ **这份列表就是字体的真相源**：往里加一个文件，就等于把"这个文件里出现的
+/// 每一个汉字"变成字体的硬要求；反过来，**漏掉一个中文产处 = 它的字永远不会被要求
+/// 进字体**——2026-09-27 就是这么漏的：威胁读数（`hud/hint.rs`）加了一批中文，
+/// 而这里没有它，于是这条验收一直绿着，**实机上那一行全是豆腐块**。
+/// 新增任何带中文文案的文件，都要同步这里与 `tools/subset_font.py` 的 `SOURCES`。
+///
 /// ⚠️ **跳过 `#[cfg(test)]` 模块**：断言消息里的中文（"语序应当是…"）
 /// 只在测试失败时出现在终端，**永远不会渲染**——把它们算进来会让字体
 /// 被迫多带几十个用不到的字（实测：多悄悄要求了 12 个）。
@@ -110,6 +116,7 @@ fn unit_sprites_exist_square_and_keep_transparency() {
 fn chinese_in_source() -> String {
     let sources = [
         include_str!("../src/presentation/log.rs"),
+        include_str!("../src/presentation/hud/hint.rs"),
         include_str!("../src/presentation/hud/panels/model.rs"),
         include_str!("../src/presentation/hud/timeline/model.rs"),
         include_str!("../src/world/storage/interaction.rs"),
@@ -207,4 +214,45 @@ fn the_font_covers_every_character_the_ui_can_show() {
         path.display(),
         missing
     );
+}
+
+/// **真相源列表不能漏掉中文产处**——上面那条测试只能查"字在不在字体里"，
+/// 查不出"这个文件压根没被抽"。
+///
+/// 2026-09-27 就是这么漏的：威胁读数（`hud/hint.rs`）加了一批中文，
+/// 而 `chinese_in_source()` 的列表里没有它 → 字体不需要那些字 → 上面那条**一直绿**，
+/// 实机上那一行全是豆腐块（靠截图才发现）。
+///
+/// 这里用**只可能出现在这些文件里**的字做哨兵：谁把某个产处从列表里移掉，
+/// 或者新增中文文案却忘了登记，都会在这里红。
+#[test]
+fn every_chinese_source_is_registered_in_the_font_charset() {
+    let chars = chinese_in_source();
+    let has = |ch: char| chars.contains(ch);
+
+    // `hud/hint.rs` 的威胁读数独有：锁定你 / 可打断 / 翻滚躲 / 右键忍 / 已出手 / 落点
+    for sentinel in ['锁', '忍', '滚', '落'] {
+        assert!(
+            has(sentinel),
+            "字体字集里没有 `{sentinel}`——`src/presentation/hud/hint.rs` 多半掉出了 \
+             `chinese_in_source()` 的列表（它的中文就再也不会被要求进字体）"
+        );
+    }
+    // 日志独有：命中 / 造成 / 点伤害 / 被击杀
+    for sentinel in ['命', '杀', '阵', '亡'] {
+        assert!(
+            has(sentinel),
+            "字体字集里没有 `{sentinel}`——`src/presentation/log.rs` 掉出列表了？"
+        );
+    }
+    // 溢出计数独有：还有 N 个
+    for sentinel in ['还', '个'] {
+        assert!(
+            has(sentinel),
+            "字体字集里没有 `{sentinel}`——面板模型（`hud/panels/model.rs`）掉出列表了？"
+        );
+    }
+
+    // ⚠️ 这里**不查 ASCII**：`chinese_in_source()` 按定义只收汉字，
+    // ASCII 那一半由 `ui_text` + 全量可打印 ASCII 兜底，并由上面那条覆盖测试守着。
 }

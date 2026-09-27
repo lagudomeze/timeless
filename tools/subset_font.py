@@ -14,9 +14,12 @@ import re
 import sys
 from pathlib import Path
 
-# 与 tests/assets.rs 的 sources 一览一致
+# 与 tests/assets.rs 的 `chinese_in_source()` 一览一致。
+# ⚠️ 漏掉一个中文产处 = 那批字永远不会被要求进字体（2026-09-27 就漏过 `hud/hint.rs`，
+# 结果威胁读数在实机上是豆腐块，而验收测试一直绿着）。两处必须同步。
 SOURCES = [
     "src/presentation/log.rs",
+    "src/presentation/hud/hint.rs",
     "src/presentation/hud/panels/model.rs",
     "src/presentation/hud/timeline/model.rs",
     "src/world/storage/interaction.rs",
