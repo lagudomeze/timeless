@@ -11,7 +11,7 @@ use super::super::actions::ActionLabel;
 use super::super::{
     EN_COLOR, HP_COLOR, PANEL_BG, TRACK_BG, faction_color, hud_text, hud_text_tinted,
 };
-use super::model::PanelSlot;
+use super::model::{FOCUS_PIPS, MAX_ENEMY_ROWS, PanelSlot};
 
 /// 面板整体尺寸（像素，还会被 `UiScale` 缩放）。
 pub const PANEL_WIDTH: f32 = 340.0;
@@ -35,16 +35,34 @@ pub enum PanelBar {
     En(PanelSlot),
 }
 
-/// 面板文本：血量 / 精力 / 状态行。
+/// 面板文本：血量 / 精力 / 状态行 / **反制资源 Focus** / 洞察力。
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 #[reflect(Component)]
 pub enum PanelText {
     Hp(PanelSlot),
     En(PanelSlot),
     State(PanelSlot),
+    /// **反制资源读数**（`docs/backlog/hud.md` 的 #52）：`FOCUS 2 / 3`。
+    /// 玩家与**敌人都有**——敌人也会花 Focus 闪避，看得见"它刚买掉了前摇"才是对称的。
+    Focus(PanelSlot),
     /// **洞察力读数**（`docs/insight.md` 第四节）：射程 / 打断抗性 / 战术。
     /// 只有敌人格有内容（玩家看自己的面板不需要"我够得到多远"）。
     Insight(PanelSlot),
+    /// **溢出计数**（`docs/backlog/hud.md` 的 #61）：`还有 N 个`。
+    /// 只有一份（挂在敌人那一列的顶上），没有溢出时整行藏起来。
+    EnemyOverflow,
+}
+
+/// Focus 的一个圆点（改颜色：用掉的压暗）。
+///
+/// 池化：开局按 [`super::model::FOCUS_PIPS`] 建好，之后只改颜色——
+/// 与时间轴色块池、敌人行池同一个做法（帧内不产生实体分配）。
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+#[reflect(Component)]
+pub struct PanelFocusPip {
+    pub slot: PanelSlot,
+    /// 第几个点（`0` = 最左边）
+    pub index: usize,
 }
 
 /// 一格的实体名前缀（`PlayerPanel` / `Enemy1Panel`）。
@@ -103,12 +121,20 @@ pub fn status_bar(font: &Handle<Font>, bar: PanelBar, color: Color) -> impl Bund
     )
 }
 
+/// Focus 圆点的可选色（还有余量）。
+pub const FOCUS_PIP_ON: Color = Color::srgb(0.55, 0.80, 1.0);
+/// Focus 圆点的已用色（压暗：一眼看出花掉了几点）。
+pub const FOCUS_PIP_OFF: Color = Color::srgb(0.22, 0.26, 0.33);
+
 /// 一格的「状态行 + HP / EN 条 + 当前行动」——**三种面板共用**这一个内容块。
 ///
 /// 玩家面板与敌人行**内容完全一样**，只是摆放位置与头像有无不同；抽成一处
 /// 就不会出现"玩家面板加了护甲读数、敌人行忘了加"这种漂移。
 fn slot_content(font: &Handle<Font>, slot: PanelSlot) -> impl Bundle {
     let prefix = slot_prefix(slot);
+    // 闭包要 `move`（`SpawnWith` 是 `'static` 的），所以给它一份**影子副本**：
+    // 外层下面还要用 `prefix` 给几个节点命名。
+    let pip_prefix = prefix.clone();
     let faction = slot.faction();
     (
         Name::new(format!("{prefix}Info")),
@@ -127,6 +153,47 @@ fn slot_content(font: &Handle<Font>, slot: PanelSlot) -> impl Bundle {
             ),
             status_bar(font, PanelBar::Hp(slot), HP_COLOR),
             status_bar(font, PanelBar::En(slot), EN_COLOR),
+            // **反制资源**（#52）：`FOCUS 3 / 3` + 三个点。它此前是唯一没有读数的资源，
+            // 而它是"能不能抢在对方出手前动起来"的唯一依据。
+            (
+                Name::new(format!("{prefix}FocusLine")),
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    ..default()
+                },
+                children![
+                    (
+                        Name::new(format!("{prefix}FocusText")),
+                        hud_text_tinted(font, 11.0, "FOCUS -", FOCUS_PIP_ON),
+                        PanelText::Focus(slot),
+                    ),
+                    (
+                        Name::new(format!("{prefix}FocusPips")),
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(4.0),
+                            ..default()
+                        },
+                        Children::spawn(SpawnWith(move |parent: &mut ChildSpawner| {
+                            for index in 0..FOCUS_PIPS {
+                                parent.spawn((
+                                    Name::new(format!("{pip_prefix}Focus{index}")),
+                                    PanelFocusPip { slot, index },
+                                    Node {
+                                        width: Val::Px(10.0),
+                                        height: Val::Px(10.0),
+                                        border_radius: BorderRadius::all(Val::Px(2.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(FOCUS_PIP_OFF),
+                                ));
+                            }
+                        })),
+                    ),
+                ],
+            ),
             (
                 Name::new(format!("{prefix}Action")),
                 hud_text(font, 11.0, "act: -"),
@@ -194,6 +261,11 @@ pub fn unit_panel(font: &Handle<Font>, portrait: Handle<Image>) -> impl Bundle {
 ///
 /// 行**不是**逐行绝对定位的：那样每加一行内容就要改一次行高常量，忘了就重叠。
 /// 交给 flex 之后"几行、多高"由内容自己决定——多一行字数也不会撞上。
+///
+/// ⚠️ **不用 `ColumnReverse`**：它会把**主轴的起点**也翻过来，于是列的第一个子节点
+/// 贴底、**最后一个贴顶**——想在最上面加一行"还有 N 个"就得把生成顺序整个反过来读
+/// （相邻两行同宽时看不出来，但读起来是反的）。改成 `Column` + `justify_content: End`
+/// 同样贴着底边长，而**生成顺序就是视觉顺序**。
 pub fn enemy_column() -> impl Bundle {
     (
         Name::new("EnemyPanels"),
@@ -205,12 +277,37 @@ pub fn enemy_column() -> impl Bundle {
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(14.0),
-            // 列从底边长上去：`column_reverse` 让**第一个**子节点贴底
             bottom: Val::Px(14.0),
-            flex_direction: FlexDirection::ColumnReverse,
+            flex_direction: FlexDirection::Column,
+            // 贴着底边长：行数变化时整列向上扩，底边不动
+            justify_content: JustifyContent::End,
             row_gap: Val::Px(ENEMY_ROW_GAP),
+            // ⚠️ **显式上限**：满池（`MAX_ENEMY_ROWS` 行）+ 溢出计数行。
+            // 不写这个的话，"几行"就由内容撑——一旦行数或行高变了，整列会长进
+            // 它正上方的战斗日志里（实测过：`Enemy2Row` 压住 `COMBAT LOG` 标题）。
+            // 有测试钉住这个高度 ≥ 满池所需的量。
+            max_height: Val::Px(ENEMY_COLUMN_MAX_HEIGHT),
             ..default()
         },
+    )
+}
+
+/// 溢出计数那一行（`还有 2 个`）——放在**列的最上面**（生成顺序上排最后）。
+///
+/// 它是 [`PanelText::EnemyOverflow`]，没有溢出时整行 `display: None`。
+/// ⚠️ 它的高度**不参与行池**：行池只建 `MAX_ENEMY_ROWS` 个 `UnitPanel`，
+/// 这一行是额外的第 N+1 个节点（有测试钉住"行池大小 == MAX_ENEMY_ROWS"）。
+pub fn enemy_overflow_row(font: &Handle<Font>) -> impl Bundle {
+    (
+        Name::new("EnemyOverflow"),
+        Node {
+            width: Val::Px(PANEL_WIDTH),
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+            display: Display::None,
+            ..default()
+        },
+        hud_text_tinted(font, 11.0, "", Color::srgb(0.95, 0.72, 0.45)),
+        PanelText::EnemyOverflow,
     )
 }
 
@@ -247,6 +344,64 @@ pub fn enemy_row(font: &Handle<Font>, index: usize) -> impl Bundle {
 pub const ENEMY_ROW_GAP: f32 = 6.0;
 /// 一行敌人的**最小高度**（像素）。
 ///
-/// 内容量：状态行 / 洞察力读数 / HP 条 / EN 条 / 行动行 = 五行。
+/// 内容量：状态行 / Focus 行 / 洞察力读数 / HP 条 / EN 条 / 行动行。
 /// 自动高度量不准文字（`ComputedNode` 里文本节点报 0），所以给一个下限兜住。
 pub const ENEMY_ROW_MIN_HEIGHT: f32 = 96.0;
+/// 溢出计数行的高度（像素）：一行 11px 文字 + 上下 3px 内边距。
+pub const ENEMY_OVERFLOW_HEIGHT: f32 = 24.0;
+/// 敌人列的高度上限（像素）：满池 + 溢出行 + 行间距。
+///
+/// **一处真相**：它必须 ≥ 下列各项之和（有测试钉住），否则满池时最后一行会被裁掉。
+pub const ENEMY_COLUMN_MAX_HEIGHT: f32 = MAX_ENEMY_ROWS as f32 * ENEMY_ROW_MIN_HEIGHT
+    + ENEMY_OVERFLOW_HEIGHT
+    + (MAX_ENEMY_ROWS as f32) * ENEMY_ROW_GAP;
+
+/// 战斗日志面板底边的高度（像素）：**敌人列上限 + 底部留白 + 一点间隙**。
+///
+/// **为什么放在这里而不是 `log_panel.rs`**：这个数由敌人面板的高度决定，
+/// 而"敌人面板有多高"是这一层说了算。日志那一侧只消费它——
+/// 反过来（日志自己写一个数）就会在敌人面板长高时静默重叠（踩过）。
+pub const LOG_BOTTOM_CLEARANCE: f32 = 14.0 + ENEMY_COLUMN_MAX_HEIGHT + 8.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 敌人列的高度上限**装得下满池**（否则最后一行会被裁掉）。
+    #[test]
+    fn the_enemy_column_can_hold_a_full_pool() {
+        let needed = MAX_ENEMY_ROWS as f32 * ENEMY_ROW_MIN_HEIGHT
+            + (MAX_ENEMY_ROWS as f32) * ENEMY_ROW_GAP
+            + ENEMY_OVERFLOW_HEIGHT;
+        assert_eq!(
+            ENEMY_COLUMN_MAX_HEIGHT, needed,
+            "上限就是「满池 + 溢出行 + 行间距」——改任一项都要同步改它"
+        );
+    }
+
+    /// **战斗日志必须让开敌人列**（实测回归：`Enemy2Row` 曾经压住 `COMBAT LOG`）。
+    ///
+    /// 两块都靠右：日志在敌人行的**正上方**。它们的净空由这一个常量保证，
+    /// 所以只要这里的算式成立，任何行数都不会重叠。
+    #[test]
+    fn the_combat_log_clears_the_enemy_column() {
+        // 日志底边 ≥ 敌人列底边（14）+ 列高（+ 8px 间隙）
+        assert_eq!(
+            LOG_BOTTOM_CLEARANCE,
+            14.0 + ENEMY_COLUMN_MAX_HEIGHT + 8.0,
+            "日志底边必须由敌人列的高度算出来，不能写死一个数"
+        );
+    }
+
+    /// 一行敌人的内容量变了（加了 Focus 行）之后，最小高度也得跟着够——
+    /// 它量不准文字（`ComputedNode` 里文本节点报 0），所以只能靠这个下限兜住。
+    #[test]
+    fn a_row_is_tall_enough_for_its_content() {
+        // 六行内容：状态行 / Focus 行 / 洞察力 / HP / EN / 行动行，每行约 13px
+        let needed = 6.0 * 13.0;
+        assert!(
+            ENEMY_ROW_MIN_HEIGHT >= needed,
+            "行高 {ENEMY_ROW_MIN_HEIGHT} 装不下六行文字（约 {needed}）"
+        );
+    }
+}

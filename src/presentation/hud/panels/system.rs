@@ -10,13 +10,13 @@ use crate::combat::Ammo;
 use crate::combat::defense::{Dodging, Parrying, Stamina};
 use crate::combat::{Armor, AttackRange, Faction, Health};
 use crate::movement::{Cell, Jumping};
-use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, ScheduledAction};
+use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, Focus, ScheduledAction};
 
 use super::super::HudCache;
 use super::model::{PanelSlot, UnitPanels, UnitRow, insight_of};
-use super::scene::{PanelBar, PanelText, UnitPanel};
+use super::scene::{FOCUS_PIP_OFF, FOCUS_PIP_ON, PanelBar, PanelFocusPip, PanelText, UnitPanel};
 
-/// 单位快照查询（实体 + 阵营 + 血量 + 格 + 位姿 + 精力）。
+/// 单位快照查询（实体 + 阵营 + 血量 + 格 + 位姿 + 精力 + 弹药 + 反制资源）。
 type UnitQuery<'w, 's> = Query<
     'w,
     's,
@@ -28,6 +28,7 @@ type UnitQuery<'w, 's> = Query<
         &'static Transform,
         Option<&'static Stamina>,
         Option<&'static Ammo>,
+        Option<&'static Focus>,
     ),
 >;
 
@@ -47,6 +48,8 @@ pub fn update_unit_panels_system(
     // 三个查询都碰 `Node` / `Text`，用标记组件两两互斥（否则 Bevy 报 B0001）
     mut bars: Query<(&PanelBar, &mut Node), Without<UnitPanel>>,
     mut texts: Query<(&PanelText, &mut Text)>,
+    // Focus 圆点：只改颜色（池子开局就建好了）
+    mut pips: Query<(&PanelFocusPip, &mut BackgroundColor), Without<PanelText>>,
     mut rows: Query<(&UnitPanel, &mut Node), Without<PanelBar>>,
     // 玩家那条洞察力行**藏起来**（它没有可读项，而面板高度是固定的）
     mut insight_lines: InsightLineQuery<'_, '_>,
@@ -67,11 +70,12 @@ pub fn update_unit_panels_system(
     let rows_data: Vec<UnitRow> = units
         .iter()
         .map(
-            |(entity, faction, health, cell, transform, stamina, ammo)| UnitRow {
+            |(entity, faction, health, cell, transform, stamina, ammo, focus)| UnitRow {
                 faction: *faction,
                 health: *health,
                 stamina: stamina.copied(),
                 ammo: ammo.copied(),
+                focus: focus.copied(),
                 cell: *cell,
                 position: transform.translation,
                 slot: slots.get(entity).copied().unwrap_or_default(),
@@ -122,12 +126,23 @@ pub fn update_unit_panels_system(
     }
 
     for (label, mut node) in &mut insight_lines {
-        if let PanelText::Insight(slot) = label {
-            node.display = if matches!(slot, PanelSlot::Enemy(_)) {
-                Display::Flex
-            } else {
-                Display::None
-            };
+        match label {
+            PanelText::Insight(slot) => {
+                node.display = if matches!(slot, PanelSlot::Enemy(_)) {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
+            }
+            // 溢出计数：有敌人没画下才显示（见 `docs/backlog/hud.md` 的 #61）
+            PanelText::EnemyOverflow => {
+                node.display = if panels.dropped_enemies > 0 {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
+            }
+            _ => {}
         }
     }
 
@@ -143,9 +158,23 @@ pub fn update_unit_panels_system(
             PanelText::Hp(slot) => panels.hp_text(*slot),
             PanelText::En(slot) => panels.stamina_text(*slot),
             PanelText::State(slot) => panels.state_line(*slot),
+            // 反制资源：玩家与敌人都读（敌人也会花 Focus 闪避）
+            PanelText::Focus(slot) => panels.focus_text(*slot),
             // 洞察力读数：玩家格没有可读项——它是空的，而且面板本来就满了
             PanelText::Insight(slot) => panels.insight_line(*slot),
+            // 溢出计数：中文（它陈述的是战斗事实，与日志同族）
+            PanelText::EnemyOverflow => panels.overflow_line(),
         };
+    }
+
+    // Focus 圆点：亮 = 还有余量，暗 = 已经花掉（与 `FOCUS 2 / 3` 同一个真相）
+    for (pip, mut color) in &mut pips {
+        let lit = panels
+            .focus_pips(pip.slot)
+            .get(pip.index)
+            .copied()
+            .unwrap_or(false);
+        color.0 = if lit { FOCUS_PIP_ON } else { FOCUS_PIP_OFF };
     }
 }
 

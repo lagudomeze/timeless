@@ -15,8 +15,14 @@
 //! | `Idle { intent: Some(..) }` | 已决定、但这一手还没排进时间轴 | 无 |
 //! | `Executing { until }` | 这一手在时间轴上，忙到 `until` | 有（前摇中）/ 已销毁（后摇中） |
 //!
-//! 判据只有一个（[`DecisionSlot::ready`]）：**这个单位此刻算不算「已经决定了」**。
+//! 判据只有一个（[`DecisionSlot::decided`]）：**这个单位此刻算不算「已经决定了」**。
 //! 暂停断言（等玩家决策）只看它。
+//!
+//! ⚠️ **它以前叫 `ready`，与"能决策了吗"撞名**——HUD 面板因此把它当成
+//! 「现在轮到你了吗」来读，于是**把最重要的两条信息读反了**：玩家空闲（正等你）显示
+//! `busy`，敌人前摇中（马上要打你）显示 `ready`（见 `docs/backlog/hud.md` 的 #47）。
+//! 现在两个判据的名字各自自解释：[`is_idle`](DecisionSlot::is_idle) 问
+//! 「能不能占这个槽」、`decided` 问「要不要等他」。
 //!
 //! 转换只有四条路，每条都只有一个作者：
 //!
@@ -122,7 +128,11 @@ impl DecisionSlot {
     /// - `Executing` → 是（他正忙着一手，别等他）；
     /// - `Idle { intent: Some }` → 是（他决定了，只是还没排期）；
     /// - `Idle { intent: None }` → **否**（正等他决策，世界该停下来）。
-    pub fn ready(&self) -> bool {
+    ///
+    /// ⚠️ **名字是 `decided` 而不是 `ready`**：`ready` 会被读成"轮到我了吗"，
+    /// 而它回答的恰好相反（"他要不要我等他"）。HUD 面板踩过这个坑（#47）。
+    /// 想知道"现在能不能声明行动"请用 [`Self::is_idle`]。
+    pub fn decided(&self) -> bool {
         match self {
             Self::Executing { .. } => true,
             Self::Idle { intent } => intent.is_some(),
@@ -131,7 +141,7 @@ impl DecisionSlot {
 
     /// 现在能不能声明行动（= 空闲**且**还没有意图）。
     ///
-    /// 这是声明系统的入口判据；与 [`Self::ready`] 不同：`ready` 问"要不要等他"，
+    /// 这是声明系统的入口判据；与 [`Self::decided`] 不同：`decided` 问"要不要等他"，
     /// 它问"能不能占这个槽"。
     pub fn is_idle(&self) -> bool {
         matches!(self, Self::Idle { intent: None })
@@ -279,7 +289,7 @@ pub struct InputDriven;
 
 /// 有 `InputDriven`（玩家）**还没决定**吗 → 让世界停下来等他。
 ///
-/// 判据是 [`DecisionSlot::ready`]（"决定了没有"），不是"槽空不空"：
+/// 判据是 [`DecisionSlot::decided`]（"决定了没有"），不是"槽空不空"：
 /// 声明之后槽进 `Executing`，那时他已经决定了，世界不该再等他。
 ///
 /// 这是「无回合」里唯一的时间门控需求：敌人不等玩家，玩家一空闲，世界就停。
@@ -386,20 +396,20 @@ mod tests {
     /// 调度器的测试不该依赖任何具体载荷：自己造一个节奏。
     const TEST_TIMING: ActionTiming = ActionTiming::new(0.2, 0.3, 3);
 
-    /// 出生就是「空闲、还没决定」——**注意这时 `ready()` 是 false**：
-    /// `ready` 问的是"该不该等他"，而空闲的人正是要等的那一个。
+    /// 出生就是「空闲、还没决定」——**注意这时 `decided()` 是 false**：
+    /// 它问的是"该不该等他"，而空闲的人正是要等的那一个。
     #[test]
-    fn a_fresh_slot_is_idle_and_not_ready() {
+    fn a_fresh_slot_is_idle_and_not_decided() {
         let fresh = DecisionSlot::default();
         assert_eq!(fresh, DecisionSlot::Idle { intent: None });
         assert!(fresh.is_idle(), "空闲且没意图 → 可以声明");
-        assert!(!fresh.ready(), "还没决定 → 世界该等他");
+        assert!(!fresh.decided(), "还没决定 → 世界该等他");
     }
 
-    /// 两个判据问的是不同的事，别混：
+    /// 两个判据问的是不同的事，别混（#47 就是混了它们才把面板读反）：
     ///
     /// - `is_idle`：**能不能占这个槽**（声明系统的入口）
-    /// - `ready`：**要不要等他**（暂停断言）
+    /// - `decided`：**要不要等他**（暂停断言）
     ///
     /// `Executing` 两边都是"占着 + 别等"；`Idle { Some }` 是"占着 + 别等"
     /// （他决定了，只是还没排期）——这时 `is_idle` 为假，所以不会有人挤掉他的意图。
@@ -407,7 +417,7 @@ mod tests {
     fn the_two_predicates_answer_different_questions() {
         let executing = DecisionSlot::Executing { until: 1.0 };
         assert!(!executing.is_idle(), "在时间轴上 → 不能声明");
-        assert!(executing.ready(), "忙着一手 → 别等他");
+        assert!(executing.decided(), "忙着一手 → 别等他");
 
         let decided = DecisionSlot::Idle {
             intent: Some(Intent {
@@ -416,7 +426,7 @@ mod tests {
             }),
         };
         assert!(!decided.is_idle(), "已经有意图了 → 不能再声明");
-        assert!(decided.ready(), "已经决定了 → 别等他");
+        assert!(decided.decided(), "已经决定了 → 别等他");
     }
 
     /// 后摇取「一个后摇」与「效果还要多久」里更晚的那个，**基准是 `execute_at`**。

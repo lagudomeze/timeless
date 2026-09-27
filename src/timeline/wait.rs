@@ -227,7 +227,7 @@ mod tests {
             !slot.is_idle(),
             "等待也要占住槽（这正是 awaiting 消失的原因），实际 {slot:?}"
         );
-        assert!(slot.ready(), "声明之后就算「已经决定了」");
+        assert!(slot.decided(), "声明之后就算「已经决定了」");
     }
 
     /// **时长真的来自配置**：把 `WaitConfig` 调成 3 秒，声明出来的行动就忙 3 秒。

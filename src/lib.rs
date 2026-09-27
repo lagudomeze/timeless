@@ -1348,7 +1348,7 @@ mod tests {
             app.update();
         }
         assert!(
-            slot_of(&app, player).ready(),
+            slot_of(&app, player).decided(),
             "等待也要占槽：声明之后他就算「已经决定了」"
         );
         let labels = app.world().resource::<PauseReasons>().labels();
@@ -2088,6 +2088,72 @@ mod tests {
                 "{type_path} 没进反射表：`DecisionSlot` 读出来会缺内容"
             );
         }
+    }
+
+    /// **诊断锚点全都在反射表里**：BRP 读不到的东西等于不存在。
+    ///
+    /// 这条钉的是"下次调试不必再从面板文字倒推"——`docs/backlog/clock.md` 的 #62
+    /// 记的就是这个摩擦：想查"世界为什么冻着"与"反应窗口表态了没有"，
+    /// 结果两个都读不到，只能看状态行文字猜。
+    ///
+    /// 与上面的 `the_combat_state_is_visible_over_brp` 分开：那条守战斗状态，
+    /// 这条守**冻结设施 + 反应窗口 + 表现层资源**。删掉任意一个派生都会转红。
+    #[test]
+    fn the_diagnostic_anchors_are_reflected() {
+        let mut app = crate::test_support::headless_app();
+        app.update(); // Startup：组装 HUD、相机、单位
+
+        use bevy::ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectResource};
+
+        let registry = app.world().resource::<AppTypeRegistry>().0.clone();
+        let registry = registry.read();
+        let has_component = |path: &str| {
+            registry
+                .get_with_type_path(path)
+                .is_some_and(|registration| registration.data::<ReflectComponent>().is_some())
+        };
+        let has_resource = |path: &str| {
+            registry
+                .get_with_type_path(path)
+                .is_some_and(|registration| registration.data::<ReflectResource>().is_some())
+        };
+
+        // 组件：威胁怎么走、窗口开着没、当前选中的技能
+        for type_path in [
+            "app::combat::reaction::components::ReactionSlot",
+            "app::combat::reaction::components::Threatens",
+            "app::combat::reaction::components::TargetCell",
+            "app::combat::reaction::components::Threatened",
+        ] {
+            assert!(
+                has_component(type_path),
+                "{type_path} 没作为组件注册：BRP 的 world.query 会静默返回空，看着像「没生成」"
+            );
+        }
+
+        // 资源：世界为什么冻着（手动暂停那一半）、日志原文、素材句柄、主相机
+        for type_path in [
+            "app::clock::ManualPause",
+            "app::clock::RememberedPauseReasons",
+            "app::combat::attack::menu::MenuSelection",
+            "app::presentation::log::BattleLog",
+            "app::presentation::unit_sprite::UnitSprites",
+        ] {
+            assert!(
+                has_resource(type_path),
+                "{type_path} 没作为资源注册：BRP 的 world.get_resources 会报 unknown type"
+            );
+        }
+
+        // 主相机是按相机截图的入口，它躺在实体上
+        assert!(
+            has_component("app::presentation::components::MainCamera"),
+            "MainCamera 没注册：brp_extras_screenshot 的 camera 参数没法按名字/组件找它"
+        );
+
+        // ⚠️ `PauseReasons` **故意**不在这里：它内含 `HashSet`，反射要额外支持；
+        // 诊断读的是它的只读镜像 `RememberedPauseReasons`（别为了能看而改数据结构）。
+        // 因此上面那一串里有镜像、没有它——这不是漏注册。
     }
 
     /// 整机装配冒烟：跨领域流水线（含帧末时钟）跑得起来，资源都在位。

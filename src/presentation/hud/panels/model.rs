@@ -12,7 +12,7 @@ use crate::combat::Ammo;
 use crate::combat::defense::Stamina;
 use crate::combat::{Faction, Health};
 use crate::movement::Cell;
-use crate::timeline::DecisionSlot;
+use crate::timeline::{DecisionSlot, Focus};
 
 /// 数值 → 0..=1 的比例（`max <= 0` 视为空）。
 pub fn bar_fraction(current: f32, max: f32) -> f32 {
@@ -36,6 +36,11 @@ pub struct UnitRow {
     pub stamina: Option<Stamina>,
     /// 弹药（远程 / 重击那条线）：`None` = 这个单位没有弹药组件
     pub ammo: Option<Ammo>,
+    /// **反制资源 Focus**：`None` = 这个单位没有 Focus 组件（轻量夹具里的单位）。
+    ///
+    /// 它此前是**唯一没有读数的玩家资源**（见 `docs/backlog/hud.md` 的 #52）——
+    /// 而它是威胁窗口里唯一能"抢在对方出手前动起来"的手段，玩家却只能靠猜。
+    pub focus: Option<Focus>,
     pub cell: Cell,
     pub position: Vec3,
     /// 决策槽：`Empty` = 现在能决策（面板显示 `ready`）
@@ -123,6 +128,14 @@ impl PanelSlot {
 /// （有测试钉住"行池大小 = 这个常量"）。
 pub const MAX_ENEMY_ROWS: usize = 3;
 
+/// 面板上画几个 Focus 圆点。
+///
+/// **能写死是因为它是定长数组**（`Node` 池化的老规矩：开局建好、之后只改颜色）。
+/// 它是 `u32`，而数组长度要 `usize`，所以在这里转一次；
+/// 有测试钉住它与 [`crate::timeline::FOCUS_MAX`] 一致——将来把上限做成可配的，
+/// 那个测试会红，提醒"该改成按最大值建池了"。
+pub const FOCUS_PIPS: usize = crate::timeline::FOCUS_MAX as usize;
+
 impl Insight {
     /// 一行洞察力读数：`range 1 · break 3 · approach`。
     ///
@@ -162,12 +175,18 @@ pub struct UnitPanels {
     pub player: Option<UnitRow>,
     /// 按"离玩家最近"排好序的敌人，最多 [`MAX_ENEMY_ROWS`] 个
     pub enemies: Vec<UnitRow>,
+    /// **没画下的敌人有几个**（见 `docs/backlog/hud.md` 的 #61）。
+    ///
+    /// 行池有上限，超出的必须**说出来**——静默丢掉会让玩家以为看全了，
+    /// 而"场上还有几个敌人"正是他决定"先打谁 / 该不该撤"的依据。
+    pub dropped_enemies: usize,
 }
 
 impl UnitPanels {
     /// 把这一帧的单位读数整理成面板要画的那几格。
     ///
-    /// 规则只有一条：**敌人按"离玩家最近"排序**，取前 [`MAX_ENEMY_ROWS`] 个。
+    /// 规则只有一条：**敌人按"离玩家最近"排序**，取前 [`MAX_ENEMY_ROWS`] 个，
+    /// 剩下的记进 [`Self::dropped_enemies`]（画面右下角报一个数）。
     /// 判据完全由数据决定（不含遍历顺序），所以同一份战场状态永远得到同一个面板
     /// ——之前这里是"后遍历到的覆盖前面"，而 **ECS 查询顺序不保证**，
     /// 两个敌人时显示谁全凭运气，看上去像血条自己在跳。
@@ -185,8 +204,27 @@ impl UnitPanels {
             .copied()
             .collect();
         enemies.sort_by(|a, b| enemy_order(a, b, player.as_ref()));
+        // 先数出被截掉几个，再截断（顺序反了就只能得到 0）
+        let dropped_enemies = enemies.len().saturating_sub(MAX_ENEMY_ROWS);
         enemies.truncate(MAX_ENEMY_ROWS);
-        Self { player, enemies }
+        Self {
+            player,
+            enemies,
+            dropped_enemies,
+        }
+    }
+
+    /// 溢出计数那一行：`还有 2 个`；没有溢出时返回空串（那一行整行藏起来）。
+    ///
+    /// ⚠️ **中文**：它陈述的是**战斗事实**（场上还有几个敌人），
+    /// 与战斗日志、威胁读数同一类文案（界面控件才是英文）。
+    /// 新增的汉字会被 `tests/assets.rs` 的字体覆盖验收逐个查 `cmap`。
+    pub fn overflow_line(&self) -> String {
+        if self.dropped_enemies == 0 {
+            String::new()
+        } else {
+            format!("还有 {} 个", self.dropped_enemies)
+        }
     }
 
     /// 玩家位置（敌人行要拿它算距离）。
@@ -250,6 +288,30 @@ impl UnitPanels {
             .unwrap_or_default()
     }
 
+    /// **Focus 读数行**：`FOCUS 2 / 3`；没有 Focus 组件时写 `FOCUS -`
+    /// （与精力条用 `-` 表示缺组件同形：缺数据不该看起来像满的）。
+    pub fn focus_text(&self, slot: PanelSlot) -> String {
+        match self.of(slot).and_then(|row| row.focus) {
+            Some(focus) => format!("FOCUS {} / {}", focus.current, focus.max),
+            None => "FOCUS -".to_string(),
+        }
+    }
+
+    /// Focus 的**三点式**读数：`[bool; FOCUS_PIPS]`，用掉的那一点压暗。
+    ///
+    /// 为什么是圆点而不是数字：它要在一眼之内读完（见 #52），
+    /// 而 `FOCUS 2 / 3` 那种写法需要"读数字 → 心算还剩几个 → 换算成还能买几次"。
+    pub fn focus_pips(&self, slot: PanelSlot) -> [bool; FOCUS_PIPS] {
+        let mut pips = [false; FOCUS_PIPS];
+        let Some(focus) = self.of(slot).and_then(|row| row.focus) else {
+            return pips; // 没有组件：全灭（配合 `FOCUS -` 的文案）
+        };
+        for (index, pip) in pips.iter_mut().enumerate() {
+            *pip = (index as u32) < focus.current;
+        }
+        pips
+    }
+
     /// 状态行文本（只有敌人行会带上到玩家的距离）。
     pub fn state_line(&self, slot: PanelSlot) -> String {
         let Some(row) = self.of(slot) else {
@@ -278,7 +340,7 @@ impl UnitRow {
             self.defense_label().to_string()
         };
         let mut line = format!(
-            "{name} · {defense} · cell ({:>2},{:>2})",
+            "{name} · {defense} · cell ({},{})",
             self.cell.x, self.cell.z
         );
         // 有效护甲（基础 + 装备加成）：装备一穿一脱，这个数立刻跟着变
@@ -299,12 +361,17 @@ impl UnitRow {
     }
 
     /// 防御 / 就绪状态：防御标记优先。
+    ///
+    /// ⚠️ **判据是 `is_idle()`（"现在能决策"），不是 `decided()`**——后者问的是
+    /// "要不要等他"，语义正好相反。这里曾经写成 `ready()`（现已改名 `decided()`），
+    /// 于是玩家空闲时显示 `busy`、敌人前摇中显示 `ready`，**把两条最重要的信息读反了**
+    /// （见 `docs/backlog/hud.md` 的 #47）。
     fn defense_label(&self) -> &'static str {
         if self.dodging {
             "dodging"
         } else if self.parrying {
             "parrying"
-        } else if self.slot.ready() {
+        } else if self.slot.is_idle() {
             "ready"
         } else {
             "busy"
@@ -344,6 +411,7 @@ mod tests {
             health: Health::new(50),
             stamina: Some(Stamina::new(3)),
             ammo: Some(Ammo::new(3)),
+            focus: Some(Focus { current: 3, max: 3 }),
             cell,
             position,
             slot: DecisionSlot::Idle { intent: None },
@@ -371,9 +439,52 @@ mod tests {
             line.contains("dodging"),
             "防御标记优先于 ready/busy：{line}"
         );
-        assert!(line.contains("cell ( 3, 3)"), "{line}");
+        assert!(line.contains("cell (3,3)"), "{line}");
         assert!(line.contains("dist 7.1"), "{line}");
         assert!(line.contains("approach"), "{line}");
+    }
+
+    /// **`ready` / `busy` 说的是「现在轮到你了吗」——两个方向都断言**（#47）。
+    ///
+    /// 这条就是那个 bug 的守门测试：判据曾经写成 `decided()`（"要不要等他"），
+    /// 于是**玩家空闲时显示 `busy`、敌人前摇中显示 `ready`**，把两条最重要的
+    /// 信息读反了。只断言一个方向抓不住它——空闲那一半才是最容易漏的。
+    #[test]
+    fn an_idle_unit_reads_ready_and_a_busy_one_reads_busy() {
+        // 空闲且没有意图 = 正等它决策 → 面板必须说"就绪"
+        let idle = row(Faction::Player, Cell::new(1, 1), Vec3::ZERO);
+        assert_eq!(idle.slot, DecisionSlot::Idle { intent: None });
+        assert!(
+            idle.state_line("PLAYER", None).contains("· ready ·"),
+            "等你决策的单位要显示 ready：{}",
+            idle.state_line("PLAYER", None)
+        );
+
+        // 在时间轴上（前摇中）= 轮不到它 → 面板必须说"忙"
+        let mut busy = row(Faction::Enemy, Cell::new(3, 3), Vec3::ZERO);
+        busy.slot = DecisionSlot::Executing {
+            until: BUSY_SENTINEL,
+        };
+        assert!(
+            busy.state_line("ENEMY 1", None).contains("· busy ·"),
+            "正在前摇的敌人要显示 busy：{}",
+            busy.state_line("ENEMY 1", None)
+        );
+
+        // 反向确认：判据不是"槽里有没有东西"，而是"能不能决策"。
+        // `Idle { intent: Some }` 是"决定了但还没排期"——它同样轮不到你。
+        let mut declared = row(Faction::Player, Cell::new(1, 1), Vec3::ZERO);
+        declared.slot = DecisionSlot::Idle {
+            intent: Some(crate::timeline::Intent {
+                ability: crate::skills::AbilityId::Move,
+                target: crate::timeline::Target::None,
+            }),
+        };
+        assert!(
+            declared.state_line("PLAYER", None).contains("· busy ·"),
+            "已经决定了（只是还没排期）也要显示 busy：{}",
+            declared.state_line("PLAYER", None)
+        );
     }
 
     /// **有效护甲是面板上的一个读数**：装备一穿一脱，这个数跟着变。
@@ -577,5 +688,85 @@ mod tests {
                 "第 {index} 行应当是按距离排的第 {index} 个敌人"
             );
         }
+    }
+
+    /// **Focus 有三点式读数，用掉的压暗**（#52）。
+    ///
+    /// 三个方向都断言：满格 / 用了 1 点 / 完全没有组件。
+    /// 最后那一种是"缺数据"，必须**全灭 + `FOCUS -`**，
+    /// 不能看起来像满的（与精力条缺组件时显示 `-` 同一条规矩）。
+    #[test]
+    fn focus_pips_mark_the_spent_points() {
+        let mut full = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        full.focus = Some(Focus { current: 3, max: 3 });
+        let panels = UnitPanels::from_rows(&[full]);
+        assert_eq!(
+            panels.focus_pips(PanelSlot::Player),
+            [true, true, true],
+            "满 Focus 三点全亮"
+        );
+        assert_eq!(panels.focus_text(PanelSlot::Player), "FOCUS 3 / 3");
+
+        let mut spent = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        spent.focus = Some(Focus { current: 1, max: 3 });
+        let panels = UnitPanels::from_rows(&[spent]);
+        assert_eq!(
+            panels.focus_pips(PanelSlot::Player),
+            [true, false, false],
+            "只剩 1 点：只有第一点亮"
+        );
+        assert_eq!(panels.focus_text(PanelSlot::Player), "FOCUS 1 / 3");
+
+        let mut none = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        none.focus = None;
+        let panels = UnitPanels::from_rows(&[none]);
+        assert_eq!(
+            panels.focus_pips(PanelSlot::Player),
+            [false, false, false],
+            "没有 Focus 组件 → 全灭"
+        );
+        assert_eq!(
+            panels.focus_text(PanelSlot::Player),
+            "FOCUS -",
+            "缺组件要写 `-`，不能看起来像满的"
+        );
+    }
+
+    /// **圆点数与 `Focus::max` 是一处真相**。
+    ///
+    /// 池化要求定长数组（开局建好、之后只改颜色），所以这里写死了 `FOCUS_PIPS`。
+    /// 将来把上限做成可配的，这条会红——提醒"该改成按最大值建池了"，
+    /// 而不是静默少画一个点。
+    #[test]
+    fn the_pip_count_matches_the_focus_ceiling() {
+        assert_eq!(
+            FOCUS_PIPS,
+            crate::timeline::FOCUS_MAX as usize,
+            "面板的圆点池大小必须跟住 Focus 的上限"
+        );
+    }
+
+    /// **超出行池的敌人要报一个数**（#61）：静默丢掉会让玩家以为看全了。
+    #[test]
+    fn enemies_beyond_the_row_pool_report_how_many_were_dropped() {
+        let player = row(Faction::Player, Cell::new(0, 0), Vec3::ZERO);
+        let mut rows = vec![player];
+        for index in 0..MAX_ENEMY_ROWS + 2 {
+            let distance = (index + 1) as f32 * 2.0;
+            rows.push(row(
+                Faction::Enemy,
+                Cell::new(index as i32 + 1, 0),
+                Vec3::new(distance, 0.0, 0.0),
+            ));
+        }
+
+        let panels = UnitPanels::from_rows(&rows);
+        assert_eq!(panels.dropped_enemies, 2, "多出来的 2 个要记下来");
+        assert_eq!(panels.overflow_line(), "还有 2 个");
+
+        // 没超出时不显示那一行（而不是显示"还有 0 个"）
+        let few = UnitPanels::from_rows(&rows[..MAX_ENEMY_ROWS + 1]);
+        assert_eq!(few.dropped_enemies, 0);
+        assert_eq!(few.overflow_line(), "", "没有溢出就整行不显示");
     }
 }
