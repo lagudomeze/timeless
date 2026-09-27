@@ -78,7 +78,7 @@
 
 ## 还没做（本文件里剩下的）
 
-- [ ] **[P2][bug] 敌人面板的 `act:` 行是「按阵营」而不是「按行」**（2026-09-27 实机发现）
+- [x] **[P2][bug] 敌人面板的 `act:` 行是「按阵营」而不是「按行」**（2026-09-27 已修）
       **现象**：三个敌人行（`MAX_ENEMY_ROWS = 3`）显示**同一句话**——都是"第一个敌人"
       的动作。实测证据：场上只有 **2** 个敌人时，第三个（空）行的 `ActionLabel`
       也在显示 `act: fireball (windup 0.3s)`；四个 `ActionLabel` 实体
@@ -90,15 +90,20 @@
       所以这是面板内部唯一一处"行列不对应"。
       **为什么现在才暴露**：两个敌人常常在做同样的事（同一套 AI、同样的距离），
       那时这个 bug 看不出来；要它们动作不同才显形。
-      **改法（下一轮直接照做）**：把动作文案**并进面板模型**，与其它读数同源——
-      ① `PanelText` 加 `Action(PanelSlot)`，`UnitRow` 加"当前动作名 + 剩余前摇"字段；
-      ② 面板系统在造 `UnitRow` 时算好它（它已经知道"行 → 实体"的映射，
-      也就是"离玩家最近"的排序）；③ 于是 `ActionLabel` 这个组件与
-      `update_action_labels_system` 可以整体删掉，`payload_name` 保持不动
-      （它已经是"面板与时间轴共用一套命名"的那一处真相源）。
-      ⚠️ **不要**只在 `update_action_labels_system` 里按距离重排一遍敌人——
-      那会把"离玩家最近的排序"这条规则复制成两份，必然漂移。
-      **验收**：两个敌人做**不同**动作时两行的 `act:` 不同；空行显示 `act: -`。
+      **改法（按计划执行）**：把动作文案**并进面板模型**，与其它读数同源——
+      ① `UnitRow` 加 `action: Option<ActionReadout>`（动作名 + 前摇剩余），
+      `PanelText` 加 `Action(PanelSlot)`，格式化落在
+      `UnitPanels::action_text(slot)`；② 面板系统在造 `UnitRow` 时按**实体**算出它
+      （它本来就有"行 → 实体"的映射）；③ `ActionLabel` 组件、
+      `ActionLabelCache`、`update_action_labels_system` **整体删除**；
+      `payload_name` / `PayloadQueries` 留下不动（它仍是"面板与时间轴共用一套命名"
+      的那处真相源）。
+      **副作用（好事）**：`update_unit_panels_system` 的参数因此到 17 个、
+      超过 Bevy 的 16 上限，于是把 `dodging` / `parrying` / `airborne` 三个只读标记
+      查询收成 `StateMarkers`（`SystemParam` 派生）——顺带让签名短了两行。
+      **验收**：`each_row_shows_its_own_action`（两个敌人不同动作 → 两行不同；
+      空行 `act: -`）+ 实机确认：空行从"显示别人的火球"变成 `act: -`，
+      两行各自读自己那行，布局不变。
 
 - [ ] **[P2][ux] 敌人面板可展开详情**（原 issue #59，`docs/insight.md` 第四节「乙」）
       **已做**：每行已有 `range 1 · break 1 · approach`。

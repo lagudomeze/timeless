@@ -13,7 +13,8 @@ use crate::movement::{Cell, Jumping};
 use crate::timeline::{ActionOf, ActionTiming, DecisionSlot, Focus, ScheduledAction};
 
 use super::super::HudCache;
-use super::model::{PanelSlot, UnitPanels, UnitRow, insight_of};
+use super::super::actions::PayloadQueries;
+use super::model::{ActionReadout, PanelSlot, UnitPanels, UnitRow, insight_of};
 use super::scene::{FOCUS_PIP_OFF, FOCUS_PIP_ON, PanelBar, PanelFocusPip, PanelText, UnitPanel};
 
 /// 单位快照查询（实体 + 阵营 + 血量 + 格 + 位姿 + 精力 + 弹药 + 反制资源）。
@@ -36,6 +37,17 @@ type UnitQuery<'w, 's> = Query<
 type InsightLineQuery<'w, 's> =
     Query<'w, 's, (&'static PanelText, &'static mut Node), (Without<UnitPanel>, Without<PanelBar>)>;
 
+/// 三个"此刻在做什么"的标记查询绑在一起。
+///
+/// 单独列出来是因为 **Bevy 一个系统最多 16 个参数**——加上 `PayloadQueries`
+/// 之后这个系统会到 17，所以把这三个只读标记查询收成一个（`SystemParam` 派生）。
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct StateMarkers<'w, 's> {
+    pub dodging: Query<'w, 's, (), With<Dodging>>,
+    pub parrying: Query<'w, 's, (), With<Parrying>>,
+    pub airborne: Query<'w, 's, (), With<Jumping>>,
+}
+
 /// 把 HP / EN / 状态行写进面板（玩家一格 + 敌人 **N** 行）。
 ///
 /// 敌人那一列是**行池**：每帧按"离玩家最近"的名次把前几行填满，
@@ -55,18 +67,20 @@ pub fn update_unit_panels_system(
     mut insight_lines: InsightLineQuery<'_, '_>,
     // 决策槽：面板只读它，不写
     slots: Query<&DecisionSlot>,
-    dodging: Query<(), With<Dodging>>,
-    parrying: Query<(), With<Parrying>>,
-    airborne: Query<(), With<Jumping>>,
+    markers: StateMarkers<'_, '_>,
     tactics: Query<&Tactic>,
     // 有效护甲 = 基础 + 装备加成：这里只问"是多少"，结构由 equipment 回答
     armors: Query<(&Armor, Option<&crate::equipment::EquipmentBonus>)>,
     // 洞察力读数：射程（单位属性）
     ranges: Query<&AttackRange>,
-    // 洞察力读数：**正在前摇的那一手**多难打断——只对敌人算（玩家看自己就够了）
-    actions: Query<(&ActionOf, &ActionTiming, &ScheduledAction)>,
+    // 洞察力读数：**正在前摇的那一手**多难打断——只对敌人算（玩家看自己就够了）；
+    // 顺便给 `act:` 行提供"行动实体 → 载荷名"的入口
+    actions: Query<(Entity, &ActionOf, &ActionTiming, &ScheduledAction)>,
+    // `act:` 行的载荷名：与时间轴悬停读数**共用**同一套命名（`payload_name`）
+    payloads: PayloadQueries<'_, '_>,
     now: Res<Time<Virtual>>,
 ) {
+    let now_seconds = now.elapsed_secs();
     let rows_data: Vec<UnitRow> = units
         .iter()
         .map(
@@ -79,9 +93,9 @@ pub fn update_unit_panels_system(
                 cell: *cell,
                 position: transform.translation,
                 slot: slots.get(entity).copied().unwrap_or_default(),
-                dodging: dodging.get(entity).is_ok(),
-                parrying: parrying.get(entity).is_ok(),
-                airborne: airborne.get(entity).is_ok(),
+                dodging: markers.dodging.get(entity).is_ok(),
+                parrying: markers.parrying.get(entity).is_ok(),
+                airborne: markers.airborne.get(entity).is_ok(),
                 tactic: tactics.get(entity).ok().copied(),
                 armor: armors
                     .get(entity)
@@ -92,10 +106,10 @@ pub fn update_unit_panels_system(
                         // 前摇中的那一手：`interrupt_resist` 只在"有那一手"时有意义
                         let pending = actions
                             .iter()
-                            .find(|(action_of, _, schedule)| {
-                                action_of.actor() == entity && schedule.pending(now.elapsed_secs())
+                            .find(|(_, action_of, _, schedule)| {
+                                action_of.actor() == entity && schedule.pending(now_seconds)
                             })
-                            .map(|(_, timing, _)| timing.interrupt_resist);
+                            .map(|(_, _, timing, _)| timing.interrupt_resist);
                         insight_of(
                             ranges.get(entity).ok().map(|range| range.0),
                             pending,
@@ -103,6 +117,17 @@ pub fn update_unit_panels_system(
                         )
                     })
                     .flatten(),
+                // 这一格挂着的行动：找**这个单位**名下那条还没落地的行动。
+                // 按 `entity` 找（也就是按行），不按阵营——多敌人时每行说自己的。
+                action: actions
+                    .iter()
+                    .find(|(_, action_of, _, _)| action_of.actor() == entity)
+                    .map(|(action_entity, _, _, schedule)| ActionReadout {
+                        name: payloads.name_of(action_entity),
+                        windup_left: schedule
+                            .pending(now_seconds)
+                            .then(|| (schedule.execute_at - now_seconds).max(0.0)),
+                    }),
             },
         )
         .collect();
@@ -162,6 +187,8 @@ pub fn update_unit_panels_system(
             PanelText::Focus(slot) => panels.focus_text(*slot),
             // 洞察力读数：玩家格没有可读项——它是空的，而且面板本来就满了
             PanelText::Insight(slot) => panels.insight_line(*slot),
+            // 这一格挂着的行动：**按行**读，多敌人时每行说自己的
+            PanelText::Action(slot) => panels.action_text(*slot),
             // 溢出计数：中文（它陈述的是战斗事实，与日志同族）
             PanelText::EnemyOverflow => panels.overflow_line(),
         };

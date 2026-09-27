@@ -60,6 +60,23 @@ pub struct UnitRow {
     /// 它把"信息即力量"落成看得见的数：射程决定"我站哪儿安全"，
     /// 打断抗性决定"该躲还是该抢一手打掉它"。
     pub insight: Option<Insight>,
+    /// **这一格当下挂着的行动**（面板那一行 `act:`）：`None` = 没有未落地的行动。
+    ///
+    /// ⚠️ 它必须**跟着行**走，不能按阵营取：面板的敌人列是**行池**，
+    /// 每行对应一个具体单位（按"离玩家最近"排序）。早先的实现在这里按阵营取
+    /// "第一个敌人"，于是三行显示同一句话、空行也在显示别人的动作
+    /// （2026-09-27 实机发现，见 [`docs/backlog/hud.md`](../../../../docs/backlog/hud.md)）。
+    pub action: Option<ActionReadout>,
+}
+
+/// 面板 `act:` 行要显示的东西（纯数据，由系统算好）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ActionReadout {
+    /// 载荷名（`move` / `fireball` / `wait` …）——与时间轴悬停读数**共用**
+    /// [`payload_name`](crate::presentation::hud::actions::payload_name) 这一处判据。
+    pub name: &'static str,
+    /// 前摇剩余秒数；`None` = 已经过了前摇（等落地），那时不标 `windup`。
+    pub windup_left: Option<f32>,
 }
 
 /// 一个敌人的**洞察力读数**（纯数据，由 `insight_of` 算出来）。
@@ -297,6 +314,21 @@ impl UnitPanels {
         }
     }
 
+    /// **这一格挂着的行动**：`act: fireball (windup 0.3s)` / `act: fireball` / `act: -`。
+    ///
+    /// 取数按**槽**（行），不按阵营——多敌人时每一行说自己的（见 [`UnitRow::action`]）。
+    pub fn action_text(&self, slot: PanelSlot) -> String {
+        match self.of(slot).and_then(|row| row.action) {
+            Some(action) => match action.windup_left {
+                // 前摇剩余秒数：信息层的"帧窗口细节"——还剩多久这一手就落地
+                Some(remaining) => format!("act: {} (windup {remaining:.1}s)", action.name),
+                None => format!("act: {}", action.name),
+            },
+            // 没有未落地的行动（空闲，或正在**后摇**里——后摇没有行动实体）
+            None => "act: -".to_string(),
+        }
+    }
+
     /// Focus 的**三点式**读数：`[bool; FOCUS_PIPS]`，用掉的那一点压暗。
     ///
     /// 为什么是圆点而不是数字：它要在一眼之内读完（见 #52），
@@ -442,6 +474,7 @@ mod tests {
             tactic: None,
             armor: Some(1),
             insight: None,
+            action: None,
         }
     }
 
@@ -634,6 +667,56 @@ mod tests {
         assert_eq!(panels.stamina_percent(empty), Val::Percent(0.0));
         // 越界的名次同样退回空值，不 panic
         assert_eq!(panels.state_line(PanelSlot::Enemy(99)), "");
+    }
+
+    /// **每一行说自己的行动**（2026-09-27 修的 bug）。
+    ///
+    /// 早先这一行按**阵营**取数（"第一个敌人"），于是敌人列的三行显示同一句话、
+    /// 空行也在显示别人的动作——而 HP / EN / Focus / Insight 都是按行取的，
+    /// 它是面板里唯一一处行列不对应。这条钉住"按行"：两个敌人做不同的事就显示
+    /// 不同的名字，没有行动的行显示 `act: -`。
+    #[test]
+    fn each_row_shows_its_own_action() {
+        let mut first = row(Faction::Enemy, Cell::new(3, 3), Vec3::ZERO);
+        first.action = Some(ActionReadout {
+            name: "fireball",
+            windup_left: Some(0.3),
+        });
+        let mut second = row(Faction::Enemy, Cell::new(3, 5), Vec3::new(0.0, 0.0, 4.0));
+        second.action = Some(ActionReadout {
+            name: "move",
+            windup_left: None,
+        });
+        // 第三个敌人还没出场（行池里的空行）
+        let third = row(Faction::Enemy, Cell::new(5, 5), Vec3::new(4.0, 0.0, 4.0));
+
+        let panels = UnitPanels::from_rows(&[
+            row(Faction::Player, Cell::new(0, 0), Vec3::ZERO),
+            first,
+            second,
+            third,
+        ]);
+
+        assert_eq!(
+            panels.action_text(PanelSlot::Player),
+            "act: -",
+            "玩家没挂行动"
+        );
+        assert_eq!(
+            panels.action_text(PanelSlot::Enemy(0)),
+            "act: fireball (windup 0.3s)",
+            "前摇中要带剩余秒数——那是还撤得掉、也还能躲的窗口"
+        );
+        assert_eq!(
+            panels.action_text(PanelSlot::Enemy(1)),
+            "act: move",
+            "**第二个敌人要说自己的**，不能跟着第一个走（这正是那个 bug）"
+        );
+        assert_eq!(
+            panels.action_text(PanelSlot::Enemy(2)),
+            "act: -",
+            "空行不能显示别人的动作"
+        );
     }
 
     /// 没有精力组件的单位（例如场景里的纯装饰靶子）显示 `EN -` 而不是 0/0。

@@ -21,8 +21,8 @@ use super::hud::timeline::{
 };
 use super::hud::{
     HudCache, ToggleHelp, fit_ui_scale_system, setup_hud, toggle_help_system, toggle_log_system,
-    update_action_labels_system, update_log_panel_system, update_skill_bar_system,
-    update_timeline_readout_system, update_timeline_system, update_unit_panels_system,
+    update_log_panel_system, update_skill_bar_system, update_timeline_readout_system,
+    update_timeline_system, update_unit_panels_system,
 };
 use super::log::{BattleLog, battle_log_system};
 use super::preload::preload;
@@ -56,7 +56,6 @@ impl Plugin for PresentationPlugin {
             .register_type::<hud::panels::UnitPanel>()
             .register_type::<hud::panels::PanelBar>()
             .register_type::<hud::panels::PanelText>()
-            .register_type::<hud::actions::ActionLabel>()
             .register_type::<hud::skills::SkillSlot>()
             .register_type::<hud::skills::SkillBadge>()
             .register_type::<hud::skills::SkillTooltip>()
@@ -146,7 +145,6 @@ impl Plugin for PresentationPlugin {
                     // 威胁来源圈：同一个窗口开着时，圈出**是谁**在威胁你
                     update_threat_source_ring_system,
                     update_unit_panels_system,
-                    update_action_labels_system,
                     update_skill_bar_system,
                     update_timeline_system,
                     // 悬停读数跑在时间轴之后：它读的就是刚算出来的那份布局

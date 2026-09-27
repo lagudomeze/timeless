@@ -1,132 +1,21 @@
-//! 单位面板的最后一行：**当前行动**（`act: fireball`，空闲时 `-`）。
+//! 行动实体 → **载荷名**（`fireball` / `move` / `wait` …）。
 //!
 //! 调度器按设计不感知载荷（见 [`crate::timeline`]），所以这里由表现层代它读一次
 //! 载荷标记，只把「这条行动是什么」翻成人话——HUD 依然只读游戏状态。
 //!
-//! **前摇中会带上剩余秒数**（`act: fireball (windup 0.2s)`）：那是**还撤得掉**、
-//! 也是**还能躲开**的那段时间窗口（`now < execute_at`）。这是信息层的第一块读数
-//! （`docs/game-design.md`「信息即力量」的"帧窗口细节"）——玩家据此决定
-//! 要不要右键改主意、要不要抢在它前面动。
+//! **一处判据**：单位面板的 `act:` 行与时间轴的悬停读数都走
+//! [`payload_name`]，所以同一个动作在两处**不可能叫不同名字**。
+//! 面板那一行的排版（`act: fireball (windup 0.3s)`）住在
+//! [`UnitPanels::action_text`](super::panels::model::UnitPanels::action_text)——
+//! 它按**面板槽**（行）取数，不再按阵营（2026-09-27 修：按阵营会让多敌人面板的
+//! 三行显示同一句话，见 `docs/backlog/hud.md`）。
 
 use bevy::prelude::*;
 
-use crate::combat::Faction;
 use crate::combat::attack::{FireballAction, MeleeAction, ShootAction};
 use crate::combat::defense::ParryAction;
 use crate::movement::{JumpAction, MoveAction, RollAction};
-use crate::timeline::{ActionOf, ScheduledAction, WaitAction};
-
-use super::HudCache;
-
-/// 面板上的行动行标记。
-#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
-#[reflect(Component)]
-pub struct ActionLabel {
-    pub faction: Faction,
-}
-
-/// 行动行快照缓存：与上一帧完全相同就整帧不碰 UI。
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct ActionLabelCache {
-    labels: [String; 2],
-}
-
-/// 阵营 → 快照下标。
-fn slot(faction: Faction) -> usize {
-    match faction {
-        Faction::Player => 0,
-        Faction::Enemy => 1,
-    }
-}
-
-/// 把「这个单位现在挂着的行动」写进文本。
-#[allow(clippy::too_many_arguments)]
-pub fn update_action_labels_system(
-    now: Res<Time<Virtual>>,
-    units: Query<(Entity, &Faction)>,
-    actions: Query<(Entity, &ScheduledAction, &ActionOf)>,
-    movements: Query<&MoveAction>,
-    jumps: Query<&JumpAction>,
-    rolls: Query<&RollAction>,
-    parries: Query<&ParryAction>,
-    shoots: Query<&ShootAction>,
-    fireballs: Query<&FireballAction>,
-    melees: Query<&MeleeAction>,
-    waits: Query<&WaitAction>,
-    mut cache: ResMut<HudCache>,
-    mut labels: Query<(&ActionLabel, &mut Text)>,
-) {
-    let now_seconds = now.elapsed_secs();
-    // 先算快照（纯读），再决定要不要写
-    let mut snapshot = cache.actions.labels.clone();
-    for (label, _) in &labels {
-        snapshot[slot(label.faction)] = action_text(
-            label.faction,
-            now_seconds,
-            &units,
-            &actions,
-            &movements,
-            &jumps,
-            &rolls,
-            &parries,
-            &shoots,
-            &fireballs,
-            &melees,
-            &waits,
-        );
-    }
-    if cache.actions.labels == snapshot {
-        return;
-    }
-    cache.actions.labels.clone_from(&snapshot);
-
-    for (label, mut text) in &mut labels {
-        **text = snapshot[slot(label.faction)].clone();
-    }
-}
-
-/// 某个阵营这一帧该显示的行动文案。
-#[allow(clippy::too_many_arguments)]
-fn action_text(
-    faction: Faction,
-    now: f32,
-    units: &Query<(Entity, &Faction)>,
-    actions: &Query<(Entity, &ScheduledAction, &ActionOf)>,
-    movements: &Query<&MoveAction>,
-    jumps: &Query<&JumpAction>,
-    rolls: &Query<&RollAction>,
-    parries: &Query<&ParryAction>,
-    shoots: &Query<&ShootAction>,
-    fireballs: &Query<&FireballAction>,
-    melees: &Query<&MeleeAction>,
-    waits: &Query<&WaitAction>,
-) -> String {
-    let Some(actor) = units
-        .iter()
-        .find(|(_, unit_faction)| **unit_faction == faction)
-        .map(|(entity, _)| entity)
-    else {
-        return "down".to_string();
-    };
-    // 行动者 = 行动实体记着的归属方
-    let Some((action, schedule, _)) = actions
-        .iter()
-        .find(|(_, _, action_of)| action_of.actor() == actor)
-    else {
-        return "act: -".to_string();
-    };
-    let name = payload_name(
-        action, movements, jumps, rolls, parries, shoots, fireballs, melees, waits,
-    );
-    if schedule.pending(now) {
-        // 前摇剩余秒数：信息层的"帧窗口细节"——还剩多久这一手就落地
-        // （满前摇 = `execute_at - declared_at`，当前进度由 `now` 决定）
-        let remaining = (schedule.execute_at - now).max(0.0);
-        format!("act: {name} (windup {remaining:.1}s)")
-    } else {
-        format!("act: {name}")
-    }
-}
+use crate::timeline::WaitAction;
 
 /// 行动实体 → 载荷名（找不到就退回 `action`）。
 ///
@@ -209,176 +98,96 @@ impl PayloadQueries<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::movement::{JUMP_TIMING, MOVE_TIMING};
-    use crate::timeline::WaitConfig;
 
-    fn label_app() -> App {
+    /// 造一条挂着某个载荷的行动实体。
+    type Spawner = fn(&mut World, Entity) -> Entity;
+
+    /// 待取名的行动实体，以及取到的名字（用资源传进传出，避免测试里手抄查询）。
+    #[derive(Resource, Default)]
+    struct ToName(Vec<Entity>);
+    #[derive(Resource, Default)]
+    struct Names(Vec<&'static str>);
+
+    fn name_of(payloads: PayloadQueries, to: Res<ToName>, mut out: ResMut<Names>) {
+        out.0 =
+            to.0.iter()
+                .map(|entity| payloads.name_of(*entity))
+                .collect();
+    }
+
+    /// 造一个只装"命名器"的 App，返回它和行动者的实体。
+    fn naming_app() -> (App, Entity) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .init_resource::<HudCache>()
-            .add_systems(Update, update_action_labels_system);
-        app
+            .init_resource::<ToName>()
+            .init_resource::<Names>()
+            .add_systems(Update, name_of);
+        let actor = app.world_mut().spawn_empty().id();
+        (app, actor)
     }
 
-    fn spawn_unit(app: &mut App, faction: Faction) -> Entity {
-        app.world_mut().spawn(faction).id()
-    }
-
-    fn spawn_label(app: &mut App, faction: Faction) -> Entity {
-        app.world_mut()
-            .spawn((ActionLabel { faction }, Text::new("")))
-            .id()
-    }
-
-    fn text_of(app: &App, entity: Entity) -> String {
-        app.world().get::<Text>(entity).unwrap().0.clone()
-    }
-
-    /// 空闲单位显示 `-`。
-    #[test]
-    fn idle_unit_shows_a_dash() {
-        let mut app = label_app();
-        spawn_unit(&mut app, Faction::Player);
-        let label = spawn_label(&mut app, Faction::Player);
-
-        app.update();
-
-        assert_eq!(text_of(&app, label), "act: -");
-    }
-
-    /// **等待也有名字**（2026-09-27 实机抓到）。
+    /// **每个载荷都要有自己的名字**——漏一个就落到兜底的 `"action"`。
     ///
-    /// 按空格会占住决策槽、世界继续跑，面板上理应读出"我在等"。
-    /// 但 `payload_name` 早先没有等待的分支，于是它落到兜底的 `"action"`——
-    /// 实测玩家按了空格只看到 `act: action`，等于没说。
-    ///
-    /// 这条同时是**给以后看的**：新增载荷若忘了在这里登记，就会静默退化成
-    /// `"action"`，屏幕上看不出错、只显得含糊。
+    /// 这条守着一次真实退化：等待动作没登记，玩家按空格只看到 `act: action`
+    /// （2026-09-27 实机抓到）。面板与时间轴都用这一处命名，所以这里错了两处一起错。
     #[test]
-    fn the_wait_action_has_a_name_of_its_own() {
-        let mut app = label_app();
-        let player = spawn_unit(&mut app, Faction::Player);
-        let label = spawn_label(&mut app, Faction::Player);
-        app.world_mut().spawn((
-            ActionOf(player),
-            WaitAction,
-            ScheduledAction::declared_at(WaitConfig::default().timing(), 0.0),
-        ));
+    fn every_payload_has_a_name_of_its_own() {
+        let cases: [(&str, Spawner); 8] = [
+            ("move", |w, a| {
+                w.spawn((crate::timeline::ActionOf(a), MoveAction::default()))
+                    .id()
+            }),
+            ("jump", |w, a| {
+                w.spawn((crate::timeline::ActionOf(a), JumpAction)).id()
+            }),
+            ("roll", |w, a| {
+                w.spawn((crate::timeline::ActionOf(a), RollAction::default()))
+                    .id()
+            }),
+            ("parry", |w, a| {
+                w.spawn((crate::timeline::ActionOf(a), ParryAction::default()))
+                    .id()
+            }),
+            ("shoot", |w, a| {
+                w.spawn((crate::timeline::ActionOf(a), ShootAction)).id()
+            }),
+            ("fireball", |w, a| {
+                w.spawn((crate::timeline::ActionOf(a), FireballAction::default()))
+                    .id()
+            }),
+            ("melee", |w, a| {
+                w.spawn((crate::timeline::ActionOf(a), MeleeAction)).id()
+            }),
+            ("wait", |w, a| {
+                w.spawn((crate::timeline::ActionOf(a), WaitAction)).id()
+            }),
+        ];
 
+        // 一次全造出来，再让命名器一次问完（`SystemParam` 每个 App 只能取一次）
+        let (mut app, actor) = naming_app();
+        let expected: Vec<&str> = cases.iter().map(|(name, _)| *name).collect();
+        let entities: Vec<Entity> = cases
+            .iter()
+            .map(|(_, spawn)| spawn(app.world_mut(), actor))
+            .collect();
+        app.world_mut().resource_mut::<ToName>().0 = entities;
         app.update();
 
-        let shown = text_of(&app, label);
-        assert!(
-            shown.starts_with("act: wait"),
-            "等待必须显示成 `wait`，不能退化成兜底的 `action`：{shown}"
-        );
-    }
-
-    /// 挂着行动时显示载荷名；**前摇中**带上剩余秒数——那正是还能撤、还能躲的窗口。
-    #[test]
-    fn pending_action_is_named_and_windups_show_the_time_left() {
-        let mut app = label_app();
-        let player = spawn_unit(&mut app, Faction::Player);
-        let label = spawn_label(&mut app, Faction::Player);
-        let action = app
-            .world_mut()
-            .spawn((
-                ActionOf(player),
-                MoveAction::default(),
-                ScheduledAction::declared_at(MOVE_TIMING, 0.0),
-            ))
-            .id();
-
-        app.update();
-        // `MOVE_TIMING.windup = 0.15`，声明于 0.0；首帧剩余即接近满前摇
-        let shown = text_of(&app, label);
-        assert!(shown.starts_with("act: move (windup"), "{shown}");
-        assert!(shown.ends_with("s)"), "前摇读数要带剩余秒数与单位：{shown}");
-
-        // 世界走过前摇：这条行动已经落地（等执行器收拾），不再标注 windup
-        app.world_mut()
-            .resource_mut::<Time<Virtual>>()
-            .advance_by(std::time::Duration::from_secs(1));
-        app.update();
-        assert_eq!(text_of(&app, label), "act: move");
-        assert!(app.world().get_entity(action).is_ok());
-    }
-
-    /// **倒计时真的在走**：同一手行动，虚拟时间前进之后剩余秒数必须变小。
-    ///
-    /// 这条守的是"读数有没有真的连到 `execute_at`"——只显示一个静态的 `(windup)`
-    /// 也能通过上一条测试，但那样玩家读不到"还剩多久"。
-    #[test]
-    fn the_windup_readout_counts_down_as_time_passes() {
-        let mut app = label_app();
-        let player = spawn_unit(&mut app, Faction::Player);
-        let label = spawn_label(&mut app, Faction::Player);
-        app.world_mut().spawn((
-            ActionOf(player),
-            MoveAction::default(),
-            ScheduledAction::declared_at(MOVE_TIMING, 0.0),
-        ));
-
-        let seconds = |app: &App| -> f32 {
-            let text = app.world().get::<Text>(label).unwrap().0.clone();
-            text.rsplit_once("windup ")
-                .and_then(|(_, rest)| rest.trim_end_matches(['s', ')']).parse().ok())
-                .unwrap_or_else(|| panic!("读不出前摇剩余秒数：{text}"))
-        };
-
-        app.update();
-        let before = seconds(&app);
-        app.world_mut()
-            .resource_mut::<Time<Virtual>>()
-            .advance_by(std::time::Duration::from_millis(60));
-        app.update();
-        let after = seconds(&app);
-
-        assert!(
-            after < before,
-            "时间前进了，前摇剩余应当变小：{before} → {after}"
-        );
-    }
-
-    /// 单位阵亡（实体没了）时显示 `down`，不留下过期的行动名。
-    #[test]
-    fn missing_unit_shows_down() {
-        let mut app = label_app();
-        let label = spawn_label(&mut app, Faction::Enemy);
-
-        app.update();
-
-        assert_eq!(text_of(&app, label), "down");
-    }
-
-    /// 行动没变时整帧不碰 UI（拿哨兵值当探针）。
-    #[test]
-    fn action_labels_are_left_alone_when_nothing_changes() {
-        let mut app = label_app();
-        let player = spawn_unit(&mut app, Faction::Player);
-        let label = spawn_label(&mut app, Faction::Player);
-
-        app.update();
-        assert_eq!(text_of(&app, label), "act: -");
-
-        app.world_mut().get_mut::<Text>(label).unwrap().0 = "SENTINEL".to_string();
-        app.update();
         assert_eq!(
-            text_of(&app, label),
-            "SENTINEL",
-            "数据没变就不该被系统盖回去"
+            app.world().resource::<Names>().0,
+            expected,
+            "每个载荷都要有自己的名字，不能落到兜底的 `action`"
         );
+    }
 
-        app.world_mut().spawn((
-            ActionOf(player),
-            JumpAction,
-            ScheduledAction::declared_at(JUMP_TIMING, 0.0),
-        ));
+    /// 认不出来的实体退回 `action`——**兜底只该是"新载荷还没取名"的临时状态**。
+    #[test]
+    fn an_unknown_action_falls_back_to_the_generic_word() {
+        let (mut app, _) = naming_app();
+        let orphan = app.world_mut().spawn_empty().id();
+        app.world_mut().resource_mut::<ToName>().0 = vec![orphan];
         app.update();
-        let shown = text_of(&app, label);
-        assert!(
-            shown.starts_with("act: jump (windup"),
-            "换了行动就必须重写：{shown}"
-        );
+
+        assert_eq!(app.world().resource::<Names>().0, vec!["action"]);
     }
 }

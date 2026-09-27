@@ -813,3 +813,30 @@ Insight 那些读数**都是按 `PanelSlot` 分行的**，这是面板里唯一�
 **教训**：这个坑 2026-09-27 一天之内踩了三次（`Visibility` 的类型路径、
 `ActionOf` 的类型路径、`ActionOf` 没注册）——**排查"某类实体不存在"之前，
 先确认那个类型在反射表里**。
+
+---
+
+## 2026-09-27 实机复跑第 5 节顺带修 bug：敌人面板的 `act:` 行「按阵营」而不是「按行」
+
+- [x] **三行敌人面板显示同一句话**（已修）
+      **现象**：场上只有 2 个敌人，而第三个（空）行的 `ActionLabel` 也在显示
+      `act: fireball (windup 0.3s)`；四个 `ActionLabel` 实体里三个敌人标签文本**逐字相同**。
+      **根因**：`panels/scene.rs` 挂的是 `ActionLabel { faction }`（**只带阵营、不带行号**），
+      `update_action_labels_system` 按 `slot(faction)` 写单格快照——而 HP / EN / Focus /
+      Insight 那些读数**都是按 `PanelSlot` 分行的**，这是面板里唯一一处行列不对应。
+      **为什么现在才暴露**：两个敌人常做同样的事（同一套 AI、同样的距离）。
+      **改法**：动作文案**并进面板模型**，与其它读数同源——
+      `UnitRow` 加 `action: Option<ActionReadout>`（名 + 前摇剩余）、
+      `PanelText` 加 `Action(PanelSlot)`、格式化落在 `UnitPanels::action_text(slot)`；
+      面板系统造 `UnitRow` 时按**实体**算（它本来就有"行 → 实体"的映射）；
+      `ActionLabel` / `ActionLabelCache` / `update_action_labels_system` **整体删除**；
+      `payload_name` 留下（仍是面板与时间轴共用命名的唯一真相源）。
+      **顺带的连带修复**：`update_unit_panels_system` 因此到 17 个参数、超过 Bevy 的
+      **16 上限**，于是把 `dodging` / `parrying` / `airborne` 收成 `StateMarkers`
+      （`SystemParam` 派生）——签名反而短了两行。
+      **验收**：新测试 `each_row_shows_its_own_action`（两敌人不同动作 → 两行不同；
+      空行 `act: -`）；**实机确认**空行从"显示别人的火球"变成 `act: -`，
+      两行各自读自己那行，布局不变（截图 `target/shot-action-per-row.png`）。
+      **教训**：面板的读数必须**按行**取。同一个面板里既有"按行"（HP/EN/Focus/Insight）
+      又有"按阵营"（act）的读数时，多单位场景必然露馅——**行列对应关系要在模型层定死**，
+      而不是让每个读数自己在系统里找"某个阵营的第一个单位"。

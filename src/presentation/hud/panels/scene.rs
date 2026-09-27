@@ -7,7 +7,6 @@ use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 
 use crate::combat::Faction;
 
-use super::super::actions::ActionLabel;
 use super::super::{
     EN_COLOR, HP_COLOR, PANEL_BG, TRACK_BG, faction_color, hud_text, hud_text_tinted,
 };
@@ -48,6 +47,12 @@ pub enum PanelText {
     /// **洞察力读数**（`docs/insight.md` 第四节）：射程 / 打断抗性 / 战术。
     /// 只有敌人格有内容（玩家看自己的面板不需要"我够得到多远"）。
     Insight(PanelSlot),
+    /// **这一格挂着的行动**（`act: fireball (windup 0.3s)`）。
+    ///
+    /// 按**槽**（行）而不是按阵营：面板的敌人列是行池，每行一个具体单位。
+    /// 早先它由 `actions::ActionLabel { faction }` 按阵营写，于是三行同一句话、
+    /// 空行也在显示别人的动作（2026-09-27 实机发现）。
+    Action(PanelSlot),
     /// **溢出计数**（`docs/backlog/hud.md` 的 #61）：`还有 N 个`。
     /// 只有一份（挂在敌人那一列的顶上），没有溢出时整行藏起来。
     EnemyOverflow,
@@ -135,7 +140,6 @@ fn slot_content(font: &Handle<Font>, slot: PanelSlot) -> impl Bundle {
     // 闭包要 `move`（`SpawnWith` 是 `'static` 的），所以给它一份**影子副本**：
     // 外层下面还要用 `prefix` 给几个节点命名。
     let pip_prefix = prefix.clone();
-    let faction = slot.faction();
     (
         Name::new(format!("{prefix}Info")),
         Node {
@@ -197,7 +201,7 @@ fn slot_content(font: &Handle<Font>, slot: PanelSlot) -> impl Bundle {
             (
                 Name::new(format!("{prefix}Action")),
                 hud_text(font, 11.0, "act: -"),
-                ActionLabel { faction },
+                PanelText::Action(slot),
             ),
             // **洞察力读数**（`docs/insight.md` 第四节）：只在**敌人**行上挂——
             // 玩家面板那一格读自己就够了，多一行只会把固定的 `PANEL_HEIGHT` 挤紧。

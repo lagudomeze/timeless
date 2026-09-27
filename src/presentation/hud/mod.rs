@@ -50,7 +50,6 @@ pub mod panels;
 pub mod skills;
 pub mod timeline;
 
-pub use actions::update_action_labels_system;
 pub use help::{ToggleHelp, toggle_help_system};
 pub use hint::{
     ActionHint, ActionHintText, HintKind, HintState, HintTimer, PreviewReadout, apply_hint_system,
@@ -78,7 +77,6 @@ pub use timeline::{
 #[derive(Resource, Default)]
 pub struct HudCache {
     pub units: panels::UnitPanelCache,
-    pub actions: actions::ActionLabelCache,
     pub timeline: timeline::TimelineCache,
     pub skills: skills::SkillBarCache,
     pub log: log_panel::LogCache,
